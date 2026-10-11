@@ -78,6 +78,7 @@ private:
 		std::string base_path;
 		bool jpeg;
 		bool dng;
+		bool compress_dng;
 		int quality;
 		std::vector<std::string> exif;
 		Clock::time_point t_command;
@@ -130,7 +131,8 @@ private:
 	float fps_ = 0;
 	Clock::time_point last_stats_ {};
 	double reconfigure_ms_ = 0; // duration of the last camera reconfiguration
-	Clock::time_point started_ {}; // end of the last reconfiguration
+	Clock::time_point started_ {}; // when the camera was last started
+	unsigned frames_since_start_ = 0; // real frames received since (see Run(): deadlock)
 };
 
 } // namespace pycam

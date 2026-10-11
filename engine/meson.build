@@ -14,10 +14,19 @@ deps = [
     rpicam_dep,
     dependency('libcamera'),
     dependency('libdrm'),
+    dependency('libtiff-4'),
     dependency('nlohmann_json'),
     dependency('boost', modules : ['program_options']),
     dependency('threads'),
 ]
+
+lj92_inc = include_directories('third_party/lj92', is_system : true)
+
+# Round trip test of the DNG writer (tests/dng_roundtrip.sh), not installed.
+executable('dng-roundtrip',
+           files('tests/dng_roundtrip.cpp', 'src/dng_writer.cpp'),
+           include_directories : lj92_inc,
+           dependencies : deps)
 
 executable('pycam-engine',
            files(
@@ -27,8 +36,11 @@ executable('pycam-engine',
                'src/capture_writer.cpp',
                'src/control_codec.cpp',
                'src/display.cpp',
+               'src/dng_writer.cpp',
                'src/focus_aids.cpp',
                'src/analysis.cpp',
            ),
+           # Vendored code (see its README): a system include, its warnings are not ours.
+           include_directories : lj92_inc,
            dependencies : deps,
            install : true)

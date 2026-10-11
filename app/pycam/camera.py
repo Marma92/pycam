@@ -289,6 +289,9 @@ class Camera:
         elif action == "raw":
             s.formats = ["jpeg"] if "dng" in s.formats else ["jpeg", "dng"]
             self.show_message("RAW + JPEG" if "dng" in s.formats else "JPEG seul")
+        elif action == "dng_compression":
+            s.dng_compression = not s.dng_compression
+            self.show_message("RAW compressé (sans perte)" if s.dng_compression else "RAW non compressé")
         elif action == "peaking":
             s.peaking = not s.peaking
             self.show_message("Peaking" if s.peaking else "Peaking coupé")
@@ -342,6 +345,7 @@ class Camera:
                     "capture",
                     path=base,
                     formats=self.settings.formats,
+                    dng_compression=self.settings.dng_compression,
                     quality=self.settings.jpeg_quality,
                     exif=lenses.lens_exif(self.lens(), self.settings.aperture),
                 )
@@ -412,7 +416,7 @@ class Camera:
             awb=exp.AWB_LABELS[e.awb],
             formats="RAW+JPEG" if "dng" in s.formats else "JPEG",
             lens=lenses.format_lens(self.lens(), s.aperture),
-            shots=self.storage.shots_remaining(s.formats),
+            shots=self.storage.shots_remaining(s.formats, s.dng_compression),
             zsl=s.strategy == "zsl",
             peaking=s.peaking_color if s.peaking else "",
             zebra=s.zebra,

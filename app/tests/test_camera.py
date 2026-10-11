@@ -225,6 +225,17 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.engine.last("capture")["formats"], ["jpeg"])
 
+    async def test_dng_compression_is_on_by_default_and_can_be_switched_off(self):
+        self.camera.on_action("shutter")
+        await self.settle()
+        self.assertTrue(self.engine.last("capture")["dng_compression"])
+        shots_compressed = self.camera.view().shots
+        self.camera.on_action("dng_compression")
+        self.camera.on_action("shutter")
+        await self.settle()
+        self.assertFalse(self.engine.last("capture")["dng_compression"])
+        self.assertLess(self.camera.view().shots, shots_compressed)  # bigger files, fewer shots
+
     async def test_strategy_is_kept_only_if_the_engine_accepts(self):
         self.engine.refuse["configure"] = "busy"
         self.camera.on_action("strategy")

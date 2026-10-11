@@ -31,6 +31,7 @@ def default_path():
 class Settings:
     exposure: Exposure = field(default_factory=Exposure)
     formats: list = field(default_factory=lambda: ["jpeg", "dng"])
+    dng_compression: bool = True  # lossless: 12 MB instead of 25, ~1.5 s more of background writing
     jpeg_quality: int = 93
     strategy: str = "switch"
     display: str = "detailed"

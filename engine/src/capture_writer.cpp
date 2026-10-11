@@ -5,6 +5,8 @@
 
 #include "image/image.hpp"
 
+#include "dng_writer.hpp"
+
 using nlohmann::json;
 namespace fs = std::filesystem;
 
@@ -131,9 +133,13 @@ json CaptureWriter::Write(CaptureJob &job)
 		{
 			auto t = std::chrono::steady_clock::now();
 			std::string filename = job.base_path + ".DNG";
-			Planes mem { libcamera::Span<uint8_t>(job.raw.data(), job.raw.size()) };
-			save_atomically(filename, [&](std::string const &tmp)
-							{ dng_save(mem, job.raw_info, job.metadata, tmp, job.camera_model, job.options.get()); });
+			DngOptions options { job.compress_dng, job.options->Get().exif };
+			save_atomically(filename,
+							[&](std::string const &tmp)
+							{
+								dng_write(libcamera::Span<const uint8_t>(job.raw.data(), job.raw.size()), job.raw_info,
+										  job.metadata, tmp, job.camera_model, options);
+							});
 			timings["dng_ms"] = ms_since(t);
 			files.push_back(filename);
 			on_event_({ { "event", "file_saved" }, { "capture_id", job.id }, { "path", filename } });

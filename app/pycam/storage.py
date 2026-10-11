@@ -7,8 +7,8 @@ The next number is kept in the settings, so it survives a restart; names already
 import os
 import shutil
 
-# Per photo, with a margin: JPEG ~2-3 MB, uncompressed DNG 24.8 MB (measured 2026-10-11).
-BYTES_PER_SHOT = {"jpeg": 4 * 1024**2, "dng": 25 * 1024**2}
+# Per photo, with a margin: JPEG ~2-3 MB, DNG 24.8 MB, or ~12 MB compressed (measured 2026-10-11).
+BYTES_PER_SHOT = {"jpeg": 4 * 1024**2, "dng": 25 * 1024**2, "dng_compressed": 14 * 1024**2}
 EXTENSIONS = (".JPG", ".DNG")
 
 
@@ -40,12 +40,13 @@ class Storage:
         """The photo (folder, number) was taken: the next one comes after."""
         self.settings.folder_number, self.settings.next_number = _after(folder, number)
 
-    def shots_remaining(self, formats):
+    def shots_remaining(self, formats, dng_compressed=False):
         path = self.root
         while not os.path.exists(path):  # the card may not have a DCIM folder yet
             parent = os.path.dirname(path)
             if parent == path:
                 return 0
             path = parent
-        per_shot = sum(BYTES_PER_SHOT[f] for f in formats) or BYTES_PER_SHOT["jpeg"]
+        kinds = ["dng_compressed" if f == "dng" and dng_compressed else f for f in formats]
+        per_shot = sum(BYTES_PER_SHOT[k] for k in kinds) or BYTES_PER_SHOT["jpeg"]
         return shutil.disk_usage(path).free // per_shot

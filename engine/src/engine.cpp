@@ -40,6 +40,10 @@ constexpr char kStillMode[] = "4056:3040:12:P";
 constexpr char kLoupeMode[] = "4056:3040:10:P";
 constexpr float kLoupeMaxZoom = 16;
 
+// How long to wait for the first real frame after a start before stopping the camera
+// anyway (a camera that delivers nothing does not deadlock either). See Run().
+constexpr auto kStartupGrace = std::chrono::seconds(3);
+
 // A command that cannot be executed; `code` is meant for the app, `what()` for humans.
 struct CommandError : std::runtime_error
 {
@@ -110,11 +114,23 @@ int Engine::Run()
 			  << "\n";
 	ipc_.Broadcast({ { "event", "ready" }, { "state", State() } });
 
-	while (!quit_)
+	// Never stop the camera before its first real frame since it started. libcamera (0.5+)
+	// delivers the first frames flagged as startup frames, and rpicam-apps drops them on
+	// the libcamera thread, taking the mutex that StopCamera() holds while it waits for
+	// that very thread: stopping the camera then deadlocks (seen 2026-10-11, a capture
+	// right after a restart). Once a real frame has come, the startup frames are over.
+	auto may_stop_camera = [this] { return frames_since_start_ > 0 || Clock::now() - started_ > kStartupGrace; };
+
+	for (;;)
 	{
+		if (quit_ && may_stop_camera())
+			break;
 		RPiCamApp::Msg msg = app_.Wait();
 		if (msg.type == RPiCamApp::MsgType::Quit)
-			break;
+		{
+			quit_ = true;
+			continue; // leaves at the top of the loop, as soon as the camera may be stopped
+		}
 		if (msg.type == RPiCamApp::MsgType::Timeout)
 		{
 			std::cerr << "pycam-engine: camera timeout, restarting\n";
@@ -131,7 +147,7 @@ int Engine::Run()
 		DrainCommands();
 		TryDisplay();
 
-		if (next_phase_)
+		if (next_phase_ && may_stop_camera())
 		{
 			Phase phase = *next_phase_;
 			next_phase_.reset();
@@ -286,6 +302,8 @@ void Engine::Start(Phase phase)
 		app_.SetControls(LoupeCrop()); // otherwise rpicam sets the full field of view
 	app_.StartCamera();
 	phase_ = phase;
+	started_ = Clock::now();
+	frames_since_start_ = 0;
 }
 
 void Engine::Restart(Phase phase)
@@ -296,12 +314,12 @@ void Engine::Restart(Phase phase)
 		display_->Reset(); // the last image stays on the screen during the reconfiguration
 	app_.Teardown();
 	Start(phase);
-	started_ = Clock::now();
 	reconfigure_ms_ = ms_between(t, started_);
 }
 
 void Engine::OnFrame(CompletedRequestPtr &request)
 {
+	frames_since_start_++;
 	if (request->framerate > 0)
 		fps_ = request->framerate;
 
@@ -340,6 +358,7 @@ void Engine::GrabStill(CompletedRequestPtr &request)
 	job->base_path = capture.base_path;
 	job->jpeg = capture.jpeg;
 	job->dng = capture.dng;
+	job->compress_dng = capture.compress_dng;
 	if (capture.jpeg)
 	{
 		Stream *still = app_.StillStream(&job->yuv_info);
@@ -537,6 +556,7 @@ json Engine::Capture(json const &command, Clock::time_point received)
 	capture.dng = wants("dng");
 	if (!capture.jpeg && !capture.dng)
 		throw CommandError("bad_request", "formats must contain \"jpeg\" and/or \"dng\"");
+	capture.compress_dng = command.value("dng_compression", false);
 	capture.quality = command.value("quality", 93);
 	capture.exif = command.value("exif", std::vector<std::string> {});
 	capture.t_command = received;

@@ -27,6 +27,7 @@ struct CaptureJob
 	std::string base_path; // without extension: ".JPG" / ".DNG" are appended
 	bool jpeg = true;
 	bool dng = true;
+	bool compress_dng = false; // lossless JPEG (LJ92)
 	std::vector<uint8_t> yuv;
 	StreamInfo yuv_info;
 	std::vector<uint8_t> raw;

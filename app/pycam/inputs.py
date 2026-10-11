@@ -33,6 +33,7 @@ KEYMAP = {
     ecodes.KEY_D: "disp",
     ecodes.KEY_G: "grid",
     ecodes.KEY_R: "raw",
+    ecodes.KEY_K: "dng_compression",
     ecodes.KEY_X: "strategy",  # ZSL on/off
     ecodes.KEY_P: "peaking",
     ecodes.KEY_C: "peaking_color",
