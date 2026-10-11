@@ -64,6 +64,7 @@ Les noms sont ceux de libcamera, et `list_controls` donne la liste exacte.
 | `display_ready` | Le moteur obtient l'écran après son démarrage (écran de démarrage Plymouth, écran branché après coup) | `display` (comme `hud_info`) : l'application installe alors son HUD |
 | `stats` | ~5 fois/s en visée | `fps`, `exposure_us`, `analogue_gain`, `digital_gain`, `colour_gains`, `colour_temp`, `lux`, `focus_fom` (netteté mesurée par l'ISP), `ae_converged`, `sensor_temp`, `mean_y` (0–255), `histogram` (64 classes de luminance) |
 | `captured` | L'image est prise (copiée hors des tampons caméra) | `capture_id`, `latency_ms` (commande → image), `copy_ms`, `exposure_us`, `analogue_gain`, `digital_gain`. En mode `switch`, en plus : `reconfigure_ms` et `first_frame_ms`. |
+| `file_saved` | Chaque fichier écrit, le JPEG en premier | `capture_id`, `path` : la revue après la prise part du JPEG sans attendre le DNG |
 | `capture_done` | Les fichiers sont écrits | `capture_id`, `files`, `timings` (`jpeg_ms`, `dng_ms`), `write_queue` |
 | `capture_error` | Échec d'une capture ou de son écriture | `capture_id`, `error`, `files` déjà écrits |
 | `snapshot_done` / `snapshot_error` | Après `snapshot` | `path` (et `error`) |

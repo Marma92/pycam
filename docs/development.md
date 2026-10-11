@@ -59,10 +59,11 @@ sudo sh tools/install-services.sh --remove    # tout retirer
    - Ses réglages sont dans `~/.config/pycam/settings.json`, et les photos dans `~/DCIM/100PYCAM/`.
    - Tests de la logique, sans Pi ni Pillow ni evdev : `cd app && python3 -m unittest discover -s tests -t .`
 6. On rapatrie les images (`scp`) pour les inspecter.
-7. Pour voir le rendu sur l'écran du Pi sans l'application :
+7. **Capture d'écran à distance** : `python3 tools/screenshot.py /tmp/ecran.jpg --scale 0.5` compose la visée (commande `snapshot`) et le HUD (mémoire partagée) exactement comme l'écran. On la rapatrie avec `scp`. Elle prend ~2 s en 1080p.
+8. Pour voir le rendu sur l'écran du Pi sans l'application :
    - avec le moteur lancé, `python3 tools/hud_demo.py` dessine un HUD de démonstration (grille, bandeau, histogramme) par-dessus la visée ;
    - sans le moteur, `sh tools/focus-preview.sh [loupe]` affiche l'aperçu rpicam et la netteté en direct dans le terminal, pratique pour régler la mise au point. À lancer avec `ssh -t` pour que Ctrl-C l'arrête.
-8. On commite quand c'est validé sur le Pi.
+9. On commite quand c'est validé sur le Pi.
 
 ## Dépendances installées sur le Pi (2026-10-11)
 

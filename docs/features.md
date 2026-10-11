@@ -47,7 +47,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Peaking | Couleur (5) et sensibilité (3) réglables ; seuil adaptatif ; ~6 ms par image. | ✅ |
 | Zébras | Seuil réglable dans le protocole (95 % par défaut) ; pas encore dans l'application. | ✅ |
 | Loupe de mise au point | ×5 / ×10 (le protocole accepte 1 à 16), déplaçable ; vrais pixels grâce au passage en pleine résolution (14 i/s) ; compatible avec le peaking ; le déclencheur la quitte. | ✅ |
-| Revue après la prise | Affichage N secondes, désactivable. | ⬜ |
+| Revue après la prise | Affichage 1, 2 ou 4 s, désactivable, avec nom, vitesse, ISO et histogramme de la photo. Visible ~1,5 s après l'appui : l'application décode le JPEG en 1/4 (~0,2 s). Plus rapide plus tard si le moteur fournit l'aperçu à partir du YUV. | ✅ |
 | Profils d'objectifs | Nom, focale, ouverture max, écrits dans l'EXIF. | ⬜ |
 | Paramètres d'image | Qualité JPEG, RAW on/off, résolution, netteté, contraste, saturation, débruitage. | ⬜ |
 | Réglages persistants | Fichier JSON, écriture atomique ; reprise à l'allumage. | ✅ |

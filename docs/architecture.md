@@ -200,6 +200,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | P | Peaking marche / arrêt |
 | C / V | Peaking : couleur suivante / sensibilité suivante (ce qui l'active au passage) |
 | E | Zébras marche / arrêt |
+| T | Durée de la revue après la prise : coupée, 1, 2 ou 4 s. Pendant la revue, toute touche la ferme ; le déclencheur la ferme *et* déclenche. |
 | L | Loupe ×5 → ×10 → coupée. Dans la loupe, les flèches la déplacent au lieu de régler vitesse et ISO (en attendant le joystick). La grille est masquée, et le HUD montre le grossissement et une mini-carte de la zone. |
 
 **Pourquoi evdev.** Avec les overlays noyau, chaque bouton devient un évènement clavier (`KEY_*`) et chaque molette un évènement relatif (`REL_*`). Ça apporte plusieurs choses :
