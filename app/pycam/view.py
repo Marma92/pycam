@@ -32,6 +32,7 @@ class HudView:
     menu: tuple = ()  # quick menu lines (label, value); empty: closed
     menu_index: int = 0
     writing: int = 0  # photos waiting to be written
-    histogram: tuple = ()
+    histogram: tuple = ()  # luminance, 64 classes
+    histogram_rgb: tuple = ()  # (red, green, blue), 64 classes each; drawn instead
     message: str = ""
     warning: bool = False

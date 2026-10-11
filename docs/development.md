@@ -52,6 +52,14 @@ Il réécrit l'image du DNG donné, en version non compressée puis compressée,
 
 darktable lit les DNG avec son propre décodeur, rawspeed, plus strict que LibRaw. En cas de changement de format, le vérifier aussi : `sudo apt install darktable` (~40 Mo), puis `darktable-cli photo.DNG photo.jpg --core`.
 
+## Tests unitaires du moteur
+
+L'analyse d'image (histogrammes YUV → RVB) est testée sur des images synthétiques de couleur connue, sur le Pi après une compilation :
+
+```bash
+cd ~/pycam/engine && meson test -C build --print-errorlogs
+```
+
 ## Boucle de travail
 
 1. On édite sur le poste Windows, dans ce dépôt.

@@ -28,6 +28,8 @@ executable('dng-roundtrip',
            include_directories : lj92_inc,
            dependencies : deps)
 
+test('analysis', executable('analysis-test', files('tests/analysis_test.cpp', 'src/analysis.cpp')))
+
 executable('pycam-engine',
            files(
                'src/main.cpp',

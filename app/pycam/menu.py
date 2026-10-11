@@ -46,6 +46,7 @@ ITEMS = (
     Item("Format", "formats", (["jpeg", "dng"], ["jpeg"]), ("RAW + JPEG", "JPEG")),
     Item("RAW compressé", "dng_compression", (True, False), ("Oui · sans perte", "Non")),
     Item("Revue après la prise", "review_seconds", (0, 1, 2, 4), ("Coupée", "1 s", "2 s", "4 s")),
+    Item("Histogramme", "histogram", ("rgb", "luma"), ("RVB", "Luminance")),
 )
 
 

@@ -27,6 +27,16 @@ PEAKING_COLOURS = {
     "blue": (100, 150, 255, 255),
     "white": WHITE,
 }
+# RGB histogram: the colour of each overlap of the channels (0 red, 1 green, 2 blue).
+HISTOGRAM_COLOURS = {
+    frozenset({0, 1, 2}): (255, 255, 255, 210),
+    frozenset({0, 1}): (255, 235, 60, 210),
+    frozenset({0, 2}): (240, 80, 255, 210),
+    frozenset({1, 2}): (60, 230, 255, 210),
+    frozenset({0}): (255, 70, 60, 210),
+    frozenset({1}): (70, 230, 70, 210),
+    frozenset({2}): (70, 120, 255, 210),
+}
 
 
 class Hud:
@@ -57,8 +67,9 @@ class Hud:
         return max(1, round(value * self.s))
 
     def load_review(self, path):
-        """Decodes a photo for the review, fitted to the image area; returns its luminance
-        histogram (64 classes). Slow (~0.25 s): to run off the event loop."""
+        """Decodes a photo for the review, fitted to the image area; returns its histograms,
+        luminance and (red, green, blue), of 64 classes. Slow (~0.25 s): to run off the event
+        loop."""
         x, y, w, h = self.rect
         with Image.open(path) as im:
             # The JPEG decoder shrinks by 2, 4 or 8 for almost nothing: a 12 MP photo
@@ -67,9 +78,13 @@ class Hud:
             im = im.convert("RGB")
             scale = min(w / im.width, h / im.height)
             photo = im.resize((round(im.width * scale), round(im.height * scale)), Image.BILINEAR)
-        levels = photo.convert("L").histogram()
         self._review = (path, photo)
-        return [sum(levels[i : i + 4]) for i in range(0, 256, 4)]
+
+        def bins(levels):
+            return [sum(levels[i : i + 4]) for i in range(0, 256, 4)]
+
+        rgb = photo.histogram()  # 3 x 256
+        return bins(photo.convert("L").histogram()), [bins(rgb[c * 256 : (c + 1) * 256]) for c in range(3)]
 
     def draw(self, view):
         if view.review:
@@ -83,7 +98,7 @@ class Hud:
             if view.metering == "spot" and view.loupe == 1 and not view.menu:
                 self._spot_area(d)
         if view.display == "detailed":
-            self._histogram(d, view.histogram)
+            self._histogram(d, view)
         if view.loupe > 1:  # whatever the display: you must know the image is magnified
             self._loupe(d, view)
         if view.menu:
@@ -108,7 +123,7 @@ class Hud:
         d.rectangle([x, y + h - bar_h, x + w, y + h], fill=BAR)
         d.text((x + self.px(24), y + h - bar_h // 2), view.review_info, font=self.font_bold, fill=WHITE, anchor="lm")
         if view.display == "detailed":
-            self._histogram(d, view.histogram)
+            self._histogram(d, view)
         if view.message:
             self._message(d, view.message, view.warning)
         self.shm[:] = img.tobytes()
@@ -235,19 +250,32 @@ class Hud:
             d.ellipse([cx, cy_mid - r, cx + 2 * r, cy_mid + r], fill=RED)
             d.text((cx + 3 * r, cy_mid), str(view.writing), font=self.font, fill=WHITE, anchor="lm")
 
-    def _histogram(self, d, histogram):
-        if not histogram:
+    def _histogram(self, d, view):
+        """Top right. The RGB one is additive: where the three channels overlap it is white,
+        where two do it is their mix (yellow, magenta, cyan), above it the highest channel."""
+        channels = view.histogram_rgb or ((view.histogram,) if view.histogram else ())
+        if not channels:
             return
         x, y, w, h = self.rect
         hw, hh = self.px(300), self.px(140)
         hx, hy = x + w - hw - self.px(24), y + self.px(24)
         d.rectangle([hx, hy, hx + hw, hy + hh], fill=BAR)
-        peak = max(histogram) or 1
-        bw = hw / len(histogram)
-        for i, v in enumerate(histogram):
-            bh = round(hh * v / peak)
-            if bh:
-                d.rectangle([hx + i * bw, hy + hh - bh, hx + (i + 1) * bw - 1, hy + hh], fill=(255, 255, 255, 200))
+        # Scaled on the inner classes: a clipped end (black or white) shoots to the top
+        # instead of flattening the rest.
+        peak = max((max(c[1:-1]) for c in channels), default=0) or max(max(c) for c in channels) or 1
+        n = len(channels[0])
+        bw = hw / n
+        for i in range(n):
+            heights = sorted(
+                ((min(hh, round(hh * c[i] / peak)), k) for k, c in enumerate(channels)), reverse=True
+            )  # highest first
+            bottom = 0
+            for level, (bh, _) in enumerate(reversed(heights)):  # lowest first
+                if bh > bottom:
+                    on = frozenset(k for _, k in heights[: len(heights) - level])
+                    colour = HISTOGRAM_COLOURS[on] if len(channels) == 3 else (255, 255, 255, 200)
+                    d.rectangle([hx + i * bw, hy + hh - bh, hx + (i + 1) * bw - 1, hy + hh - bottom], fill=colour)
+                    bottom = bh
 
     def _loupe(self, d, view):
         """Bottom right, above the info bar: the magnification and a map of where we look."""
@@ -280,7 +308,9 @@ class Hud:
                 d.rounded_rectangle(
                     [px + self.px(10), ry + self.px(4), px + width - self.px(10), ry + row_h - self.px(4)],
                     radius=self.px(8),
-                    fill=(255, 190, 60, 70),
+                    # Drawing replaces the pixels, alpha included: a light, transparent amber
+                    # would let a bright scene wash the line out. Dark and nearly opaque.
+                    fill=(95, 65, 15, 230),
                 )
             colour = AMBER if chosen else WHITE
             d.text((px + self.px(28), ry + row_h // 2), label, font=self.font, fill=colour, anchor="lm")

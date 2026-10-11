@@ -98,12 +98,13 @@ class SettingsTest(unittest.TestCase):
                     "peaking_color": "pink",
                     "sharpness": 7,
                     "jpeg_size": "XXL",
+                    "histogram": "cmyk",
                 },
                 f,
             )
         loaded = load_settings(self.path)
         self.assertEqual(loaded.display, "detailed")
-        self.assertEqual(loaded.peaking_color, "red")
+        self.assertEqual((loaded.peaking_color, loaded.histogram), ("red", "rgb"))
         self.assertEqual((loaded.sharpness, loaded.jpeg_size), (0, "L"))
         self.assertTrue(loaded.grid)
         self.assertEqual(loaded.formats, ["jpeg", "dng"])

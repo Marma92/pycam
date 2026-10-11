@@ -341,15 +341,17 @@ void Engine::OnFrame(CompletedRequestPtr &request)
 	if (pending_ && zsl_ && app_.StillStream())
 		GrabStill(request);
 
+	// Before the display: in ZSL the statistics come from the viewfinder stream, on which
+	// the display thread paints the peaking and the zebras.
+	if (Clock::now() - last_stats_ >= kStatsPeriod)
+		PublishStats(request);
+
 	if (display_)
 	{
 		StreamInfo info;
 		if (Stream *viewfinder = app_.ViewfinderStream(&info))
 			display_->ShowFrame(request, viewfinder, info);
 	}
-
-	if (Clock::now() - last_stats_ >= kStatsPeriod)
-		PublishStats(request);
 }
 
 void Engine::GrabStill(CompletedRequestPtr &request)
@@ -417,10 +419,11 @@ void Engine::PublishStats(CompletedRequestPtr &request)
 	{
 		BufferReadSync sync(&app_, request->buffers[stream]);
 		unsigned step = std::max(1u, stream_info.width / 160);
-		LumaStats luma =
-			analyse_luma(sync.Get()[0].data(), stream_info.width, stream_info.height, stream_info.stride, step);
-		event["mean_y"] = luma.mean;
-		event["histogram"] = luma.histogram;
+		FrameStats frame_stats =
+			analyse_yuv420(sync.Get()[0].data(), stream_info.width, stream_info.height, stream_info.stride, step);
+		event["mean_y"] = frame_stats.mean;
+		event["histogram"] = frame_stats.luma;
+		event["histogram_rgb"] = frame_stats.rgb;
 	}
 
 	FrameInfo frame(request);

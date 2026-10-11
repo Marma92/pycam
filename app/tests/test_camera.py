@@ -46,7 +46,7 @@ class FakeHud:
 
     def load_review(self, path):
         self.reviewed.append(path)
-        return [0] * 64
+        return [0] * 64, [[1] * 64, [2] * 64, [3] * 64]
 
 
 class CameraTest(unittest.IsolatedAsyncioTestCase):
@@ -169,6 +169,24 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view.review, base + ".JPG")
         self.assertIn("1/125", view.review_info)
         self.assertIn("ISO 400", view.review_info)
+        self.assertEqual([c[0] for c in view.histogram_rgb], [1, 2, 3])
+        self.settings.histogram = "luma"
+        self.assertEqual((len(self.camera.view().histogram), self.camera.view().histogram_rgb), (64, ()))
+
+    async def test_histograms(self):
+        rgb = [[i] * 64 for i in range(3)]
+        self.camera.on_event({"event": "stats", "histogram": [9] * 64, "histogram_rgb": rgb})
+        view = self.camera.view()
+        self.assertEqual((view.histogram, view.histogram_rgb), ((), tuple(tuple(c) for c in rgb)))
+        self.settings.histogram = "luma"
+        view = self.camera.view()
+        self.assertEqual((view.histogram, view.histogram_rgb), ((9,) * 64, ()))
+        self.settings.histogram = "rgb"
+        self.camera.on_event({"event": "stats", "histogram": [9] * 64})  # an older engine: luminance only
+        self.assertEqual(self.camera.view().histogram, (9,) * 64)
+        self.settings.display = "simple"
+        view = self.camera.view()
+        self.assertEqual((view.histogram, view.histogram_rgb), ((), ()))
 
     async def test_any_key_ends_the_review_but_the_shutter_still_shoots(self):
         self.camera.hud = FakeHud()

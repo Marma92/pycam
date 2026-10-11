@@ -67,6 +67,7 @@ class Review:
     path: str
     info: str
     histogram: tuple
+    histogram_rgb: tuple
 
 
 class Camera:
@@ -244,13 +245,15 @@ class Camera:
         hud = self.hud
         if hud is None:
             return
-        histogram = await asyncio.to_thread(hud.load_review, path)
+        histogram, histogram_rgb = await asyncio.to_thread(hud.load_review, path)
         if shot is not self.last_shot or hud is not self.hud:
             return  # another photo was taken meanwhile, or the screen changed
         info = shot.name
         if shot.exposure_us:
             info += f"   {exp.format_shutter(shot.exposure_us / 1e6)}   ISO {round(shot.iso)}"
-        self.review = Review(path=path, info=info, histogram=tuple(histogram))
+        self.review = Review(
+            path=path, info=info, histogram=tuple(histogram), histogram_rgb=tuple(tuple(c) for c in histogram_rgb)
+        )
         if self._review_handle:
             self._review_handle.cancel()
         self._review_handle = asyncio.get_running_loop().call_later(self.settings.review_seconds, self.end_review)
@@ -465,9 +468,13 @@ class Camera:
         if self.review:
             # Nothing live in it: it is drawn once, not at every stats event.
             r = self.review
-            histogram = r.histogram if s.display == "detailed" else ()
             return HudView(
-                display=s.display, review=r.path, review_info=r.info, histogram=histogram, message=message, warning=warning
+                display=s.display,
+                review=r.path,
+                review_info=r.info,
+                **self._histograms(r.histogram, r.histogram_rgb),
+                message=message,
+                warning=warning,
             )
         shutter = e.shutter if e.shutter is not None else self.measured_shutter()
         iso = e.iso if e.iso is not None else round(self.measured_iso())
@@ -504,10 +511,18 @@ class Camera:
             menu=self.menu.rows() if self.menu else (),
             menu_index=self.menu.index if self.menu else 0,
             writing=self.writing,
-            histogram=tuple(self.stats.get("histogram", ())) if s.display == "detailed" else (),
+            **self._histograms(self.stats.get("histogram", ()), self.stats.get("histogram_rgb", ())),
             message=message,
             warning=warning,
         )
+
+    def _histograms(self, luma, rgb):
+        """The one histogram the HUD draws: in the detailed display, RGB when chosen and known."""
+        if self.settings.display != "detailed":
+            return {}
+        if self.settings.histogram == "rgb" and len(rgb) == 3:
+            return {"histogram_rgb": tuple(tuple(c) for c in rgb)}
+        return {"histogram": tuple(luma)}
 
     def redraw(self):
         self._redraw.set()

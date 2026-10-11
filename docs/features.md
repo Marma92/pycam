@@ -43,7 +43,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Mode de mesure | Pondérée centrale, spot, matricielle, dans le menu rapide. Icône dans le bandeau, cercle au centre de la visée en spot. Agit sur l'exposition automatique ; le posemètre du mode M mesure toute l'image. | ✅ |
 | Posemètre | Échelle −3…+3 IL au tiers dans le bandeau : toujours en M, et en avertissement (orange) quand l'exposition automatique est hors de portée. Précision ~0,15 IL. | ✅ |
 | Balance des blancs | Auto, 5 préréglages, Kelvin manuel (2000–10 000 K, en partant de la mesure), mémorisation des gains mesurés (charte grise). | ✅ |
-| Histogramme | Luminance et RVB dans le HUD. La luminance est faite, le RVB reste à faire. | 🟨 |
+| Histogramme | RVB additif (par défaut) ou luminance, au choix dans le menu rapide, en visée détaillée et à la revue. Calculé par le moteur sur le flux basse résolution. | ✅ |
 | Peaking | Couleur (5) et sensibilité (3) réglables ; seuil adaptatif ; ~6 ms par image. | ✅ |
 | Zébras | Seuil réglable dans le protocole (95 % par défaut) ; pas encore dans l'application. | ✅ |
 | Loupe de mise au point | ×5 / ×10 (le protocole accepte 1 à 16), déplaçable ; vrais pixels grâce au passage en pleine résolution (14 i/s) ; compatible avec le peaking ; le déclencheur la quitte. | ✅ |

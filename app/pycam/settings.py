@@ -21,6 +21,7 @@ STRATEGIES = ("switch", "zsl")
 PEAKING_COLORS = ("red", "yellow", "green", "blue", "white")
 PEAKING_SENSITIVITIES = ("low", "medium", "high")
 REVIEW_SECONDS = (0, 1, 2, 4)  # 0: no review after the shot
+HISTOGRAMS = ("rgb", "luma")
 
 
 def default_path():
@@ -47,6 +48,7 @@ class Settings:
     peaking_sensitivity: str = "medium"
     zebra: bool = False
     review_seconds: int = 2
+    histogram: str = "rgb"  # HISTOGRAMS, in the detailed display
     lenses: list = field(default_factory=lambda: copy.deepcopy(DEFAULT_LENSES))  # edit to add yours
     lens: int = -1  # index in lenses, -1: none chosen
     aperture: float | None = None  # f-number set on the ring, None: unknown
@@ -104,6 +106,8 @@ def load_settings(path):
         settings.peaking_sensitivity = defaults.peaking_sensitivity
     if settings.review_seconds not in REVIEW_SECONDS:
         settings.review_seconds = defaults.review_seconds
+    if settings.histogram not in HISTOGRAMS:
+        settings.histogram = defaults.histogram
     for name, allowed in (
         ("jpeg_quality", picture.JPEG_QUALITIES),
         ("jpeg_size", picture.JPEG_SIZES),

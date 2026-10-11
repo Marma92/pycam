@@ -73,6 +73,8 @@ def parse_value(text):
 def show(msg):
     if msg.get("event") == "stats":
         msg = dict(msg, histogram=f"[{len(msg.get('histogram', []))} classes]")
+        if "histogram_rgb" in msg:
+            msg["histogram_rgb"] = f"[{len(msg['histogram_rgb'])}×{len(msg['histogram_rgb'][0])} classes]"
     print(json.dumps(msg, ensure_ascii=False))
 
 

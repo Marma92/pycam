@@ -103,7 +103,12 @@ rpicam-apps installe sa bibliothèque cœur (`librpicam_app.so`, pkg-config `rpi
 
 ### 2.3 Analyse d'image et aides
 
-- ✅ **Histogramme** : luminance sur le flux `lores` (~77 000 pixels), à ~5 Hz. Le RVB reste à faire.
+- ✅ **Histogrammes** (`analysis.cpp`), luminance et RVB, à ~5 Hz.
+  - Calculés sur le flux `lores` (320×240), un pixel sur 2 dans chaque sens : 19 200 échantillons. En ZSL, qui n'a pas de `lores`, sur le flux de visée, avec un pas de largeur/160.
+  - Le RVB vient du YUV : chaque échantillon prend la chrominance de son bloc 2×2, puis passe par la conversion BT.601 pleine plage (sYCC, l'espace de couleur des flux de visée), en virgule fixe.
+  - Ils sont calculés avant de passer l'image à l'affichage : en ZSL, le fil d'affichage peint le peaking et les zébras dans ce même tampon.
+  - Le HUD dessine le RVB en additif : blanc là où les trois couches se recouvrent, jaune, magenta ou cyan là où deux se recouvrent, la couleur seule au-dessus. L'échelle ignore les classes extrêmes : un noir ou un blanc écrêté monte jusqu'en haut au lieu d'écraser le reste. Le rendu coûte ~7 ms de plus que la luminance seule (126 contre 119 ms par image en 1080p).
+  - Le menu rapide choisit RVB (par défaut) ou luminance. La revue après la prise montre le même, calculé sur le JPEG.
 - ✅ **Peaking et zébras** (`engine/src/focus_aids.cpp`, 2026-10-11). Ils sont **dessinés dans l'image de visée** (1024×768) juste avant son affichage, sur le fil d'affichage, plutôt que dans un calque séparé comme prévu au départ :
   - le tampon de visée ne sert qu'à l'écran : les photos, qui viennent d'autres flux, restent intactes ;
   - il n'y a pas de plan supplémentaire, alors qu'un 3e plan mis à l'échelle ferait sauter la mémoire de lignes du VC4 (§4) ;
@@ -224,7 +229,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | N | Objectif suivant parmi les profils, ou « non précisé ». Les profils sont dans `settings.json` : par défaut, les deux objectifs officiels Raspberry Pi. |
 | F | Ouverture réglée sur la bague : non précisée → ouverture max → f/2 → … → f/16. Écrite dans l'EXIF, affichée dans le bandeau. |
 | L | Loupe ×5 → ×10 → coupée. Dans la loupe, les flèches la déplacent au lieu de régler vitesse et ISO (en attendant le joystick). La grille est masquée, et le HUD montre le grossissement et une mini-carte de la zone. |
-| Tab | **Menu rapide** (le bouton Q de l'appareil) : ↑ / ↓ choisissent la ligne, ← / → changent la valeur, Tab ou Échap le ferment, le déclencheur le ferme et déclenche. Il contient le mode de mesure, les paramètres d'image (netteté, contraste, saturation dont N&B, réduction du bruit, taille et qualité JPEG), le format, la compression du RAW et la revue. Les touches directes restent, en attendant d'y regrouper le reste. |
+| Tab | **Menu rapide** (le bouton Q de l'appareil) : ↑ / ↓ choisissent la ligne, ← / → changent la valeur, Tab ou Échap le ferment, le déclencheur le ferme et déclenche. Il contient le mode de mesure, les paramètres d'image (netteté, contraste, saturation dont N&B, réduction du bruit, taille et qualité JPEG), le format, la compression du RAW, la revue et l'histogramme. Les touches directes restent, en attendant d'y regrouper le reste. |
 | Échap | Fermer le menu, ou quitter la loupe |
 
 **Pourquoi evdev.** Avec les overlays noyau, chaque bouton devient un évènement clavier (`KEY_*`) et chaque molette un évènement relatif (`REL_*`). Ça apporte plusieurs choses :
