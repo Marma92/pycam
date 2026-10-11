@@ -97,16 +97,23 @@ rpicam-apps installe sa bibliothèque cœur (`librpicam_app.so`, pkg-config `rpi
   - la compression LJ92 du DNG.
 - **Expositions longues.** L'IMX477 accepte des poses de plusieurs minutes (la limite exacte est à mesurer). La visée ne peut pas suivre : on affiche un compte à rebours.
 
-### 2.3 Analyse d'image (par trame, sur `lores`)
+### 2.3 Analyse d'image et aides
 
-Tout se calcule sur le flux `lores` (~77 000 pixels), donc pour quelques ms de CPU par trame :
+- ✅ **Histogramme** : luminance sur le flux `lores` (~77 000 pixels), à ~5 Hz. Le RVB reste à faire.
+- ✅ **Peaking et zébras** (`engine/src/focus_aids.cpp`, 2026-10-11). Ils sont **dessinés dans l'image de visée** (1024×768) juste avant son affichage, sur le fil d'affichage, plutôt que dans un calque séparé comme prévu au départ :
+  - le tampon de visée ne sert qu'à l'écran : les photos, qui viennent d'autres flux, restent intactes ;
+  - il n'y a pas de plan supplémentaire, alors qu'un 3e plan mis à l'échelle ferait sauter la mémoire de lignes du VC4 (§4) ;
+  - il ne peut y avoir aucun décalage entre l'image et ses contours.
+- **Algorithme du peaking.**
+  - Il travaille par blocs de 2×2 pixels, qui est la résolution de la chrominance en YUV420 : la moyenne de 4 pixels atténue le bruit, et un bloc se colore d'un coup en Y, U et V.
+  - Gradient par différences centrales entre blocs voisins.
+  - Seuil **adaptatif** : on garde la part la plus nette des blocs (1,5 / 3 / 6 % selon la sensibilité), sans descendre sous un plancher. Une image floue reste donc propre.
+  - Coût mesuré : **~6 ms par image** sur le Pi 3B.
+- **Zébras** : rayures diagonales qui défilent, sur les blocs au-dessus du seuil (95 % par défaut).
+- La commande `snapshot` enregistre l'image de visée telle qu'affichée, aides comprises : c'est ce qui permet de **vérifier l'affichage à distance**.
+- ⬜ **Posemètre** pour le mode M : luminance moyenne pondérée selon le mode de mesure, convertie en écart d'IL par rapport à la cible.
 
-- **Histogramme** : luminance et RVB, à ~5 Hz.
-- **Peaking** : gradient de Sobel sur Y, avec seuil et couleur réglables. On le dessine dans un calque ARGB à la résolution `lores` ; le scaler matériel du VC4 l'agrandit à la taille de l'écran.
-- **Zébras** : pixels au-dessus d'un seuil réglable.
-- **Posemètre** pour le mode M : luminance moyenne pondérée selon le mode de mesure, convertie en écart d'IL par rapport à la cible.
-
-Plus tard, si le CPU ne suit pas, le peaking pourra passer en shader GLES2 sur le GPU VC4.
+Plus tard, si le CPU ne suit pas, le peaking pourra passer en NEON, ou en shader GLES2 sur le GPU VC4.
 
 ## 3. Modes d'exposition (dans l'application)
 
@@ -133,7 +140,7 @@ Le moteur est **maître DRM/KMS**. Il n'y a pas de bureau graphique : on utilise
 |---|---|---|---|---|
 | vidéo | YUV420, mis à l'échelle par le HVS | visée en direct | tampons caméra → moteur, zéro copie (dmabuf) | ✅ |
 | HUD | RGBA (`ABGR8888`), plein écran, sans mise à l'échelle | marges noires, réglages, histogramme, grille, niveau, menus | application Python → `/dev/shm/pycam-hud` → `hud_commit` | ✅ |
-| analyse | ARGB, taille `lores` | peaking, zébras | moteur, à chaque trame | ⬜ (voir risque ci-dessous) |
+| ~~analyse~~ | — | peaking, zébras | dessinés dans l'image de visée (§2.3) | abandonné |
 
 - ✅ **Implémenté le 2026-10-11** (`engine/src/display.cpp`). Ce qu'on a appris sur le VC4 :
   - le pilote expose 16 plans overlay pour le CRTC HDMI, au-dessus du plan primaire de la console ;
@@ -142,7 +149,7 @@ Le moteur est **maître DRM/KMS**. Il n'y a pas de bureau graphique : on utilise
   - le mode de mélange `Coverage` donne l'alpha non prémultiplié de Pillow.
 - ⚠️ **Mémoire de lignes du HVS.** Un troisième plan *mis à l'échelle* (un fond noir agrandi en 1080p) a fait échouer le HUD avec `ENOSPC`. D'où :
   - les marges noires sont dessinées **dans le HUD**, qui n'est pas mis à l'échelle ;
-  - le futur plan d'analyse (peaking) risque le même problème. Plusieurs parades sont possibles : le dessiner à la taille de l'écran (sans mise à l'échelle), ou le composer dans le HUD côté moteur. Un écran 800×480 consommera aussi bien moins de mémoire de lignes que le 1080p actuel.
+  - le plan d'analyse prévu pour le peaking aurait eu le même problème : le peaking est donc dessiné dans l'image de visée (§2.3).
 - **Mesures, en 1080p :**
   - visée 22–30 i/s avec 0 à 1 image perdue sur 768 ; ZSL à 11,7 i/s, pas plus lente ;
   - moteur à ~10 % de CPU visée comprise, ~18 % avec un HUD rafraîchi à 5 Hz (copie de 8 Mo à chaque `hud_commit`) ;
@@ -190,6 +197,9 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | G | Grille des tiers |
 | R | RAW + JPEG ⇄ JPEG seul |
 | X | Stratégie : fluidité (bascule) ⇄ réactivité (ZSL) |
+| P | Peaking marche / arrêt |
+| C / V | Peaking : couleur suivante / sensibilité suivante (ce qui l'active au passage) |
+| E | Zébras marche / arrêt |
 
 **Pourquoi evdev.** Avec les overlays noyau, chaque bouton devient un évènement clavier (`KEY_*`) et chaque molette un évènement relatif (`REL_*`). Ça apporte plusieurs choses :
 

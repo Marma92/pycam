@@ -44,8 +44,8 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Posemètre | Indicateur d'écart en IL en mode M. | ⬜ |
 | Balance des blancs | Auto, préréglages, Kelvin manuel, mémorisation sur une charte grise. Auto et préréglages sont faits ; Kelvin et charte grise restent à faire. | 🟨 |
 | Histogramme | Luminance et RVB dans le HUD. La luminance est faite, le RVB reste à faire. | 🟨 |
-| Peaking | Couleur et sensibilité réglables. | ⬜ |
-| Zébras | Seuil réglable. | ⬜ |
+| Peaking | Couleur (5) et sensibilité (3) réglables ; seuil adaptatif ; ~6 ms par image. | ✅ |
+| Zébras | Seuil réglable dans le protocole (95 % par défaut) ; pas encore dans l'application. | ✅ |
 | Loupe de mise au point | ×2,5 / ×5 / ×10 ; vrais pixels grâce au passage en pleine résolution. | ⬜ |
 | Revue après la prise | Affichage N secondes, désactivable. | ⬜ |
 | Profils d'objectifs | Nom, focale, ouverture max, écrits dans l'EXIF. | ⬜ |

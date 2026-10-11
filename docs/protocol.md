@@ -22,6 +22,8 @@ Toute commande peut porter un `id`, qui est renvoyé tel quel dans la réponse. 
 | `set_controls` | `controls` : `{nom: valeur}` | — |
 | `capture` | `path` (sans extension), `formats` (`["jpeg","dng"]` par défaut), `quality` (93), `exif` (liste `"EXIF.FocalLength=16/1"`…) | `capture_id` |
 | `configure` | `strategy` : `"switch"` ou `"zsl"` | — |
+| `focus_aids` | `peaking` (bool), `peaking_color` (`red`, `yellow`, `green`, `blue`, `white` ou `[r, g, b]`), `peaking_sensitivity` (`low`, `medium`, `high`), `zebra` (bool), `zebra_level` (0–1, défaut 0,95) ; les clés absentes gardent leur valeur | — |
+| `snapshot` | `path` | — : la prochaine image de visée affichée, aides comprises mais sans le HUD, sera écrite en JPEG ; évènement `snapshot_done` ou `snapshot_error`. Sert au débogage à distance. |
 | `hud_info` | — | `display` : taille de l'écran, `image_rect` `[x, y, w, h]` (où est l'image), `hud` (chemin de la mémoire partagée, largeur, hauteur, stride, format `"RGBA"`), compteurs d'images affichées et perdues |
 | `hud_commit` | — | — (le contenu de la mémoire partagée a été copié : on peut dessiner le HUD suivant) |
 | `quit` | — | — (le moteur termine les écritures en cours puis s'arrête) |
@@ -63,6 +65,7 @@ Les noms sont ceux de libcamera, et `list_controls` donne la liste exacte.
 | `captured` | L'image est prise (copiée hors des tampons caméra) | `capture_id`, `latency_ms` (commande → image), `copy_ms`, `exposure_us`, `analogue_gain`, `digital_gain`. En mode `switch`, en plus : `reconfigure_ms` et `first_frame_ms`. |
 | `capture_done` | Les fichiers sont écrits | `capture_id`, `files`, `timings` (`jpeg_ms`, `dng_ms`), `write_queue` |
 | `capture_error` | Échec d'une capture ou de son écriture | `capture_id`, `error`, `files` déjà écrits |
+| `snapshot_done` / `snapshot_error` | Après `snapshot` | `path` (et `error`) |
 | `error` | Incident caméra | `error` |
 
 Le déclencheur peut être relâché, et une nouvelle prise acceptée, dès `captured`. `capture_done` arrive plus tard.
