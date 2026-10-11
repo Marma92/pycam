@@ -64,6 +64,28 @@ class SettingsTest(unittest.TestCase):
             f.write("{not json")
         self.assertEqual(load_settings(self.path), Settings())
 
+    def test_lens_profiles(self):
+        os.makedirs(os.path.dirname(self.path))
+        with open(self.path, "w") as f:
+            json.dump(
+                {
+                    "lenses": [{"name": "Fujinon 25mm", "focal_length": 25, "max_aperture": 1.4}, {"name": "broken"}],
+                    "lens": 0,
+                    "aperture": 4,
+                },
+                f,
+            )
+        loaded = load_settings(self.path)
+        self.assertEqual([lens["name"] for lens in loaded.lenses], ["Fujinon 25mm"])
+        self.assertEqual((loaded.lens, loaded.aperture), (0, 4.0))
+
+    def test_lens_index_out_of_range_means_no_lens(self):
+        os.makedirs(os.path.dirname(self.path))
+        with open(self.path, "w") as f:
+            json.dump({"lenses": [], "lens": 3, "aperture": 2.8}, f)
+        loaded = load_settings(self.path)
+        self.assertEqual((loaded.lens, loaded.aperture), (-1, None))
+
     def test_bad_values_are_ignored(self):
         os.makedirs(os.path.dirname(self.path))
         with open(self.path, "w") as f:

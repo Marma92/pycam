@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 
 from . import exposure as exp
+from . import lenses
 from .engine_client import EngineError, call_blocking
 from .settings import DISPLAY_MODES, PEAKING_COLORS, PEAKING_SENSITIVITIES, REVIEW_SECONDS, save_settings
 from .storage import Storage
@@ -305,6 +306,21 @@ class Camera:
         elif action == "review":
             s.review_seconds = _next(REVIEW_SECONDS, s.review_seconds)
             self.show_message(f"Revue : {s.review_seconds} s" if s.review_seconds else "Revue coupée")
+        elif action == "lens":
+            # none -> each profile -> none; the aperture belongs to the previous lens
+            s.lens = s.lens + 1 if s.lens + 1 < len(s.lenses) else -1
+            s.aperture = None
+            lens = self.lens()
+            self.show_message(lens["name"] if lens else "Objectif non précisé")
+        elif action == "aperture":
+            lens = self.lens()
+            if not lens:
+                self.show_message("Choisir d'abord l'objectif (N)", warning=True)
+                return
+            stops = [None] + lenses.aperture_stops(lens)  # None: not told
+            current = s.aperture if s.aperture in stops else None
+            s.aperture = _next(stops, current)
+            self.show_message(lenses.format_aperture(s.aperture) if s.aperture else "Ouverture non précisée")
         else:
             log.warning("unknown action %s", action)
             return
@@ -323,7 +339,11 @@ class Camera:
             base, folder, number = self.storage.next_photo()
             try:
                 reply = await self.engine.call(
-                    "capture", path=base, formats=self.settings.formats, quality=self.settings.jpeg_quality
+                    "capture",
+                    path=base,
+                    formats=self.settings.formats,
+                    quality=self.settings.jpeg_quality,
+                    exif=lenses.lens_exif(self.lens(), self.settings.aperture),
                 )
             except EngineError as e:
                 if e.code != "busy":
@@ -353,6 +373,11 @@ class Camera:
         self.show_message("Réactivité (ZSL)" if new == "zsl" else "Fluidité (bascule)")
 
     # --- Measures
+
+    def lens(self):
+        """The chosen lens profile, or None."""
+        s = self.settings
+        return s.lenses[s.lens] if 0 <= s.lens < len(s.lenses) else None
 
     def measured_shutter(self):
         return self.stats.get("exposure_us", 0) / 1e6
@@ -386,6 +411,7 @@ class Camera:
             ev=exp.format_ev(e.ev) if e.mode != "M" else "",
             awb=exp.AWB_LABELS[e.awb],
             formats="RAW+JPEG" if "dng" in s.formats else "JPEG",
+            lens=lenses.format_lens(self.lens(), s.aperture),
             shots=self.storage.shots_remaining(s.formats),
             zsl=s.strategy == "zsl",
             peaking=s.peaking_color if s.peaking else "",

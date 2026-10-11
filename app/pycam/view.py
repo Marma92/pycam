@@ -17,6 +17,7 @@ class HudView:
     ev: str = ""  # empty in M, where it does nothing
     awb: str = "AWB"
     formats: str = "RAW+JPEG"
+    lens: str = ""  # "16 mm f/2.8"
     shots: int = 0
     zsl: bool = False
     peaking: str = ""  # its colour when on

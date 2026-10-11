@@ -150,6 +150,8 @@ class Hud:
             text(view.ev, self.font, WHITE)
         text(view.awb, self.font, WHITE)
         text(view.formats, self.font, WHITE)
+        if view.lens:
+            text(view.lens, self.font, WHITE)
 
         shots = str(view.shots)
         d.text((x + w - self.px(24), top + bar_h // 2), shots, font=self.font_bold, fill=WHITE, anchor="rm")

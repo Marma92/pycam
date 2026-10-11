@@ -149,6 +149,32 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.camera.hud.reviewed, [])
         self.assertIsNone(self.camera.review)
 
+    async def test_lens_and_aperture_go_into_the_exif(self):
+        self.camera.on_action("shutter")
+        await self.settle()
+        self.assertEqual(self.engine.last("capture")["exif"], [])  # no lens chosen
+        self.camera.on_action("lens")  # first default profile: 6 mm f/1.2
+        self.camera.on_action("lens")  # 16 mm f/1.4
+        self.camera.on_action("aperture")  # f/1.4
+        self.camera.on_action("aperture")  # f/2
+        self.camera.on_action("aperture")  # f/2.8
+        self.camera.on_action("shutter")
+        await self.settle()
+        exif = self.engine.last("capture")["exif"]
+        self.assertIn("EXIF.FocalLength=1600/100", exif)
+        self.assertIn("EXIF.FNumber=280/100", exif)
+        self.assertEqual(self.camera.view().lens, "16 mm f/2.8")
+
+    async def test_changing_lens_forgets_the_aperture(self):
+        self.camera.on_action("lens")
+        self.camera.on_action("aperture")
+        self.camera.on_action("lens")
+        self.assertIsNone(self.settings.aperture)
+        self.camera.on_action("lens")  # back to no lens
+        self.assertEqual(self.camera.view().lens, "")
+        self.camera.on_action("aperture")  # refused without a lens
+        self.assertIsNone(self.settings.aperture)
+
     async def test_changing_the_peaking_colour_turns_it_on(self):
         self.camera.on_action("peaking_color")
         await self.settle()

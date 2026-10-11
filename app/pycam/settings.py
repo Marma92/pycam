@@ -4,12 +4,14 @@ The application is the source of truth: it pushes everything to the engine whene
 (re)connects (docs/architecture.md §6).
 """
 
+import copy
 import json
 import logging
 import os
 from dataclasses import dataclass, field, fields
 
 from .exposure import Exposure
+from .lenses import DEFAULT_LENSES, clean_lens
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +40,9 @@ class Settings:
     peaking_sensitivity: str = "medium"
     zebra: bool = False
     review_seconds: int = 2
+    lenses: list = field(default_factory=lambda: copy.deepcopy(DEFAULT_LENSES))  # edit to add yours
+    lens: int = -1  # index in lenses, -1: none chosen
+    aperture: float | None = None  # f-number set on the ring, None: unknown
     dcim: str = "~/DCIM"
     folder_number: int = 100
     next_number: int = 1
@@ -70,6 +75,15 @@ def load_settings(path):
         if f.name == "exposure":
             if isinstance(value, dict):
                 settings.exposure = Exposure.from_dict(value)
+        elif f.name == "lenses":
+            if isinstance(value, list):
+                lenses = [clean_lens(entry) for entry in value]
+                if None in lenses:
+                    log.warning("ignoring invalid lens profiles in %s", path)
+                settings.lenses = [lens for lens in lenses if lens]
+        elif f.name == "aperture":
+            if isinstance(value, (int, float)) and value > 0:
+                settings.aperture = float(value)
         elif type(value) is type(getattr(defaults, f.name)):
             setattr(settings, f.name, value)
     if settings.display not in DISPLAY_MODES:
@@ -84,6 +98,8 @@ def load_settings(path):
         settings.review_seconds = defaults.review_seconds
     if not set(settings.formats) <= {"jpeg", "dng"} or not settings.formats:
         settings.formats = defaults.formats
+    if not 0 <= settings.lens < len(settings.lenses):
+        settings.lens, settings.aperture = -1, None
     return settings
 
 
