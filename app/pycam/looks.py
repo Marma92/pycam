@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 BASE = "pycam-1"  # the ISP rendering presets are written for (engine/tuning)
 FORMAT = 1  # of preset.toml
 LUT_SIZE = 33
-COMPILER = 3  # bump when compile() changes: the cached LUTs are then remade
+COMPILER = 5  # bump when compile() changes: the cached LUTs are then remade
 BUILTIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
 DEFAULT = "standard"
 
@@ -42,7 +42,20 @@ LOOK_KEYS = {
     "green_curve",
     "blue_curve",
     "saturation",
+    "colours",
     "split_toning",
+}
+# Colour ranges for look.colours, as in the HSL panel of photo editors: their hue
+# (degrees). A colour between two of them takes a mix of both adjustments.
+COLOUR_RANGES = {
+    "red": 0,
+    "orange": 30,
+    "yellow": 60,
+    "green": 120,
+    "aqua": 180,
+    "blue": 225,
+    "purple": 270,
+    "magenta": 315,
 }
 
 
@@ -139,6 +152,19 @@ def load_preset(folder):
         mixer = look["mixer"]
         if not (isinstance(mixer, list) and len(mixer) == 3 and all(isinstance(v, (int, float)) for v in mixer) and sum(mixer) > 0):
             raise PresetError("look.mixer : trois poids [rouge, vert, bleu], de somme positive")
+    colours = look.get("colours", {})
+    if not isinstance(colours, dict) or set(colours) - set(COLOUR_RANGES):
+        raise PresetError("look.colours : des plages parmi " + ", ".join(COLOUR_RANGES))
+    for key, value in colours.items():
+        if not (
+            isinstance(value, list)
+            and len(value) == 3
+            and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value)
+            and -60 <= value[0] <= 60
+            and 0 <= value[1] <= 3
+            and -1 <= value[2] <= 1
+        ):
+            raise PresetError(f"look.colours.{key} : [teinte -60..60 degrés, saturation 0..3, luminosité -1..1]")
     toning = look.get("split_toning", {})
     for key in ("shadows", "highlights"):
         if key in toning:
@@ -370,23 +396,54 @@ def _lookup(table, x):
 # --- Compilation
 
 
+def _colour_adjustment(ranges, hue):
+    """(hue shift, saturation factor, lightness) for a hue in degrees: a linear mix of the
+    two ranges around it. ranges: [(range hue, (shift, saturation, lightness))], sorted."""
+    for i, (h0, a0) in enumerate(ranges):
+        h1, a1 = ranges[(i + 1) % len(ranges)]
+        span = (h1 - h0) % 360 or 360
+        offset = (hue - h0) % 360
+        if offset <= span:
+            t = offset / span
+            return tuple(x0 + (x1 - x0) * t for x0, x1 in zip(a0, a1))
+    return 0.0, 1.0, 0.0
+
+
+_preset_tables = {}  # (digest, size) -> table: changing the contrast or the saturation reuses it
+
+
 def compile_look(preset, contrast=0, saturation=0, size=LUT_SIZE):
     """The preset and the picture settings as one LUT: size^3 RGB triplets 0..1 on the base,
     red varying fastest.
 
-    Order, as in a film camera: the preset's LUT, the black and white mix (the emulsion's
-    sensitivity), the tone curves (its characteristic curve), its saturation, the toning;
-    then the strength (mix with the base); then the picture settings."""
+    In two steps: the preset (slow, up to ~3 s on the Pi: kept in memory), then the
+    picture settings on its result (fast: a dial turned in the menu applies quickly)."""
+    key = (preset.digest, size)
+    table = _preset_tables.get(key)
+    if table is None:
+        table = _preset_table(preset, size)
+        if len(_preset_tables) >= 4:
+            _preset_tables.pop(next(iter(_preset_tables)))
+        _preset_tables[key] = table
+    return _adjust(table, contrast, saturation)
+
+
+def _preset_table(preset, size):
+    """Order, as in a film camera: the preset's LUT, the black and white mix (the emulsion's
+    sensitivity), the tone curves (its characteristic curve), the colour ranges and the
+    saturation (its dyes), the toning; then the strength (mix with the base)."""
     look = preset.look_table
     user_lut = read_lut_file(look["lut"]) if "lut" in look else None
     strength = look.get("strength", 1.0)
-    mono = bool(look.get("monochrome", False)) or SATURATION[saturation] == 0
+    mono = bool(look.get("monochrome", False))
     mixer = look.get("mixer", (0.299, 0.587, 0.114))
     total = sum(mixer)
     mixer = [m / total for m in mixer]
     tone = curve_table(look["tone_curve"]) if "tone_curve" in look else None
     channel_curves = [curve_table(look[k]) if k in look else None for k in ("red_curve", "green_curve", "blue_curve")]
     look_saturation = look.get("saturation", 1.0)
+    colour_table = dict(look.get("colours", ()))
+    colour_ranges = sorted((hue, tuple(colour_table.get(name, (0, 1, 0)))) for name, hue in COLOUR_RANGES.items())
     toning = dict(look.get("split_toning", ()))
     tints = []
     for key, weight in (("shadows", lambda y: (1 - y) ** 2), ("highlights", lambda y: y**2)):
@@ -395,8 +452,6 @@ def compile_look(preset, contrast=0, saturation=0, size=LUT_SIZE):
             rgb = colorsys.hsv_to_rgb(hue / 360, 1, 1)
             luma = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
             tints.append(([c - luma for c in rgb], amount, weight))
-    k_contrast = CONTRAST[contrast]
-    user_saturation = SATURATION[saturation] if SATURATION[saturation] > 0 else 1.0
 
     step = 1 / (size - 1)
     table = []
@@ -415,6 +470,14 @@ def compile_look(preset, contrast=0, saturation=0, size=LUT_SIZE):
                     g = _lookup(channel_curves[1], g)
                 if channel_curves[2]:
                     b = _lookup(channel_curves[2], b)
+                if colour_table and not mono:
+                    h, s, v = colorsys.rgb_to_hsv(*(min(max(c, 0.0), 1.0) for c in (r, g, b)))
+                    if s > 0:
+                        shift, k_sat, light = _colour_adjustment(colour_ranges, h * 360)
+                        # The greys stay put: the changes grow with the saturation.
+                        v = min(1.0, v * (1 + light * s))
+                        s = min(1.0, s * k_sat)
+                        r, g, b = colorsys.hsv_to_rgb(((h * 360 + shift * min(1.0, 4 * s)) % 360) / 360, s, v)
                 if look_saturation != 1.0 and not mono:
                     y = 0.299 * r + 0.587 * g + 0.114 * b
                     r, g, b = y + look_saturation * (r - y), y + look_saturation * (g - y), y + look_saturation * (b - y)
@@ -423,13 +486,26 @@ def compile_look(preset, contrast=0, saturation=0, size=LUT_SIZE):
                     r, g, b = r + w * chroma[0], g + w * chroma[1], b + w * chroma[2]
                 if strength != 1.0:
                     r, g, b = r0 + strength * (r - r0), g0 + strength * (g - g0), b0 + strength * (b - b0)
-                if k_contrast:
-                    r, g, b = (c + k_contrast * c * (1 - c) * (2 * c - 1) for c in (min(max(v, 0.0), 1.0) for v in (r, g, b)))
-                if user_saturation != 1.0:
-                    y = 0.299 * r + 0.587 * g + 0.114 * b
-                    r, g, b = y + user_saturation * (r - y), y + user_saturation * (g - y), y + user_saturation * (b - y)
                 table.append((min(max(r, 0.0), 1.0), min(max(g, 0.0), 1.0), min(max(b, 0.0), 1.0)))
     return table
+
+
+def _adjust(table, contrast, saturation):
+    """The picture settings of the menu, on the preset's result: an S curve for the
+    contrast, then the saturation around the luma (-3: black and white)."""
+    k_contrast = CONTRAST[contrast]
+    k_saturation = SATURATION[saturation]
+    if not k_contrast and k_saturation == 1.0:
+        return table
+    out = []
+    for r, g, b in table:
+        if k_contrast:
+            r, g, b = (c + k_contrast * c * (1 - c) * (2 * c - 1) for c in (r, g, b))
+        if k_saturation != 1.0:
+            y = 0.299 * r + 0.587 * g + 0.114 * b
+            r, g, b = y + k_saturation * (r - y), y + k_saturation * (g - y), y + k_saturation * (b - y)
+        out.append((min(max(r, 0.0), 1.0), min(max(g, 0.0), 1.0), min(max(b, 0.0), 1.0)))
+    return out
 
 
 def is_identity(table, size, tolerance=0.5 / 255):

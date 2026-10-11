@@ -1,0 +1,32 @@
+# Inspiré du négatif couleur Kodak Portra 400 (docs/presets.md §6).
+# Première version (méthode A), réglée sur les scans de l'auteur (4) et d'un ami photographe, avec son accord
+# (48), mesurés le 2026-10-12 : noirs relevés (~0,08), tons moyens clairs, hautes
+# lumières douces (~0,94), couleurs pastel ; peaux dorées (teinte ~28-32°), verts vers le
+# jaune (~106°), ciels cyan clair (~207°), gris neutres.
+format = 1
+base = "pycam-1"
+name = "Portrait 400"
+short = "P400"
+description = "Négatif couleur : pastel, peaux dorées, contraste doux, grande latitude."
+
+[look]
+tone_curve = [
+    [0.0, 0.075], [0.05, 0.11], [0.15, 0.21], [0.3, 0.37], [0.5, 0.58],
+    [0.7, 0.76], [0.85, 0.87], [1.0, 0.955],
+]
+saturation = 0.88
+split_toning = { highlights = [40, 0.02] }
+
+[look.colours]  # [teinte en degrés, saturation, luminosité]
+red = [0, 0.9, 0.0]
+orange = [4, 0.95, 0.06]
+yellow = [0, 1.05, 0.0]
+green = [-8, 0.85, 0.03]
+aqua = [-4, 0.85, 0.02]
+blue = [-12, 0.85, 0.05]
+purple = [0, 0.8, 0.0]
+magenta = [0, 0.85, 0.0]
+
+[grain]
+amount = 0.12
+size = 1.2

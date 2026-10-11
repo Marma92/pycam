@@ -10,7 +10,9 @@ Statut : **orientations décidées le 2026-10-11** (§10). Les mesures datent du
 - l'aperçu en visée (`docs/protocol.md`, « look ») : une courbe, un mélange et une matrice, ajustés sur la LUT ; l'histogramme en direct est corrigé par les courbes des gris du look ;
 - l'outil `tools/pycam_preset.py`, pour créer et tester les presets sur un ordinateur (§5).
 
-**Reste** : les pellicules (§6), et `pycam_preset.py fit` pour la méthode B.
+- les premières versions des pellicules (méthode A, §6) : Portrait 400, Velours 50, Cinéma 800T, Cinéma 800T +2 et Triple-X 400.
+
+**Reste** : affiner les pellicules sur de vraies photos de l'appareil ; la balance des blancs fixe d'une pellicule (le tungstène de la Cinéma 800T) ; la halation ; `pycam_preset.py fit` pour la méthode B.
 
 **Ajouter un preset** : copier son dossier dans `~/.config/pycam/presets/`. Il apparaît à la prochaine ouverture d'un menu, et un preset du même nom de dossier qu'un preset intégré le remplace. Un preset illisible est ignoré, avec un avertissement dans le journal (`journalctl -u pycam`).
 
@@ -104,6 +106,10 @@ lut = "look.cube"                # facultatif ; appliqué en premier
 strength = 1.0                   # mélange avec la base
 tone_curve = [[0.0, 0.03], [0.25, 0.23], [0.5, 0.52], [0.75, 0.79], [1.0, 0.95]]  # noirs relevés, épaule douce
 saturation = 0.92
+
+[look.colours]                   # par famille de couleurs : [teinte ±60°, saturation ×, luminosité ±1]
+green = [-8, 0.85, 0.03]         # les verts vers le jaune, moins saturés, un peu plus clairs
+blue = [-12, 0.85, 0.05]         # les ciels vers le cyan
 split_toning = { shadows = [190, 0.04], highlights = [45, 0.03] }  # teinte, intensité
 
 [grain]
@@ -115,8 +121,10 @@ amount = 0.1
 ```
 
 - Pour une pellicule noir et blanc : `monochrome = true` et un **mélangeur de canaux**, `mixer = [rouge, vert, bleu]` (la sensibilité spectrale de l'émulsion). Plus tard, des **filtres** jaune, orange, rouge ou vert, réglables dans le menu comme sur un boîtier argentique.
-- Les courbes par canal s'écrivent `red_curve`, `green_curve` et `blue_curve`, sur le modèle de `tone_curve`. Les décalages de teinte (`hue`) ne sont pas encore gérés : en attendant, ils passent par une LUT.
-- Ordre d'application, comme dans un boîtier argentique : la LUT du preset, le mélange noir et blanc, les courbes, la saturation, le virage (`split_toning`), le mélange avec la base (`strength`), puis le contraste et la saturation du menu.
+- Les courbes par canal s'écrivent `red_curve`, `green_curve` et `blue_curve`, sur le modèle de `tone_curve`.
+- `[look.colours]` règle huit familles de couleurs, comme le panneau TSL d'un logiciel photo : `red` (0°), `orange` (30°), `yellow` (60°), `green` (120°), `aqua` (180°), `blue` (225°), `purple` (270°), `magenta` (315°). Une couleur entre deux familles reçoit un mélange des deux réglages ; les gris ne bougent pas.
+- Ordre d'application, comme dans un boîtier argentique : la LUT du preset, le mélange noir et blanc, les courbes, les familles de couleurs et la saturation, le virage (`split_toning`), le mélange avec la base (`strength`), puis le contraste et la saturation du menu.
+- Coût sur le Pi : ~2,7 s pour compiler un preset avec des familles de couleurs, une fois (gardé en mémoire et sur disque) ; un cran de contraste ou de saturation dans le menu, ~0,5 s.
 - Tout est optionnel : un preset peut n'être qu'une LUT, ou qu'une recette.
 
 ## 5. Créer ses presets sur un ordinateur
@@ -179,6 +187,20 @@ Avec plus de dix ans de pratique argentique, des pellicules et des scans à disp
 | Noir et blanc | Kodak Tri-X 400 | Triple-X 400 | TX400 | — |
 
 Plus tard : Ektar 100, Gold 200, Superia 400, Provia 100F, Kodachrome 64, HP5 Plus.
+
+### Premières versions (méthode A, 2026-10-12)
+
+Les références : les publications Instagram de l'auteur et d'un ami photographe (avec son accord), dont les légendes donnent la pellicule. Mesurées dans le navigateur, sans les enregistrer, en écartant les cadres et fonds blancs des montages. Ce sont des scans de labo ou maison, peut-être retouchés, recompressés par Instagram (~1440 px) : de bonnes références d'ensemble, pas des mesures de laboratoire.
+
+| Pellicule | Images | Noirs (1 %) | Médiane | Blancs (99 %) | Saturation | Couleurs |
+|---|---|---|---|---|---|---|
+| Portra 400 | 48 + 4 | 0,08 | 0,55 | 0,94 | 0,25 | peaux ~28-32°, verts ~106° (vers le jaune), ciels ~207° (cyan), gris neutres |
+| Velvia 50 | 3 | 0,075 | 0,56 | 0,96 | 0,32 | ciels ~219° (plus profonds), jaunes et verts saturés |
+| CineStill 800T | 4 | 0,11 | 0,35 | 0,85 | 0,31 | mat ; verts ~140° (canard) |
+| CineStill 800T poussée +2 | 10 | 0,03 | 0,25 | 0,89 | 0,59 | bleus ~207° et rouges très saturés |
+| Tri-X 400 | 5 | 0,03 | 0,44 | 0,92 | — | contraste franc, épaule douce |
+
+Les presets correspondants (`app/pycam/presets/`) en reprennent les courbes et les couleurs, complétées par le caractère connu de chaque film. Ils ont été vérifiés sur une mire de synthèse et une photo de l'appareil : les premières versions de Velours 50 et Cinéma 800T +2, trop saturées, écrasaient les couleurs vives en aplats ; elles ont été atténuées. La CineStill 800T a deux presets, développement normal et poussé, parce que les deux rendus diffèrent nettement. Ce qui manque encore : la halation des CineStill, la balance tungstène fixe, et le réglage fin sur de vraies scènes (peaux, végétation, nuit).
 
 ### Protocole de prise de vue pour la méthode B
 

@@ -56,6 +56,22 @@ class LooksTest(unittest.TestCase):
             self.assertAlmostEqual(table[round(x * 1000)], y, places=6)
         self.assertTrue(all(b >= a for a, b in zip(table, table[1:])))  # monotone
 
+    def test_colour_ranges(self):
+        preset = self.preset("[look.colours]\ngreen = [-60, 1, 0]\nblue = [0, 0.5, 0]\norange = [10, 1, 0]\n")
+        table = looks.compile_look(preset, size=5)
+        at = lambda r, g, b: table[(b * 5 + g) * 5 + r]  # noqa: E731
+        self.assertTrue(all(abs(c - 0.5) < 1e-9 for c in at(2, 2, 2)))  # the greys stay put
+        self.assertEqual([round(c, 6) for c in at(0, 4, 0)], [1, 1, 0])  # green turned yellow
+        # Pure blue is 240 degrees: a third of the way to purple, so two thirds of the change.
+        self.assertEqual([round(c, 6) for c in at(0, 0, 4)], [0.333333, 0.333333, 1])
+        # Between two ranges, a mix: hue 45 is halfway from orange (30) to yellow (60).
+        ranges = sorted((h, (10, 1, 0) if n == "orange" else (0, 1, 0)) for n, h in looks.COLOUR_RANGES.items())
+        self.assertAlmostEqual(looks._colour_adjustment(ranges, 45)[0], 5)
+        self.assertAlmostEqual(looks._colour_adjustment(ranges, 350)[0], 0)  # magenta -> red: nothing
+        for bad in ("teal = [0, 1, 0]", "green = [90, 1, 0]", "green = [0, 1]"):
+            with self.subTest(bad=bad), self.assertRaises(looks.PresetError):
+                self.preset(f"[look.colours]\n{bad}\n", "bad")
+
     def test_contrast_and_strength(self):
         plain = self.preset("", "plain")
         dark = looks.compile_look(plain, contrast=2, size=5)[1 * 31]  # grey 0.25: darker

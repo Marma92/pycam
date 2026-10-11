@@ -1,0 +1,32 @@
+# Inspiré de la CineStill 800T, développée normalement (docs/presets.md §6).
+# Première version (méthode A), réglée sur les scans de l'auteur à Paris (4), mesurés le
+# 2026-10-12 : rendu mat, noirs très relevés (~0,11), blancs plafonnés (~0,85), couleurs
+# sourdes (0,31), verts vers le bleu canard (~140°). La halation (halo rouge autour des
+# lumières) n'est pas encore imitée : c'est un effet spatial, pas une LUT.
+format = 1
+base = "pycam-1"
+name = "Cinéma 800T"
+short = "C800T"
+description = "Pellicule cinéma tungstène : mate, ombres canard, couleurs sourdes."
+
+[look]
+tone_curve = [
+    [0.0, 0.09], [0.1, 0.14], [0.25, 0.25], [0.5, 0.47], [0.75, 0.70],
+    [0.9, 0.81], [1.0, 0.88],
+]
+saturation = 0.9
+split_toning = { shadows = [185, 0.05], highlights = [30, 0.03] }
+
+[look.colours]  # [teinte en degrés, saturation, luminosité]
+red = [0, 1.05, 0.0]
+orange = [0, 0.9, 0.0]
+yellow = [-6, 0.9, 0.0]
+green = [18, 0.8, 0.0]
+aqua = [0, 1.0, 0.0]
+blue = [-8, 0.95, 0.0]
+purple = [0, 0.9, 0.0]
+magenta = [0, 0.9, 0.0]
+
+[grain]
+amount = 0.3
+size = 1.4
