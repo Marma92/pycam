@@ -9,23 +9,38 @@
 
 ```
 engine/    moteur C++ (meson) → binaire pycam-engine
-app/       application Python → paquet pycam            (à venir)
-system/    unités systemd, extraits de config.txt, overlays (à venir)
-tools/     déploiement, audit, client de test du moteur
+app/       application Python → paquet pycam
+system/    modèles des services systemd et de /run/pycam
+tools/     déploiement, installation des services, audit, outils de test
 docs/
 ```
+
+## Services (l'appareil au quotidien)
+
+Le Pi démarre directement sur l'appareil photo : deux services systemd, `pycam-engine` (le moteur) et `pycam` (l'application), installés depuis `~/pycam` :
+
+```bash
+sudo sh tools/install-services.sh             # installer, activer au démarrage, démarrer
+sudo sh tools/install-services.sh --remove    # tout retirer
+```
+
+- **Journaux** : `journalctl -u pycam-engine -u pycam -f`.
+- **Arrêter / relancer à la main** : `sudo systemctl stop pycam pycam-engine` et `start`. Pour lancer le moteur à la main (avec des options de test), il faut d'abord arrêter les services.
+- **Robustesse** : le moteur redémarre seul s'il plante, l'application se reconnecte seule au moteur, et les deux réessaient indéfiniment au démarrage (la caméra peut apparaître après eux).
 
 ## Boucle de travail
 
 1. On édite sur le poste Windows, dans ce dépôt.
-2. `sh tools/deploy.sh` copie `engine/`, `app/`, `tools/` et `system/` vers `~/pycam` sur le Pi (`tar | ssh`), puis compile le moteur **sur le Pi**. Avec `--no-build`, il copie seulement.
+2. `sh tools/deploy.sh` copie `engine/`, `app/`, `tools/`, `system/` et `docs/` vers `~/pycam` sur le Pi (`tar | ssh`), puis compile le moteur **sur le Pi**. Avec `--no-build`, il copie seulement.
    - Compilation : meson + ninja, `ccache`, `-j2` pour ne pas saturer 1 Go de RAM.
    - Une recompilation complète prend ~1 min. Une recompilation incrémentale, quelques secondes.
-3. On lance le moteur sur le Pi, en arrière-plan :
+   - Si les services sont installés, il les redémarre pour prendre le nouveau code.
+3. Pour tester le moteur seul, on arrête les services et on le lance à la main :
    ```bash
+   sudo systemctl stop pycam pycam-engine
    cd ~/pycam && nohup engine/build/pycam-engine > /tmp/pycam-engine.log 2>&1 < /dev/null &
    ```
-   Options : `--zsl`, `--still-denoise cdn_fast`, `--zsl-buffers 3`… (`--help`).
+   Options : `--zsl`, `--still-denoise cdn_fast`, `--zsl-buffers 3`… (`--help`). Le socket est `/run/pycam/engine.sock` dans tous les cas.
 4. On le pilote avec le client de test :
    ```bash
    python3 tools/engine_cli.py state
@@ -35,7 +50,7 @@ docs/
    python3 tools/engine_cli.py raw '{"cmd": "quit"}'
    ```
    Le protocole est décrit dans `protocol.md`.
-5. On lance l'application, le moteur tournant déjà :
+5. L'application tourne en service ; à la main (services arrêtés, moteur lancé) :
    ```bash
    cd ~/pycam/app && nohup python3 -m pycam -v > /tmp/pycam-app.log 2>&1 < /dev/null &
    ```

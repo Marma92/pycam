@@ -202,7 +202,7 @@ Constaté le 2026-10-11 : le pilote HDMI du Pi expose aussi un périphérique `v
 
 ## 6. Protocole moteur ⇄ application
 
-Le moteur écoute sur un socket Unix. En développement, c'est `/tmp/pycam-engine.sock` ; le service systemd utilisera `/run/pycam/engine.sock`. Chaque message est un objet JSON sur une ligne.
+Le moteur écoute sur le socket Unix `/run/pycam/engine.sock`, et chaque message est un objet JSON sur une ligne. On a d'abord utilisé `/tmp`, abandonné parce que Debian y nettoie les vieux fichiers, ce qui est risqué pour un appareil allumé des jours.
 
 Le protocole implémenté est décrit dans **[protocol.md](protocol.md)** :
 
@@ -226,13 +226,21 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 
 ## 8. Système
 
-- **OS.** Raspberry Pi OS **Lite** 64 bits, sans bureau : le moteur doit pouvoir être maître DRM.
-- **Services.** Deux services systemd, `pycam-engine.service` et `pycam.service`, ce dernier dépendant du premier, avec redémarrage automatique.
-- **Démarrage rapide** (objectif : moins de 12 s jusqu'à la visée) :
-  - désactiver les services inutiles ;
-  - `boot_delay=0` et `disable_splash=1` ;
+- **OS.** Raspberry Pi OS 64 bits démarré en console, sans bureau : le moteur doit pouvoir être maître DRM.
+- ✅ **Services** (2026-10-11). Deux services systemd, installés par `tools/install-services.sh` depuis les modèles de `system/` :
+  - `pycam-engine.service` : moteur, `Nice=-5`, redémarrage automatique ;
+  - `pycam.service` : application. Elle ne dépend que *faiblement* du moteur (`Wants`) : elle se reconnecte seule, et un redémarrage du moteur ne la relance pas.
+  - Tous deux réessaient indéfiniment au démarrage, au cas où la caméra apparaîtrait tard.
+  - Le socket est dans `/run/pycam`, créé au démarrage par `tmpfiles.d`.
+- ⚠️ **Plymouth garde l'écran.** L'écran de démarrage (`splash` dans `cmdline.txt`) reste maître DRM de 12 s à 43 s après le démarrage du noyau, et le moteur, lancé à 21 s, n'avait pas l'écran. Deux parades :
+  - le service moteur commence par `plymouth quit --retain-splash`, comme le font les gestionnaires de session graphique : le logo reste affiché jusqu'à ce que la visée le remplace ;
+  - le moteur retente l'écran toutes les 2 s tant qu'il ne l'a pas, et l'annonce par l'évènement `display_ready`. Ça couvre aussi un écran branché après coup.
+- **Démarrage mesuré** (2026-10-11) : services lancés à 22 s après le démarrage du noyau, écran pris à 24,7 s, **visée à 25,4 s**. Il faut ajouter ~3–4 s de firmware avant le noyau. Gros postes repérés par `systemd-analyze critical-chain` : cloud-init, ~6 s (inutile après la première installation), le montage et la vérification de `/boot`, et le réseau.
+- **Démarrage rapide** (objectif M2 : moins de 12 s jusqu'à la visée) :
+  - désactiver les services inutiles, à commencer par cloud-init ;
+  - `boot_delay=0`, et peut-être remplacer le logo Plymouth par un écran pycam ;
   - ne pas attendre le réseau ;
-  - lancer le moteur tôt.
+  - lancer le moteur plus tôt (dépendances systemd minimales).
 - **Robustesse sur batterie.** Racine en lecture seule (`overlayroot`) plus une partition de données, pour qu'une coupure brutale ne corrompe pas le système. À activer une fois le projet stabilisé.
 - **Heure.** RTC I2C (overlay `i2c-rtc`), synchronisée par NTP quand le Wi-Fi est disponible.
 
@@ -258,7 +266,8 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 5. ✅ **Écran** : HDMI sans tactile.
 6. ✅ **Droits** : `sudo` sans mot de passe pour `ael` pendant le développement.
 7. 🟨 **Temps d'encodage réels.** Sur une image très bruitée (gain 16, donc difficile à compresser, JPEG de 2,1 Mo) : JPEG ~350 ms, DNG ~180–230 ms. Reste à confirmer sur une vraie scène.
-8. ⬜ **Temps de démarrage** : 47,8 s aujourd'hui (5,8 s noyau + 42 s espace utilisateur), mesuré par `systemd-analyze`. L'objectif est de moins de 12 s (M2).
+8. 🟨 **Temps de démarrage** : la visée apparaît 25,4 s après le démarrage du noyau (§8). Le démarrage complet du système prend ~50 s, mais l'appareil est utilisable avant. L'objectif est de moins de 12 s (M2).
+9. ⬜ **Durabilité des photos.** `capture_done` signifie « écrit », pas « sur la carte » : les données peuvent rester ~30 s dans le cache du noyau. Sur batterie, une coupure perdrait les dernières photos. Il faudra un `fsync` par fichier dans le thread d'écriture (coût à mesurer) avant l'usage nomade.
 
 ## 11. Décisions (résumé)
 

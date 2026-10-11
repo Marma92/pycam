@@ -10,11 +10,11 @@ Il vise à offrir :
 - du RAW DNG + JPEG ;
 - des commandes physiques, une batterie et une interface web.
 
-**Statut** : jalon M0 presque terminé.
+**Statut** : jalon M0 terminé. Le Pi 3B démarre directement sur l'appareil photo.
 
-- Le moteur caméra C++ (`engine/`) tourne sur le Pi 3B : visée en direct sur l'écran HDMI, déclenchement JPEG + DNG, mesures, pilotage par socket.
+- Le moteur caméra C++ (`engine/`) assure la visée en direct sur l'écran HDMI, le déclenchement JPEG + DNG, les mesures et le pilotage par socket.
 - L'application Python (`app/`) se pilote au clavier : modes P/S/A/M, HUD, rangement DCIM, réglages persistants.
-- Reste le démarrage automatique (systemd).
+- Deux services systemd (`system/`, `tools/install-services.sh`) les lancent au démarrage.
 
 ## Documentation
 
