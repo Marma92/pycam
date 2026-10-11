@@ -91,6 +91,10 @@ rpicam-apps installe sa bibliothèque cœur (`librpicam_app.so`, pkg-config `rpi
   - La config pipeline `disable_startup_frame_drops` a été essayée sans effet : aucune image n'est jetée au redémarrage.
   - Pour comparaison, Picamera2 (Python) plafonne la ZSL à 4 i/s, contre 11,7 i/s pour le moteur C++.
 - **File d'écriture.** Après la capture, le moteur revient *tout de suite* en visée. L'encodage JPEG, l'écriture DNG et l'EXIF tournent dans un thread dédié. La file est bornée par la mémoire, à environ 3 vues. Quand elle est pleine, le déclencheur est refusé et l'interface affiche « occupé ».
+- ⚠️ **Interblocage dans rpicam-apps** (trouvé le 2026-10-11). Depuis libcamera 0.5, les premières images après un démarrage arrivent marquées « démarrage », et rpicam-apps les jette dans le thread de libcamera. Pour cela, il prend le verrou que `StopCamera()` garde pendant qu'il attend… ce même thread. Arrêter la caméra pendant ces images (un déclenchement juste après une reconfiguration) gelait le moteur.
+  - Parade, puisqu'on lie la bibliothèque sans la modifier : le moteur **n'arrête jamais la caméra avant d'avoir reçu une vraie image** depuis son démarrage (ou après 3 s sans image).
+  - Un déclenchement pendant le démarrage attend donc ce délai (~0,8 s mesuré) au lieu de geler.
+  - Ces images de démarrage expliquent aussi les ~430 ms avant la première image en mode bascule, et pourquoi `disable_startup_frame_drops` n'y changeait rien : ce n'est plus le pipeline qui les jette.
 - **Optimisations possibles, plus tard** :
   - réutiliser des tampons préalloués pour la copie, ce qui évite les fautes de page (65–165 ms aujourd'hui) ;
   - l'encodeur JPEG matériel du VC4 (V4L2 M2M) ;
@@ -196,6 +200,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | D | Affichage : détaillé → simple → nature |
 | G | Grille des tiers |
 | R | RAW + JPEG ⇄ JPEG seul |
+| K | RAW compressé sans perte (défaut) ⇄ non compressé |
 | X | Stratégie : fluidité (bascule) ⇄ réactivité (ZSL) |
 | P | Peaking marche / arrêt |
 | C / V | Peaking : couleur suivante / sensibilité suivante (ce qui l'active au passage) |
@@ -238,7 +243,21 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 - **JPEG.** Qualité réglable. L'EXIF contient la vitesse, l'ISO et la date (venant de la RTC plus tard), puis l'orientation de l'IMU plus tard.
   - ✅ **Profil d'objectif** (2026-10-11, `app/pycam/lenses.py`). L'application passe des balises EXIF au moteur avec la commande `capture`, et rpicam-apps les écrit via libexif : `LensModel`, `LensMake`, `FocalLength`, `FocalLengthIn35mmFilm` (facteur de recadrage IMX477 ≈ 5,5 : un 16 mm équivaut à un 88 mm), `MaxApertureValue`, `LensSpecification`. Vérifié en relisant le fichier.
   - L'ouverture réglée sur la bague n'est pas connue de l'appareil. L'utilisateur l'indique (touche F) et elle est écrite en `FNumber` ; sinon, elle est omise plutôt qu'inventée.
-- **DNG.** RAW 12 bits avec la matrice couleur IMX477, lisible par Lightroom, darktable et RawTherapee. On utilise pour l'instant l'écrivain de rpicam-apps, qui **n'accepte pas de balises en plus** : le DNG ne porte donc pas encore le profil d'objectif. Il faudra notre propre écrivain DNG, en partant de celui de rpicam-apps (licence BSD-2). Ce même écrivain permettra la compression LJ92 sans perte, comme dans CinePI (`lj92.h`), pour diviser la taille par ~2.
+- ✅ **DNG** (2026-10-11, `engine/src/dng_writer.cpp`). RAW 12 bits avec la matrice couleur de l'IMX477.
+  - C'est **notre propre écrivain**, parti de celui de rpicam-apps (licence BSD-2), qui n'acceptait aucune balise en plus.
+  - Il écrit le **profil d'objectif** : les mêmes balises `EXIF.*` que le JPEG, plus `LensInfo` du DNG.
+  - Il offre la **compression sans perte** LJ92 (activée par défaut dans l'application, touche K) : **12,1 Mo au lieu de 24,8 (÷ 2,05)**, pour ~1,5 s d'écriture en plus, en arrière-plan.
+  - **Compatibilité vérifiée, et elle a dicté le format.** Quatre dispositions LJ92 ont été mesurées sur la même image :
+
+    | Disposition | Taille | LibRaw (RawTherapee…) | rawspeed (darktable) |
+    |---|---|---|---|
+    | CinePI : 2 lignes du capteur par ligne JPEG, prédicteur 6 | ÷ 2,03 | ✅ | ❌ trame plus large que l'image |
+    | 1 composante, prédicteur 6 | ÷ 1,40 | ✅ | ❌ prédicteur 6 non supporté |
+    | 2 composantes, prédicteur 6 | ÷ 1,62 | ✅ | ❌ prédicteur 6 non supporté |
+    | **Adobe : 2 composantes, prédicteur 1** | **÷ 2,05** | ✅ relu au bit près | ✅ rendu correct (`darktable-cli`) |
+
+  - Pour cela, la bibliothèque `lj92` (MIT, reprise de CinePI) a été étendue : composantes et prédicteur (voir `engine/third_party/lj92/README.md`).
+  - Un test d'aller-retour (`engine/tests/dng_roundtrip.sh`) écrit une vraie image en DNG, puis la fait relire par LibRaw au bit près.
 
 ## 8. Système
 

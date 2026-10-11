@@ -20,7 +20,7 @@ Toute commande peut porter un `id`, qui est renvoyé tel quel dans la réponse. 
 | `get_state` | — | `state` : caméra, stratégie, phase, fps, file d'écriture, flux, contrôles appliqués |
 | `list_controls` | — | `controls` : pour chaque contrôle supporté, `min`/`max`/`default` et éventuellement `values` (énumérations) |
 | `set_controls` | `controls` : `{nom: valeur}` | — |
-| `capture` | `path` (sans extension), `formats` (`["jpeg","dng"]` par défaut), `quality` (93), `exif` (liste `"EXIF.FocalLength=16/1"`…) | `capture_id` |
+| `capture` | `path` (sans extension), `formats` (`["jpeg","dng"]` par défaut), `dng_compression` (sans perte, `false` par défaut), `quality` (93), `exif` (liste `"EXIF.FocalLength=16/1"`… : toutes vont dans le JPEG ; celles de l'objectif et de l'ouverture aussi dans le DNG) | `capture_id` |
 | `configure` | `strategy` : `"switch"` ou `"zsl"` | — |
 | `focus_aids` | `peaking` (bool), `peaking_color` (`red`, `yellow`, `green`, `blue`, `white` ou `[r, g, b]`), `peaking_sensitivity` (`low`, `medium`, `high`), `zebra` (bool), `zebra_level` (0–1, défaut 0,95) ; les clés absentes gardent leur valeur | — |
 | `loupe` | `zoom` (1 = coupée, jusqu'à 16), `center` `[x, y]` (fractions de l'image, défaut le centre) ; les clés absentes gardent leur valeur | `loupe` : `{zoom, center}`. Entrer ou sortir de la loupe reconfigure la caméra (le capteur passe en pleine résolution) ; déplacer la zone ou changer de grossissement, non. |

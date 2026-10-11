@@ -40,6 +40,18 @@ sudo systemctl start pycam
 
 Un profil se présente ainsi : `{"name": "Fujinon 25 mm", "make": "Fujifilm", "focal_length": 25, "max_aperture": 1.4, "min_aperture": 22}`. `make` et `min_aperture` (16 par défaut) sont facultatifs, et un profil invalide est ignoré, avec un avertissement dans le journal.
 
+## Tester l'écriture DNG
+
+Toute modification de `engine/src/dng_writer.cpp` ou de `third_party/lj92` se vérifie par l'aller-retour, sur le Pi. Il faut LibRaw (`libraw-bin`) :
+
+```bash
+cd ~/pycam/engine && sh tests/dng_roundtrip.sh <un DNG pris par l'appareil>
+```
+
+Il réécrit l'image du DNG donné, en version non compressée puis compressée, avec notre écrivain. LibRaw doit relire les mêmes échantillons au bit près.
+
+darktable lit les DNG avec son propre décodeur, rawspeed, plus strict que LibRaw. En cas de changement de format, le vérifier aussi : `sudo apt install darktable` (~40 Mo), puis `darktable-cli photo.DNG photo.jpg --core`.
+
 ## Boucle de travail
 
 1. On édite sur le poste Windows, dans ce dépôt.

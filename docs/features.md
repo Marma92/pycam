@@ -48,7 +48,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Zébras | Seuil réglable dans le protocole (95 % par défaut) ; pas encore dans l'application. | ✅ |
 | Loupe de mise au point | ×5 / ×10 (le protocole accepte 1 à 16), déplaçable ; vrais pixels grâce au passage en pleine résolution (14 i/s) ; compatible avec le peaking ; le déclencheur la quitte. | ✅ |
 | Revue après la prise | Affichage 1, 2 ou 4 s, désactivable, avec nom, vitesse, ISO et histogramme de la photo. Visible ~1,5 s après l'appui : l'application décode le JPEG en 1/4 (~0,2 s). Plus rapide plus tard si le moteur fournit l'aperçu à partir du YUV. | ✅ |
-| Profils d'objectifs | Nom, marque, focale, ouverture max (et l'ouverture réglée, si indiquée) écrits dans l'EXIF du JPEG ; choix par N et F, affichage dans le bandeau. Pas encore dans le DNG : il faut notre propre écrivain DNG. Pas encore de menu pour créer un profil : on édite `settings.json`. | 🟨 |
+| Profils d'objectifs | Nom, marque, focale, ouverture max (et l'ouverture réglée, si indiquée) écrits dans l'EXIF du JPEG et du DNG ; choix par N et F, affichage dans le bandeau. Pas encore de menu pour créer un profil : on édite `settings.json`. | ✅ |
 | Paramètres d'image | Qualité JPEG, RAW on/off, résolution, netteté, contraste, saturation, débruitage. | ⬜ |
 | Réglages persistants | Fichier JSON, écriture atomique ; reprise à l'allumage. | ✅ |
 
@@ -75,7 +75,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Pose longue / pose B | Jusqu'à la limite du capteur (à mesurer), avec compte à rebours. | ⬜ |
 | ZSL | Déclenchement instantané, en option (compromis avec la fluidité de visée). | ⬜ |
 | Profils d'image | « Simulations » : courbes et couleurs via des fichiers de tuning libcamera. | ⬜ |
-| DNG compressé | LJ92 sans perte, comme dans CinePI, pour ~2× moins de place. | ⬜ |
+| DNG compressé | LJ92 sans perte, au format Adobe (2 composantes, prédicteur 1) : 12,1 Mo au lieu de 24,8 ; relu au bit près par LibRaw et rendu par darktable. Activé par défaut, touche K. Fait en avance avec M1. | ✅ |
 | Vidéo | H.264 1080p30 matériel, avec les réglages manuels. | ⬜ |
 | Point d'accès Wi-Fi | Pour le terrain, sans box. | ⬜ |
 | GPS | Géomarquage, en option. | ⬜ |
