@@ -197,6 +197,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | `camera` | Le contrôleur : actions, état, rendu du HUD (5 Hz max, seulement si la vue change). Il renvoie tout l'état au moteur à chaque (re)connexion. | ✅ |
 | `exposure` | Modes P/S/A/M, pas de 1/3 IL, tables de vitesses et d'ISO. Une molette tournée en auto part de la valeur mesurée. | ✅ |
 | `inputs` | Lecture **evdev** de tout ce qui a des touches utiles ; les périphériques sont « grabbés » et ceux branchés à chaud sont détectés. | ✅ |
+| `menu` | Menus Q (12 réglages de prise de vue) et MENU (tous les réglages, par section, avec défilement). | ✅ |
 | `hud` / `view` | `view` décrit ce qu'il faut montrer (une valeur comparable) ; `hud` le dessine avec Pillow. | ✅ |
 | `settings` | Réglages persistants dans `~/.config/pycam/settings.json`, écriture atomique. JSON plutôt que TOML : la bibliothèque standard sait le lire *et* l'écrire. | ✅ |
 | `storage` | DCIM, numérotation persistante, espace libre. | ✅ (suppression à venir) |
@@ -205,32 +206,45 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | `sensors` | IMU (niveau, orientation), batterie, RTC. | ⬜ |
 | `web` | `aiohttp` : télécommande, galerie, téléchargement, visée distante en MJPEG basse résolution. | ⬜ |
 
-**Commandes clavier, en attendant les boutons.** Les lettres sont choisies pour être au même endroit en QWERTY et en AZERTY.
+**Commandes clavier, en attendant les boutons.** Le clavier ne garde qu'une touche par commande de l'appareil (`hardware.md` §2) ; tous les autres réglages sont dans les menus. Les touches sont choisies pour être au même endroit en QWERTY et en AZERTY.
 
-| Touche | Action |
-|---|---|
-| Espace / Entrée | Déclencher |
-| ← / → | Vitesse plus lente / plus rapide (molette avant) |
-| ↓ / ↑ | ISO (molette arrière) |
-| Page↓ / Page↑ | Correction d'exposition |
-| S / I | Vitesse / ISO : basculer automatique ⇄ manuel |
-| B | Balance des blancs : auto → soleil → nuageux → tungstène → fluo → intérieur → Kelvin → auto |
-| U / J | Température en Kelvin, plus chaude / plus froide (le premier appui part de la température mesurée) |
-| H | Mémoriser la balance actuelle (viser une charte grise en automatique, puis H) |
-| D | Affichage : détaillé → simple → nature |
-| G | Grille des tiers |
-| R | RAW + JPEG ⇄ JPEG seul |
-| K | RAW compressé sans perte (défaut) ⇄ non compressé |
-| X | Stratégie : fluidité (bascule) ⇄ réactivité (ZSL) |
-| P | Peaking marche / arrêt |
-| C / V | Peaking : couleur suivante / sensibilité suivante (ce qui l'active au passage) |
-| E | Zébras marche / arrêt |
-| T | Durée de la revue après la prise : coupée, 1, 2 ou 4 s. Pendant la revue, toute touche la ferme ; le déclencheur la ferme *et* déclenche. |
-| N | Objectif suivant parmi les profils, ou « non précisé ». Les profils sont dans `settings.json` : par défaut, les deux objectifs officiels Raspberry Pi. |
-| F | Ouverture réglée sur la bague : non précisée → ouverture max → f/2 → … → f/16. Écrite dans l'EXIF, affichée dans le bandeau. |
-| L | Loupe ×5 → ×10 → coupée. Dans la loupe, les flèches la déplacent au lieu de régler vitesse et ISO (en attendant le joystick). La grille est masquée, et le HUD montre le grossissement et une mini-carte de la zone. |
-| Tab | **Menu rapide** (le bouton Q de l'appareil) : ↑ / ↓ choisissent la ligne, ← / → changent la valeur, Tab ou Échap le ferment, le déclencheur le ferme et déclenche. Il contient le mode de mesure, les paramètres d'image (netteté, contraste, saturation dont N&B, réduction du bruit, taille et qualité JPEG), le format, la compression du RAW, la revue et l'histogramme. Les touches directes restent, en attendant d'y regrouper le reste. |
-| Échap | Fermer le menu, ou quitter la loupe |
+| Touche | Commande de l'appareil | Action |
+|---|---|---|
+| Espace / Entrée | Déclencheur | Déclencher. Ferme aussi un menu, la loupe ou la revue, et déclenche quand même. |
+| ← / → | Molette avant | Vitesse plus lente / plus rapide. Dans un menu : changer la valeur. |
+| ↓ / ↑ | Molette arrière | ISO. Dans un menu : changer de ligne. |
+| S / I | Appui sur la molette avant / arrière | Vitesse / ISO : basculer automatique ⇄ manuel (le passage en manuel part de la valeur mesurée). |
+| Page↓ / Page↑ | — | Correction d'exposition. Pas encore de commande physique : point ouvert, voir ci-dessous. |
+| Tab | Q | Menu rapide ; Tab le ferme. Depuis le menu complet, passe au menu rapide. |
+| Échap | MENU | Menu complet ; Échap le ferme. Dans la loupe, la quitte d'abord. |
+| D | DISP | Affichage : détaillé → simple → nature. |
+| L | LOUPE | Loupe ×5 → ×10 → coupée. Dans la loupe, les flèches la déplacent au lieu de régler vitesse et ISO (en attendant le joystick). La grille est masquée, et le HUD montre le grossissement et une mini-carte de la zone. |
+| 1 / 2 | Fn1 / Fn2 | Ce que le menu leur attribue : peaking (Fn1 par défaut), zébras (Fn2 par défaut), mémoriser la balance, grille, bascule ⇄ ZSL, RAW + JPEG ⇄ JPEG. |
+
+Pendant la revue après la prise, toute touche la ferme ; le déclencheur la ferme *et* déclenche.
+
+**Les menus** (`menu.py`). La molette arrière choisit la ligne, la molette avant change la valeur, qui s'applique tout de suite.
+
+- **Q, réglages rapides** : les 12 réglages de prise de vue. Mesure de la lumière, balance des blancs, température, peaking (coupé ou sa couleur), zébras, netteté, contraste, saturation (dont N&B), réduction du bruit, format, déclenchement (bascule ou ZSL), ouverture.
+- **MENU, menu complet** : tous les réglages, par section, la configuration comprise.
+  - Exposition : mesure, balance des blancs, température.
+  - Mise au point : peaking, sensibilité du peaking, zébras.
+  - Image : netteté, contraste, saturation, réduction du bruit.
+  - Fichiers : format, taille et qualité JPEG, compression du RAW.
+  - Prise de vue : déclenchement, revue après la prise.
+  - Objectif : profil d'objectif, ouverture.
+  - Affichage : grille des tiers, histogramme.
+  - Boutons : fonctions de Fn1 et Fn2.
+
+  Il fait 22 lignes et défile ; une barre à droite montre où l'on est.
+- Quelques lignes ont un comportement propre :
+  - **Balance des blancs** : la valeur « Mémorisée » garde les gains que la balance automatique mesure à cet instant (viser une charte grise d'abord). Fn peut faire la même chose sans ouvrir le menu.
+  - **Température** : hors mode Kelvin, elle affiche la température mesurée (« ≈ 4500 K »). Le premier cran part de cette valeur et passe la balance en Kelvin.
+  - **Déclenchement** : le changement n'est gardé que si le moteur l'accepte (il refuse pendant une prise).
+  - **Objectif** : en changer oublie l'ouverture indiquée. Les profils sont dans `settings.json` ; par défaut, les deux objectifs officiels Raspberry Pi.
+  - **Ouverture** : celle de la bague, écrite dans l'EXIF et affichée dans le bandeau. Sans objectif choisi, il n'y a rien à régler.
+
+**Point ouvert : la correction d'exposition.** Elle n'a pas de commande physique dans `hardware.md`, où la molette avant fait la vitesse en S/M et la correction en P/A. Aujourd'hui, la molette avant fait toujours la vitesse, et le premier cran en automatique passe en manuel en partant de la mesure. Il faudra choisir avant de câbler : soit adopter le comportement de `hardware.md`, soit ajouter une molette ou une bague de correction.
 
 **Pourquoi evdev.** Avec les overlays noyau, chaque bouton devient un évènement clavier (`KEY_*`) et chaque molette un évènement relatif (`REL_*`). Ça apporte plusieurs choses :
 
@@ -264,11 +278,11 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 - **Arborescence** : `~/DCIM/100PYCAM/PYC_0001.JPG` et `.DNG`. Le numéro est persistant et le dossier change tous les 9999 fichiers. Si on ajoute une clé USB plus tard, elle se monte au même endroit.
 - **JPEG.** Qualité réglable. L'EXIF contient la vitesse, l'ISO et la date (venant de la RTC plus tard), puis l'orientation de l'IMU plus tard.
   - ✅ **Profil d'objectif** (2026-10-11, `app/pycam/lenses.py`). L'application passe des balises EXIF au moteur avec la commande `capture`, et rpicam-apps les écrit via libexif : `LensModel`, `LensMake`, `FocalLength`, `FocalLengthIn35mmFilm` (facteur de recadrage IMX477 ≈ 5,5 : un 16 mm équivaut à un 88 mm), `MaxApertureValue`, `LensSpecification`. Vérifié en relisant le fichier.
-  - L'ouverture réglée sur la bague n'est pas connue de l'appareil. L'utilisateur l'indique (touche F) et elle est écrite en `FNumber` ; sinon, elle est omise plutôt qu'inventée.
+  - L'ouverture réglée sur la bague n'est pas connue de l'appareil. L'utilisateur l'indique (ligne Ouverture des menus) et elle est écrite en `FNumber` ; sinon, elle est omise plutôt qu'inventée.
 - ✅ **DNG** (2026-10-11, `engine/src/dng_writer.cpp`). RAW 12 bits avec la matrice couleur de l'IMX477.
   - C'est **notre propre écrivain**, parti de celui de rpicam-apps (licence BSD-2), qui n'acceptait aucune balise en plus.
   - Il écrit le **profil d'objectif** : les mêmes balises `EXIF.*` que le JPEG, plus `LensInfo` du DNG.
-  - Il offre la **compression sans perte** LJ92 (activée par défaut dans l'application, touche K) : **12,1 Mo au lieu de 24,8 (÷ 2,05)**, pour ~1,5 s d'écriture en plus, en arrière-plan.
+  - Il offre la **compression sans perte** LJ92 (activée par défaut dans l'application, ligne « RAW compressé » du menu) : **12,1 Mo au lieu de 24,8 (÷ 2,05)**, pour ~1,5 s d'écriture en plus, en arrière-plan.
   - **Compatibilité vérifiée, et elle a dicté le format.** Quatre dispositions LJ92 ont été mesurées sur la même image :
 
     | Disposition | Taille | LibRaw (RawTherapee…) | rawspeed (darktable) |
@@ -325,6 +339,7 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 7. 🟨 **Temps d'encodage réels.** Sur une image très bruitée (gain 16, donc difficile à compresser, JPEG de 2,1 Mo) : JPEG ~350 ms, DNG ~180–230 ms. Reste à confirmer sur une vraie scène.
 8. 🟨 **Temps de démarrage** : la visée apparaît 25,4 s après le démarrage du noyau (§8). Le démarrage complet du système prend ~50 s, mais l'appareil est utilisable avant. L'objectif est de moins de 12 s (M2).
 9. ⬜ **Durabilité des photos.** `capture_done` signifie « écrit », pas « sur la carte » : les données peuvent rester ~30 s dans le cache du noyau. Sur batterie, une coupure perdrait les dernières photos. Il faudra un `fsync` par fichier dans le thread d'écriture (coût à mesurer) avant l'usage nomade.
+10. ⬜ **Commande de la correction d'exposition** : aujourd'hui Page↑ / Page↓, sans équivalent dans `hardware.md`. À trancher avant le câblage (§5).
 
 ## 11. Décisions (résumé)
 

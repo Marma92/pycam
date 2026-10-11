@@ -22,6 +22,8 @@ PEAKING_COLORS = ("red", "yellow", "green", "blue", "white")
 PEAKING_SENSITIVITIES = ("low", "medium", "high")
 REVIEW_SECONDS = (0, 1, 2, 4)  # 0: no review after the shot
 HISTOGRAMS = ("rgb", "luma")
+# What the Fn1 and Fn2 buttons can do: actions of Camera.on_action.
+FN_ACTIONS = ("peaking", "zebra", "awb_lock", "grid", "strategy", "raw")
 
 
 def default_path():
@@ -49,6 +51,8 @@ class Settings:
     zebra: bool = False
     review_seconds: int = 2
     histogram: str = "rgb"  # HISTOGRAMS, in the detailed display
+    fn1: str = "peaking"  # FN_ACTIONS
+    fn2: str = "zebra"
     lenses: list = field(default_factory=lambda: copy.deepcopy(DEFAULT_LENSES))  # edit to add yours
     lens: int = -1  # index in lenses, -1: none chosen
     aperture: float | None = None  # f-number set on the ring, None: unknown
@@ -56,6 +60,17 @@ class Settings:
     dcim: str = "~/DCIM"
     folder_number: int = 100
     next_number: int = 1
+
+    @property
+    def peaking_mode(self):
+        """Off or its colour: the peaking in one menu line."""
+        return self.peaking_color if self.peaking else "off"
+
+    @peaking_mode.setter
+    def peaking_mode(self, value):
+        self.peaking = value != "off"
+        if self.peaking:
+            self.peaking_color = value
 
     def to_dict(self):
         data = {f.name: getattr(self, f.name) for f in fields(self)}
@@ -108,6 +123,9 @@ def load_settings(path):
         settings.review_seconds = defaults.review_seconds
     if settings.histogram not in HISTOGRAMS:
         settings.histogram = defaults.histogram
+    for name in ("fn1", "fn2"):
+        if getattr(settings, name) not in FN_ACTIONS:
+            setattr(settings, name, getattr(defaults, name))
     for name, allowed in (
         ("jpeg_quality", picture.JPEG_QUALITIES),
         ("jpeg_size", picture.JPEG_SIZES),

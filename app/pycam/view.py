@@ -29,8 +29,9 @@ class HudView:
     loupe_center: tuple = (0.5, 0.5)
     review: str = ""  # path of the photo being reviewed (decoded by Hud.load_review)
     review_info: str = ""
-    menu: tuple = ()  # quick menu lines (label, value); empty: closed
+    menu: tuple = ()  # menu lines (label, value shown; None for a section title); empty: closed
     menu_index: int = 0
+    menu_title: str = ""
     writing: int = 0  # photos waiting to be written
     histogram: tuple = ()  # luminance, 64 classes
     histogram_rgb: tuple = ()  # (red, green, blue), 64 classes each; drawn instead

@@ -14,7 +14,8 @@ from evdev import ecodes
 
 log = logging.getLogger(__name__)
 
-# Key -> action. Letters chosen to sit at the same place on QWERTY and AZERTY keyboards.
+# Key -> action. One key per control of the camera (docs/hardware.md §2): the other
+# settings are in the menus. Keys chosen to sit at the same place on QWERTY and AZERTY.
 KEYMAP = {
     ecodes.KEY_SPACE: "shutter",
     ecodes.KEY_ENTER: "shutter",
@@ -23,34 +24,21 @@ KEYMAP = {
     ecodes.KEY_LEFT: "shutter_slower",
     ecodes.KEY_UP: "iso_up",  # rear dial
     ecodes.KEY_DOWN: "iso_down",
+    ecodes.KEY_S: "shutter_auto",  # front dial press: automatic speed, or manual from the measure
+    ecodes.KEY_I: "iso_auto",  # rear dial press
     ecodes.KEY_PAGEUP: "ev_up",
     ecodes.KEY_KPPLUS: "ev_up",
     ecodes.KEY_PAGEDOWN: "ev_down",
     ecodes.KEY_KPMINUS: "ev_down",
-    ecodes.KEY_S: "shutter_auto",  # S: back to automatic speed (or manual from the measure)
-    ecodes.KEY_I: "iso_auto",
-    ecodes.KEY_B: "awb",  # balance des blancs: presets, Kelvin
-    ecodes.KEY_U: "kelvin_up",  # U above J: warmer / cooler, in Kelvin
-    ecodes.KEY_J: "kelvin_down",
-    ecodes.KEY_H: "awb_lock",  # hold the balance measured on a grey card
+    ecodes.KEY_TAB: "q",  # quick menu
+    ecodes.KEY_ESC: "menu",  # full menu; closes a menu, leaves the loupe
     ecodes.KEY_D: "disp",
-    ecodes.KEY_G: "grid",
-    ecodes.KEY_R: "raw",
-    ecodes.KEY_K: "dng_compression",
-    ecodes.KEY_X: "strategy",  # ZSL on/off
-    ecodes.KEY_P: "peaking",
-    ecodes.KEY_C: "peaking_color",
-    ecodes.KEY_V: "peaking_sensitivity",
-    ecodes.KEY_E: "zebra",
     ecodes.KEY_L: "loupe",  # x5, x10, off; in the loupe, the arrows move it
-    ecodes.KEY_T: "review",  # review time after the shot: off, 1, 2, 4 s
-    ecodes.KEY_N: "lens",  # next lens profile
-    ecodes.KEY_F: "aperture",  # aperture set on the ring, for the EXIF
-    ecodes.KEY_TAB: "menu",  # quick menu (the Q button)
-    ecodes.KEY_ESC: "back",  # closes the menu, leaves the loupe
+    ecodes.KEY_1: "fn1",  # what they do is chosen in the menu
+    ecodes.KEY_2: "fn2",
 }
 # Actions that repeat while the key is held, like turning a dial.
-REPEATABLE = {"shutter_faster", "shutter_slower", "iso_up", "iso_down", "ev_up", "ev_down", "kelvin_up", "kelvin_down"}
+REPEATABLE = {"shutter_faster", "shutter_slower", "iso_up", "iso_down", "ev_up", "ev_down"}
 
 RESCAN_SECONDS = 2
 

@@ -45,7 +45,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Balance des blancs | Auto, 5 préréglages, Kelvin manuel (2000–10 000 K, en partant de la mesure), mémorisation des gains mesurés (charte grise). | ✅ |
 | Histogramme | RVB additif (par défaut) ou luminance, au choix dans le menu rapide, en visée détaillée et à la revue. Calculé par le moteur sur le flux basse résolution. | ✅ |
 | Peaking | Couleur (5) et sensibilité (3) réglables ; seuil adaptatif ; ~6 ms par image. | ✅ |
-| Zébras | Seuil réglable dans le protocole (95 % par défaut) ; pas encore dans l'application. | ✅ |
+| Zébras | Marche / arrêt dans les menus ou par Fn2. Seuil réglable dans le protocole (95 % par défaut), pas encore dans l'application. | ✅ |
 | Loupe de mise au point | ×5 / ×10 (le protocole accepte 1 à 16), déplaçable ; vrais pixels grâce au passage en pleine résolution (14 i/s) ; compatible avec le peaking ; le déclencheur la quitte. | ✅ |
 | Revue après la prise | Affichage 1, 2 ou 4 s, désactivable, avec nom, vitesse, ISO et histogramme de la photo. Visible ~1,5 s après l'appui : l'application décode le JPEG en 1/4 (~0,2 s). Plus rapide plus tard si le moteur fournit l'aperçu à partir du YUV. | ✅ |
 | Profils d'objectifs | Nom, marque, focale, ouverture max (et l'ouverture réglée, si indiquée) écrits dans l'EXIF du JPEG et du DNG ; choix par N et F, affichage dans le bandeau. Pas encore de menu pour créer un profil : on édite `settings.json`. | ✅ |
@@ -56,9 +56,9 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 
 | Fonctionnalité | Détail | État |
 |---|---|---|
-| Boutons physiques | Déclencheur à deux crans, deux molettes, joystick 5 directions, Q, MENU, LECTURE, DISP, LOUPE, Fn1/Fn2 (voir `hardware.md` §2). | ⬜ |
-| Menu rapide Q | Liste de réglages par-dessus la visée : la molette arrière choisit la ligne, la molette avant change la valeur, le déclencheur ferme et déclenche. Au clavier : Tab, flèches, Échap. Fait en avance avec M1 ; à enrichir (peaking, AWB…). | 🟨 |
-| Menus | Navigation complète aux boutons et molettes, sans tactile ni clavier. | ⬜ |
+| Boutons physiques | Déclencheur à deux crans, deux molettes, joystick 5 directions, Q, MENU, LECTURE, DISP, LOUPE, Fn1/Fn2 (voir `hardware.md` §2). Fn1 et Fn2 sont attribuables dans le menu ; ils sont déjà simulés au clavier (1 et 2). | ⬜ |
+| Menu rapide Q | Les 12 réglages de prise de vue, par-dessus la visée : mesure, balance des blancs et température, peaking, zébras, netteté, contraste, saturation, réduction du bruit, format, déclenchement, ouverture. La molette arrière choisit la ligne, la molette avant change la valeur, le déclencheur ferme et déclenche. Au clavier : Tab. Fait en avance avec M1. | ✅ |
+| Menus | MENU : tous les réglages par section (exposition, mise au point, image, fichiers, prise de vue, objectif, affichage, boutons), avec défilement. Le clavier ne garde plus qu'une touche par commande de l'appareil (`architecture.md` §5) ; reste à brancher les vrais boutons (M2). Au clavier : Échap. | 🟨 |
 | Lecture / galerie | Défilement, loupe, histogramme, suppression. | ⬜ |
 | Batterie | Niveau affiché, extinction propre sur batterie faible. | ⬜ |
 | Horloge | RTC ; réglage de la date dans les menus. | ⬜ |
@@ -75,7 +75,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Pose longue / pose B | Jusqu'à la limite du capteur (à mesurer), avec compte à rebours. | ⬜ |
 | ZSL | Déclenchement instantané, en option (compromis avec la fluidité de visée). | ⬜ |
 | Profils d'image | « Simulations » : courbes et couleurs via des fichiers de tuning libcamera. | ⬜ |
-| DNG compressé | LJ92 sans perte, au format Adobe (2 composantes, prédicteur 1) : 12,1 Mo au lieu de 24,8 ; relu au bit près par LibRaw et rendu par darktable. Activé par défaut, touche K. Fait en avance avec M1. | ✅ |
+| DNG compressé | LJ92 sans perte, au format Adobe (2 composantes, prédicteur 1) : 12,1 Mo au lieu de 24,8 ; relu au bit près par LibRaw et rendu par darktable. Activé par défaut, ligne « RAW compressé » du menu. Fait en avance avec M1. | ✅ |
 | Vidéo | H.264 1080p30 matériel, avec les réglages manuels. | ⬜ |
 | Point d'accès Wi-Fi | Pour le terrain, sans box. | ⬜ |
 | GPS | Géomarquage, en option. | ⬜ |

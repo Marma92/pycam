@@ -102,7 +102,7 @@ class Hud:
         if view.loupe > 1:  # whatever the display: you must know the image is magnified
             self._loupe(d, view)
         if view.menu:
-            self._menu(d, view.menu, view.menu_index)
+            self._menu(d, view)
         if view.message:
             self._message(d, view.message, view.warning)
         self.shm[:] = img.tobytes()
@@ -291,18 +291,41 @@ class Hud:
         d.rectangle([lx, ly, lx + lw, ly + lh], fill=AMBER)
         d.text((mx - self.px(16), my + mh / 2), f"×{view.loupe:g}", font=self.font_bold, fill=AMBER, anchor="rm")
 
-    def _menu(self, d, rows, index):
-        """The quick menu, over the left part of the image; the chosen line in amber."""
+    def _menu(self, d, view):
+        """A menu, over the left part of the image; the chosen line in amber, section titles
+        in blue. A long menu scrolls to keep the chosen line in view."""
+        rows, index = view.menu, view.menu_index
         x, y, w, h = self.rect
         row_h = self.px(58)
-        width = self.px(720)
-        px, py = x + self.px(40), y + self.px(40)
         title_h = self.px(64)
-        height = title_h + row_h * len(rows) + self.px(16)
+        px, py = x + self.px(40), y + self.px(40)
+        # Wide enough for the longest line with its arrows, up to the image width.
+        longest = max(
+            d.textlength(label, font=self.font) + (d.textlength(f"◀  {value}  ▶", font=self.font) if value else 0)
+            for label, value in rows
+        )
+        width = min(w - self.px(80), max(self.px(720), round(longest) + self.px(100)))
+        visible = max(3, (h - self.px(40) - self.px(110) - title_h - self.px(16)) // row_h)  # above the info bar
+        first = 0
+        if len(rows) > visible:
+            first = max(0, min(len(rows) - visible, index - visible // 2))
+        shown_rows = rows[first : first + visible]
+        height = title_h + row_h * len(shown_rows) + self.px(16)
         d.rounded_rectangle([px, py, px + width, py + height], radius=self.px(14), fill=(0, 0, 0, 190))
-        d.text((px + self.px(24), py + title_h // 2), "Réglages rapides", font=self.font_bold, fill=WHITE, anchor="lm")
-        for i, (label, value) in enumerate(rows):
-            ry = py + title_h + i * row_h
+        d.text((px + self.px(24), py + title_h // 2), view.menu_title, font=self.font_bold, fill=WHITE, anchor="lm")
+        if len(rows) > visible:  # where we are in the list
+            track = row_h * visible
+            top = py + title_h
+            bar_x = px + width - self.px(8)
+            d.rectangle([bar_x, top, bar_x + self.px(3), top + track], fill=(80, 80, 80, 230))  # nearly opaque, like the chosen line
+            thumb = track * visible / len(rows)
+            ty = top + track * first / len(rows)
+            d.rectangle([bar_x, ty, bar_x + self.px(3), ty + thumb], fill=WHITE)
+        for i, (label, value) in enumerate(shown_rows, start=first):
+            ry = py + title_h + (i - first) * row_h
+            if value is None:  # section title
+                d.text((px + self.px(24), ry + row_h // 2), label.upper(), font=self.font, fill=AUTO, anchor="lm")
+                continue
             chosen = i == index
             if chosen:
                 d.rounded_rectangle(

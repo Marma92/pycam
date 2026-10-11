@@ -1,59 +1,163 @@
-"""The quick menu: the settings changed now and then, in a list over the viewfinder.
+"""The menus: settings in a list over the viewfinder, changed with the dials.
 
-Tab opens and closes it (the Q button of the camera, docs/hardware.md §2); the rear dial
-(up / down) chooses a line, the front dial (left / right) changes its value. The shutter
-closes it and shoots.
+Two menus, as on the camera (docs/hardware.md §2):
+- Q (Tab) opens the quick menu: the dozen settings changed while shooting;
+- MENU (Échap) opens the full menu: every setting, by section, the configuration included.
+
+The rear dial (up / down) chooses a line, the front dial (left / right) changes its value.
+Q, MENU or the shutter close them; the shutter also shoots.
 """
 
 from dataclasses import dataclass
 
-from . import exposure, picture
+from . import exposure, lenses, picture
+from .settings import FN_ACTIONS, PEAKING_COLORS, PEAKING_SENSITIVITIES
 
 
 @dataclass(frozen=True)
 class Item:
     label: str
-    attr: str  # in Settings, dotted for nested ones ("exposure.metering")
-    values: tuple
-    shown: tuple  # how each value is shown
-    push: str = ""  # what the engine must be told: "exposure", "picture", "config" or nothing
+    attr: str = ""  # in Settings, dotted for nested ones ("exposure.metering"); empty: a section title
+    values: tuple = ()  # or settings -> ((value, shown), ...) for lists that depend on other settings
+    shown: tuple = ()  # how each value is shown
+    push: str = ""  # what the engine must be told: "exposure", "picture", "config", "focus" or nothing
+
+    def options(self, settings):
+        """((value, shown), ...)"""
+        if callable(self.values):
+            return tuple(self.values(settings))
+        return tuple(zip(self.values, self.shown))
 
 
 def _levels(values, black_and_white=False):
     return tuple("N&B" if black_and_white and v == -3 else ("0" if v == 0 else f"{v:+d}".replace("-", "−")) for v in values)
 
 
-ITEMS = (
-    Item(
-        "Mesure de la lumière",
-        "exposure.metering",
-        tuple(exposure.METERING),
-        tuple(exposure.METERING_LABELS[m] for m in exposure.METERING),
-        "exposure",
-    ),
-    Item("Netteté", "sharpness", tuple(picture.SHARPNESS), _levels(picture.SHARPNESS), "picture"),
-    Item("Contraste", "contrast", tuple(picture.CONTRAST), _levels(picture.CONTRAST), "picture"),
-    Item("Saturation", "saturation", tuple(picture.SATURATION), _levels(picture.SATURATION, True), "picture"),
-    Item(
-        "Réduction du bruit",
-        "denoise",
-        tuple(picture.DENOISE),
-        ("Aucune", "Légère", "Rapide", "Haute qualité"),
-        "config",
-    ),
-    Item("Taille JPEG", "jpeg_size", tuple(picture.JPEG_SIZES), ("L · 12 Mpx", "M · 6 Mpx", "S · 3 Mpx"), "config"),
-    Item("Qualité JPEG", "jpeg_quality", picture.JPEG_QUALITIES, ("Normale", "Fine", "Extra fine")),
-    Item("Format", "formats", (["jpeg", "dng"], ["jpeg"]), ("RAW + JPEG", "JPEG")),
-    Item("RAW compressé", "dng_compression", (True, False), ("Oui · sans perte", "Non")),
-    Item("Revue après la prise", "review_seconds", (0, 1, 2, 4), ("Coupée", "1 s", "2 s", "4 s")),
-    Item("Histogramme", "histogram", ("rgb", "luma"), ("RVB", "Luminance")),
+def _lens_options(settings):
+    return ((-1, "Aucun"),) + tuple((i, lens["name"]) for i, lens in enumerate(settings.lenses))
+
+
+def _aperture_options(settings):
+    if not 0 <= settings.lens < len(settings.lenses):
+        return ((None, "Choisir l'objectif"),)
+    stops = lenses.aperture_stops(settings.lenses[settings.lens])
+    return ((None, "Non précisée"),) + tuple((f, lenses.format_aperture(f)) for f in stops)
+
+
+COLOURS = ("Rouge", "Jaune", "Vert", "Bleu", "Blanc")  # PEAKING_COLORS
+YES_NO = ((False, True), ("Non", "Oui"))
+FN_LABELS = {
+    "peaking": "Peaking",
+    "zebra": "Zébras",
+    "awb_lock": "Mémoriser la balance",
+    "grid": "Grille",
+    "strategy": "Bascule / ZSL",
+    "raw": "RAW + JPEG / JPEG",
+}
+
+METERING = Item(
+    "Mesure de la lumière",
+    "exposure.metering",
+    tuple(exposure.METERING),
+    tuple(exposure.METERING_LABELS[m] for m in exposure.METERING),
+    "exposure",
+)
+# Locked: chosen in the menu, it keeps the gains the automatic balance measures now (point
+# at a grey card first).
+WHITE_BALANCE = Item(
+    "Balance des blancs",
+    "exposure.awb",
+    exposure.AWB_MODES + ("Locked",),
+    tuple({"Auto": "Auto", "Kelvin": "Température"}.get(m) or exposure.AWB_LABELS[m] for m in exposure.AWB_MODES + ("Locked",)),
+    "exposure",
+)
+# Turned from another balance, it starts from the measured temperature (Camera.change_setting).
+KELVIN = Item("Température", "exposure.kelvin", exposure.KELVIN_STEPS, tuple(f"{k} K" for k in exposure.KELVIN_STEPS), "exposure")
+PEAKING = Item("Peaking", "peaking_mode", ("off",) + PEAKING_COLORS, ("Coupé",) + COLOURS, "focus")
+PEAKING_SENSITIVITY = Item(
+    "Sensibilité du peaking", "peaking_sensitivity", PEAKING_SENSITIVITIES, ("Faible", "Moyenne", "Forte"), "focus"
+)
+ZEBRA = Item("Zébras", "zebra", *YES_NO, "focus")
+SHARPNESS = Item("Netteté", "sharpness", tuple(picture.SHARPNESS), _levels(picture.SHARPNESS), "picture")
+CONTRAST = Item("Contraste", "contrast", tuple(picture.CONTRAST), _levels(picture.CONTRAST), "picture")
+SATURATION = Item("Saturation", "saturation", tuple(picture.SATURATION), _levels(picture.SATURATION, True), "picture")
+DENOISE = Item(
+    "Réduction du bruit", "denoise", tuple(picture.DENOISE), ("Aucune", "Légère", "Rapide", "Haute qualité"), "config"
+)
+FORMAT = Item("Format", "formats", (["jpeg", "dng"], ["jpeg"]), ("RAW + JPEG", "JPEG"))
+JPEG_SIZE = Item("Taille JPEG", "jpeg_size", tuple(picture.JPEG_SIZES), ("L · 12 Mpx", "M · 6 Mpx", "S · 3 Mpx"), "config")
+JPEG_QUALITY = Item("Qualité JPEG", "jpeg_quality", picture.JPEG_QUALITIES, ("Normale", "Fine", "Extra fine"))
+DNG_COMPRESSION = Item("RAW compressé", "dng_compression", (True, False), ("Oui · sans perte", "Non"))
+# Applied once the engine accepts it (Camera.set_strategy).
+STRATEGY = Item("Déclenchement", "strategy", ("switch", "zsl"), ("Bascule · visée fluide", "ZSL · sans latence"))
+REVIEW = Item("Revue après la prise", "review_seconds", (0, 1, 2, 4), ("Coupée", "1 s", "2 s", "4 s"))
+LENS = Item("Objectif", "lens", _lens_options)
+APERTURE = Item("Ouverture", "aperture", _aperture_options)
+GRID = Item("Grille des tiers", "grid", *YES_NO)
+HISTOGRAM = Item("Histogramme", "histogram", ("rgb", "luma"), ("RVB", "Luminance"))
+FN1 = Item("Bouton Fn1", "fn1", FN_ACTIONS, tuple(FN_LABELS[a] for a in FN_ACTIONS))
+FN2 = Item("Bouton Fn2", "fn2", FN_ACTIONS, tuple(FN_LABELS[a] for a in FN_ACTIONS))
+
+QUICK = (
+    METERING,
+    WHITE_BALANCE,
+    KELVIN,
+    PEAKING,
+    ZEBRA,
+    SHARPNESS,
+    CONTRAST,
+    SATURATION,
+    DENOISE,
+    FORMAT,
+    STRATEGY,
+    APERTURE,
+)
+FULL = (
+    Item("Exposition"),
+    METERING,
+    WHITE_BALANCE,
+    KELVIN,
+    Item("Mise au point"),
+    PEAKING,
+    PEAKING_SENSITIVITY,
+    ZEBRA,
+    Item("Image"),
+    SHARPNESS,
+    CONTRAST,
+    SATURATION,
+    DENOISE,
+    Item("Fichiers"),
+    FORMAT,
+    JPEG_SIZE,
+    JPEG_QUALITY,
+    DNG_COMPRESSION,
+    Item("Prise de vue"),
+    STRATEGY,
+    REVIEW,
+    Item("Objectif"),
+    LENS,
+    APERTURE,
+    Item("Affichage"),
+    GRID,
+    HISTOGRAM,
+    Item("Boutons"),
+    FN1,
+    FN2,
 )
 
 
-class QuickMenu:
-    def __init__(self, settings):
+class Menu:
+    def __init__(self, settings, quick=True):
         self.settings = settings
+        self.quick = quick
+        self.title = "Réglages rapides" if quick else "Menu"
+        self.items = QUICK if quick else FULL
         self.index = 0
+        self.move(0)  # past a section title
+
+    @property
+    def item(self):
+        return self.items[self.index]
 
     def _owner(self, attr):
         """The object holding a (dotted) attribute, and the attribute's last name."""
@@ -66,23 +170,41 @@ class QuickMenu:
         owner, name = self._owner(attr)
         return getattr(owner, name)
 
+    def set(self, attr, value):
+        owner, name = self._owner(attr)
+        setattr(owner, name, value)
+
     def move(self, steps):
-        self.index = (self.index + steps) % len(ITEMS)
+        """steps lines down (up if negative), around the list, past the section titles."""
+        direction = 1 if steps >= 0 else -1
+        for _ in range(abs(steps)):
+            self.index = (self.index + direction) % len(self.items)
+            while not self.item.attr:
+                self.index = (self.index + direction) % len(self.items)
+        while not self.item.attr:
+            self.index = (self.index + direction) % len(self.items)
 
-    def change(self, steps):
-        """Moves the chosen setting along its values (stopping at the ends); returns its item."""
-        item = ITEMS[self.index]
-        current = self.get(item.attr)
-        i = item.values.index(current) if current in item.values else 0
-        owner, name = self._owner(item.attr)
-        setattr(owner, name, item.values[max(0, min(len(item.values) - 1, i + steps))])
-        return item
+    def next_value(self, steps):
+        """The value of the chosen line after turning the dial (stopping at the ends)."""
+        values = [value for value, _ in self.item.options(self.settings)]
+        current = self.get(self.item.attr)
+        i = values.index(current) if current in values else 0
+        return values[max(0, min(len(values) - 1, i + steps))]
 
-    def rows(self):
-        """(label, value shown) for each line."""
+    def rows(self, stats=None):
+        """(label, value shown) for each line; the value is None for a section title.
+        stats: the engine's last measures."""
         rows = []
-        for item in ITEMS:
+        for item in self.items:
+            if not item.attr:
+                rows.append((item.label, None))
+                continue
             current = self.get(item.attr)
-            shown = item.shown[item.values.index(current)] if current in item.values else "?"
+            shown = next((text for value, text in item.options(self.settings) if value == current), "?")
+            if item is KELVIN and self.settings.exposure.awb != "Kelvin":
+                # Not in use: the measured temperature, where the dial will start from.
+                measured = (stats or {}).get("colour_temp")
+                steps = exposure.KELVIN_STEPS
+                shown = f"≈ {steps[exposure.nearest_index(steps, measured)]} K" if measured else "—"
             rows.append((item.label, shown))
         return tuple(rows)

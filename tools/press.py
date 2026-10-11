@@ -4,7 +4,7 @@ sans clavier branché. L'application détecte le clavier virtuel en ~2 s.
 
 Usage (sur le Pi ; /dev/uinput demande root) :
     sudo python3 tools/press.py space                  # déclencher
-    sudo python3 tools/press.py right right up b d     # vitesse, ISO, balance des blancs, affichage
+    sudo python3 tools/press.py right right up tab d   # vitesse, ISO, menu rapide, affichage
 """
 
 import argparse
@@ -15,7 +15,7 @@ from evdev import UInput, ecodes
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("keys", nargs="+", help="noms de touches evdev sans KEY_ : space, right, up, b…")
+    parser.add_argument("keys", nargs="+", help="noms de touches evdev sans KEY_ : space, right, up, tab…")
     parser.add_argument("--wait", type=float, default=3.0, help="délai pour que l'application voie le clavier")
     parser.add_argument("--interval", type=float, default=0.5, help="délai entre deux touches")
     args = parser.parse_args()

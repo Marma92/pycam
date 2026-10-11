@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from . import exposure as exp
 from . import lenses, meter, picture
 from .engine_client import EngineError, call_blocking
-from .menu import QuickMenu
-from .settings import DISPLAY_MODES, PEAKING_COLORS, PEAKING_SENSITIVITIES, REVIEW_SECONDS, save_settings
+from .menu import Menu
+from .settings import DISPLAY_MODES, save_settings
 from .storage import Storage
 from .view import HudView
 
@@ -29,12 +29,9 @@ EXPOSURE_ACTIONS = {
     "ev_down",
     "shutter_auto",
     "iso_auto",
-    "awb",
-    "kelvin_up",
-    "kelvin_down",
     "awb_lock",
 }
-FOCUS_AID_ACTIONS = {"peaking", "peaking_color", "peaking_sensitivity", "zebra"}
+FOCUS_AID_ACTIONS = {"peaking", "zebra"}
 LOUPE_LEVELS = (1, 5, 10)
 # In the loupe, the dials move it (until the camera has a joystick): action -> (dx, dy).
 LOUPE_MOVES = {
@@ -43,9 +40,6 @@ LOUPE_MOVES = {
     "iso_up": (0, -1),
     "iso_down": (0, 1),
 }
-
-COLOR_LABELS = {"red": "rouge", "yellow": "jaune", "green": "vert", "blue": "bleu", "white": "blanc"}
-SENSITIVITY_LABELS = {"low": "faible", "medium": "moyenne", "high": "forte"}
 
 
 def _next(values, current):
@@ -89,7 +83,7 @@ class Camera:
         self.loupe_center = (0.5, 0.5)
         self.last_shot = None
         self.review = None  # photo shown after the shot
-        self.menu = None  # QuickMenu while open
+        self.menu = None  # Menu while open
         self.slowest_shutter = exp.SHUTTER_SPEEDS[-1]
         self._message = ("", False, 0.0)
         self._review_handle = None
@@ -279,20 +273,25 @@ class Camera:
                 return
         if self.menu and self.on_menu_action(action):
             return
-        if action == "menu":
-            self.menu = QuickMenu(s)
+        if action in ("fn1", "fn2"):  # the action they are given in the menu
+            action = getattr(s, action)
+        if action == "q":
+            self.menu = Menu(s, quick=True)
             self.redraw()
             return
-        if action == "back":
+        if action == "menu":  # leaves the loupe first, as the camera's MENU button goes back
             if self.loupe > 1:
                 self.loupe = 1
                 self.spawn(self.apply_loupe())
+            else:
+                self.menu = Menu(s, quick=False)
+                self.redraw()
             return
         if action == "shutter":
             self.spawn(self.capture())
             return
         if action == "strategy":
-            self.spawn(self.toggle_strategy())
+            self.spawn(self.set_strategy("zsl" if s.strategy == "switch" else "switch"))
             return
         if action == "loupe":
             self.loupe = _next(LOUPE_LEVELS, self.loupe) if self.loupe in LOUPE_LEVELS else 1
@@ -320,11 +319,6 @@ class Camera:
             e.toggle_shutter_auto(self.measured_shutter())
         elif action == "iso_auto":
             e.toggle_iso_auto(self.measured_iso())
-        elif action == "awb":
-            e.next_awb()
-            self.show_message(f"Balance des blancs : {e.awb_label()}")
-        elif action in ("kelvin_up", "kelvin_down"):
-            e.step_kelvin(+1 if action == "kelvin_up" else -1, self.stats.get("colour_temp"))
         elif action == "awb_lock":
             if not e.lock_awb(self.stats.get("colour_gains")):
                 self.show_message("Pas de mesure de balance des blancs", warning=True)
@@ -334,44 +328,16 @@ class Camera:
             s.display = DISPLAY_MODES[(DISPLAY_MODES.index(s.display) + 1) % len(DISPLAY_MODES)]
         elif action == "grid":
             s.grid = not s.grid
+            self.show_message("Grille" if s.grid else "Grille masquée")
         elif action == "raw":
             s.formats = ["jpeg"] if "dng" in s.formats else ["jpeg", "dng"]
             self.show_message("RAW + JPEG" if "dng" in s.formats else "JPEG seul")
-        elif action == "dng_compression":
-            s.dng_compression = not s.dng_compression
-            self.show_message("RAW compressé (sans perte)" if s.dng_compression else "RAW non compressé")
         elif action == "peaking":
             s.peaking = not s.peaking
             self.show_message("Peaking" if s.peaking else "Peaking coupé")
-        elif action == "peaking_color":
-            s.peaking = True
-            s.peaking_color = _next(PEAKING_COLORS, s.peaking_color)
-            self.show_message(f"Peaking {COLOR_LABELS[s.peaking_color]}")
-        elif action == "peaking_sensitivity":
-            s.peaking = True
-            s.peaking_sensitivity = _next(PEAKING_SENSITIVITIES, s.peaking_sensitivity)
-            self.show_message(f"Peaking : sensibilité {SENSITIVITY_LABELS[s.peaking_sensitivity]}")
         elif action == "zebra":
             s.zebra = not s.zebra
             self.show_message("Zébras" if s.zebra else "Zébras coupés")
-        elif action == "review":
-            s.review_seconds = _next(REVIEW_SECONDS, s.review_seconds)
-            self.show_message(f"Revue : {s.review_seconds} s" if s.review_seconds else "Revue coupée")
-        elif action == "lens":
-            # none -> each profile -> none; the aperture belongs to the previous lens
-            s.lens = s.lens + 1 if s.lens + 1 < len(s.lenses) else -1
-            s.aperture = None
-            lens = self.lens()
-            self.show_message(lens["name"] if lens else "Objectif non précisé")
-        elif action == "aperture":
-            lens = self.lens()
-            if not lens:
-                self.show_message("Choisir d'abord l'objectif (N)", warning=True)
-                return
-            stops = [None] + lenses.aperture_stops(lens)  # None: not told
-            current = s.aperture if s.aperture in stops else None
-            s.aperture = _next(stops, current)
-            self.show_message(lenses.format_aperture(s.aperture) if s.aperture else "Ouverture non précisée")
         else:
             log.warning("unknown action %s", action)
             return
@@ -383,26 +349,51 @@ class Camera:
         self.redraw()
 
     def on_menu_action(self, action):
-        """While the quick menu is open: the dials move in it. Returns True if handled."""
-        if action in ("menu", "back"):
-            self.menu = None
+        """While a menu is open: the dials move in it. Returns True if handled."""
+        if action in ("q", "menu"):
+            # Each button closes its menu; Q goes from the full menu to the quick one.
+            self.menu = Menu(self.settings, quick=True) if action == "q" and not self.menu.quick else None
         elif action == "shutter":
             self.menu = None
             return False  # and shoot
         elif action in ("iso_up", "iso_down"):  # rear dial: choose a line
             self.menu.move(-1 if action == "iso_up" else +1)
         elif action in ("shutter_faster", "shutter_slower"):  # front dial: change the value
-            item = self.menu.change(+1 if action == "shutter_faster" else -1)
-            if item.push == "exposure":
-                self.spawn(self.apply_exposure())
-            elif item.push == "picture":
-                self.spawn(self.apply_picture())
-            elif item.push == "config":
-                self.spawn(self.apply_still_config())
-            self.save_soon()
-        # Any other key does nothing while the menu is open.
+            self.change_setting(+1 if action == "shutter_faster" else -1)
+        # Any other key does nothing while a menu is open.
         self.redraw()
         return True
+
+    def change_setting(self, steps):
+        """Turns the value of the chosen menu line, and tells the engine."""
+        s, e, menu = self.settings, self.settings.exposure, self.menu
+        item = menu.item
+        if item.attr == "exposure.kelvin":  # from another balance, starts at the measured temperature
+            e.step_kelvin(steps, self.stats.get("colour_temp"))
+        else:
+            value = menu.next_value(steps)
+            if value == menu.get(item.attr):
+                return
+            if item.attr == "strategy":  # kept only if the engine accepts it
+                self.spawn(self.set_strategy(value))
+                return
+            if item.attr == "exposure.awb" and value == "Locked":
+                if not e.lock_awb(self.stats.get("colour_gains")):
+                    self.show_message("Pas de mesure de balance des blancs", warning=True)
+                    return
+            else:
+                menu.set(item.attr, value)
+            if item.attr == "lens":
+                s.aperture = None  # it belonged to the previous lens
+        if item.push == "exposure":
+            self.spawn(self.apply_exposure())
+        elif item.push == "picture":
+            self.spawn(self.apply_picture())
+        elif item.push == "config":
+            self.spawn(self.apply_still_config())
+        elif item.push == "focus":
+            self.spawn(self.apply_focus_aids())
+        self.save_soon()
 
     async def capture(self):
         async with self._capture_lock:  # two quick presses must not get the same name
@@ -434,8 +425,7 @@ class Camera:
             self.last_shot = Shot(reply.get("capture_id"), os.path.basename(base))
             self.show_message(os.path.basename(base))
 
-    async def toggle_strategy(self):
-        new = "zsl" if self.settings.strategy == "switch" else "switch"
+    async def set_strategy(self, new):
         try:
             await self.engine.call("configure", strategy=new)
         except (EngineError, ConnectionError) as e:
@@ -508,7 +498,8 @@ class Camera:
             zebra=s.zebra,
             loupe=self.loupe,
             loupe_center=self.loupe_center,
-            menu=self.menu.rows() if self.menu else (),
+            menu=self.menu.rows(self.stats) if self.menu else (),
+            menu_title=self.menu.title if self.menu else "",
             menu_index=self.menu.index if self.menu else 0,
             writing=self.writing,
             **self._histograms(self.stats.get("histogram", ()), self.stats.get("histogram_rgb", ())),
