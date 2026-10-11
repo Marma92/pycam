@@ -2,14 +2,15 @@
 
 Statut : **orientations décidées le 2026-10-11** (§10). Les mesures datent du même jour, sur le Pi 3B.
 
-**Fait** (étapes 1, 2, 3 et 5 du §11) :
+**Fait** (étapes 1 à 5 du §11) :
 - la base fixe : `engine/tuning`, chargée dès le démarrage, et la correction d'ombrage en réglage séparé ;
 - le moteur : LUT 3D, grain et vignettage sur le JPEG, option « garder la base » (`docs/protocol.md`, « look ») ;
 - l'application (`app/pycam/looks.py`) : lecture des presets, compilation en LUT avec le contraste et la saturation du menu, mise en cache (`~/.cache/pycam/looks`), ligne « Simulation » des menus, nom court dans le bandeau, nom du preset dans l'EXIF (`Software`) ;
 - deux presets intégrés : « Standard », le rendu par défaut (la courbe du tuning standard du Pi, sans son contraste adaptatif), et « Base (neutre) », la base telle quelle ;
-- l'aperçu en visée (`docs/protocol.md`, « look ») : une courbe, un mélange et une matrice, ajustés sur la LUT ; l'histogramme en direct est corrigé par les courbes des gris du look.
+- l'aperçu en visée (`docs/protocol.md`, « look ») : une courbe, un mélange et une matrice, ajustés sur la LUT ; l'histogramme en direct est corrigé par les courbes des gris du look ;
+- l'outil `tools/pycam_preset.py`, pour créer et tester les presets sur un ordinateur (§5).
 
-**Reste** : l'outil `pycam-preset`, puis les pellicules.
+**Reste** : les pellicules (§6), et `pycam_preset.py fit` pour la méthode B.
 
 **Ajouter un preset** : copier son dossier dans `~/.config/pycam/presets/`. Il apparaît à la prochaine ouverture d'un menu, et un preset du même nom de dossier qu'un preset intégré le remplace. Un preset illisible est ignoré, avec un avertissement dans le journal (`journalctl -u pycam`).
 
@@ -131,13 +132,20 @@ amount = 0.1
 
 **3. Écrire une recette** à la main, en TOML seul, ou la générer par un script.
 
-**Un outil pour l'ordinateur, `pycam-preset`** (Python, numpy), qui partage le code de compilation de l'appareil, pour un résultat identique :
+**L'outil pour l'ordinateur, `tools/pycam_preset.py`** (Python 3.11+ et Pillow ; aucune autre dépendance). Il partage le code de compilation de l'appareil (`app/pycam/looks.py`), pour un résultat identique :
 
-- `identity` : générer l'image Hald identité ;
-- `apply` : appliquer un preset à un JPEG de base ou à un dossier, pour comparer ;
-- `check` : valider un preset avant de le copier ;
-- `convert` : passer d'un format à l'autre (`.cube` ⇄ Hald) ;
-- `fit` : construire une LUT à partir d'une mire (§6, méthode B).
+```bash
+python3 tools/pycam_preset.py identity hald.png                   # l'image Hald identité (niveau 8 : 512×512)
+python3 tools/pycam_preset.py check mon-preset/                   # valide ? que fait-il aux gris ?
+python3 tools/pycam_preset.py apply mon-preset/ PYB_0012.JPG essai.jpg [--contrast 1] [--saturation -1]
+python3 tools/pycam_preset.py export mon-preset/ look.cube        # ou look.png (Hald), pour Resolve, RawTherapee…
+```
+
+- `apply` part d'un JPEG de base (preset « Base », ou option « garder la base ») ; il n'imite ni le grain ni le vignettage.
+- Vérifié sur le Pi le 2026-10-12 :
+  - l'aller-retour de « Standard » par `export` puis un preset fait de cette LUT redonne la même LUT : exactement en `.cube`, à 0,55 niveau sur 255 près en Hald (l'arrondi 8 bits de l'image) ;
+  - sur une même scène, `apply` sur le JPEG de base donne le JPEG de l'appareil : moyennes RVB 103/84/92 contre 104/84/91. L'écart moyen par pixel, ~5 niveaux, est surtout le bruit entre les deux photos ; la base, elle, s'écarte de 13 à 17 niveaux.
+- Plus tard : `fit`, pour construire une LUT à partir d'une mire (§6, méthode B).
 
 ## 6. S'approcher de la colorimétrie d'une pellicule
 

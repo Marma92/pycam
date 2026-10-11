@@ -52,6 +52,14 @@ Il réécrit l'image du DNG donné, en version non compressée puis compressée,
 
 darktable lit les DNG avec son propre décodeur, rawspeed, plus strict que LibRaw. En cas de changement de format, le vérifier aussi : `sudo apt install darktable` (~40 Mo), puis `darktable-cli photo.DNG photo.jpg --core`.
 
+## Créer un preset
+
+Sur un ordinateur, avec Python 3.11+ et Pillow : `tools/pycam_preset.py` (voir `presets.md` §5). Puis copier le dossier du preset dans `~/.config/pycam/presets/` sur le Pi : il apparaît à la prochaine ouverture d'un menu.
+
+```bash
+scp -r mon-preset ael@192.168.1.165:.config/pycam/presets/
+```
+
 ## Tests unitaires du moteur
 
 L'analyse d'image (histogrammes YUV → RVB) est testée sur des images synthétiques de couleur connue, sur le Pi après une compilation :
