@@ -16,7 +16,7 @@
 static void usage()
 {
 	std::cerr << "usage: pycam-engine [--socket PATH] [--zsl] [--viewfinder WxH] [--lores WxH] [--queue N]\n"
-				 "                    [--zsl-buffers N] [--zsl-denoise D] [--still-denoise D] [-v]\n"
+				 "                    [--zsl-buffers N] [--zsl-denoise D] [--still-denoise D] [--no-display] [-v]\n"
 				 "  --socket PATH     Unix socket to listen on (default /tmp/pycam-engine.sock)\n"
 				 "  --zsl             zero shutter lag: sensor at full resolution all the time\n"
 				 "  --viewfinder WxH  viewfinder stream size (default 1024x768)\n"
@@ -25,6 +25,7 @@ static void usage()
 				 "  --zsl-buffers N   full resolution buffers in ZSL, ~37 MB of CMA each (default 3)\n"
 				 "  --zsl-denoise D   colour denoise in ZSL: cdn_off, cdn_fast (default), cdn_hq\n"
 				 "  --still-denoise D colour denoise of switch captures (default cdn_hq)\n"
+				 "  --no-display      do not use the screen, even if there is one\n"
 				 "  -v               more logs (repeat for libcamera logs)\n";
 }
 
@@ -69,6 +70,8 @@ int main(int argc, char *argv[])
 				cfg.zsl_denoise = value();
 			else if (arg == "--still-denoise")
 				cfg.still_denoise = value();
+			else if (arg == "--no-display")
+				cfg.display = false;
 			else if (arg == "-v")
 				cfg.verbose++;
 			else if (arg == "-h" || arg == "--help")

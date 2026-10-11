@@ -90,6 +90,18 @@ int Engine::Run()
 			   });
 	writer_.Start([this](json event) { ipc_.Broadcast(event); });
 
+	if (cfg_.display)
+	{
+		try
+		{
+			display_ = std::make_unique<Display>(cfg_.vf_width, cfg_.vf_height, cfg_.hud_shm);
+		}
+		catch (std::exception const &e)
+		{
+			std::cerr << "pycam-engine: no display: " << e.what() << "\n";
+		}
+	}
+
 	app_.OpenCamera();
 	for (auto const &camera : app_.GetCameras())
 		if (camera->id() == app_.CameraId())
@@ -147,6 +159,7 @@ int Engine::Run()
 
 	std::cerr << "pycam-engine: stopping\n";
 	app_.StopCamera();
+	display_.reset(); // planes off, frames given back, before the buffers are freed
 	app_.Teardown();
 	app_.CloseCamera();
 	writer_.Stop(); // finish writing the photos already taken
@@ -214,6 +227,8 @@ void Engine::Restart(Phase phase)
 {
 	Clock::time_point t = Clock::now();
 	app_.StopCamera();
+	if (display_)
+		display_->Reset(); // the last image stays on the screen during the reconfiguration
 	app_.Teardown();
 	Start(phase);
 	started_ = Clock::now();
@@ -236,6 +251,13 @@ void Engine::OnFrame(CompletedRequestPtr &request)
 	// ZSL: the photo is the first frame completed after the command was handled.
 	if (pending_ && zsl_)
 		GrabStill(request);
+
+	if (display_)
+	{
+		StreamInfo info;
+		if (Stream *viewfinder = app_.ViewfinderStream(&info))
+			display_->ShowFrame(request, viewfinder, info);
+	}
 
 	if (Clock::now() - last_stats_ >= kStatsPeriod)
 		PublishStats(request);
@@ -384,6 +406,15 @@ void Engine::HandleCommand(int client, json const &command, Clock::time_point re
 				next_phase_ = Phase::Viewfinder;
 			}
 		}
+		else if (name == "hud_info" || name == "hud_commit")
+		{
+			if (!display_)
+				throw CommandError("unsupported", "no display");
+			if (name == "hud_info")
+				reply["display"] = display_->Info();
+			else
+				display_->CommitHud();
+		}
 		else if (name == "quit")
 			quit_ = true;
 		else
@@ -458,6 +489,7 @@ json Engine::State() const
 		{ "max_queue", cfg_.max_queue },
 		{ "streams", streams },
 		{ "controls", controls_to_json(user_controls_) },
+		{ "display", display_ ? display_->Info() : json(nullptr) },
 	};
 }
 

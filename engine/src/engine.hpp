@@ -17,6 +17,7 @@
 #include "core/still_options.hpp"
 
 #include "capture_writer.hpp"
+#include "display.hpp"
 #include "ipc_server.hpp"
 
 namespace pycam
@@ -32,6 +33,8 @@ struct EngineConfig
 	unsigned zsl_buffers = 3; // full resolution buffer sets in ZSL, ~37 MB of CMA each
 	std::string zsl_denoise = "cdn_fast"; // cdn_hq divides the ZSL frame rate by 4 on a Pi 3
 	std::string still_denoise = "cdn_hq"; // switch strategy: denoise of the full resolution frame
+	bool display = true; // show the viewfinder on the screen (DRM), if there is one
+	std::string hud_shm = "/pycam-hud"; // shared memory for the HUD, in /dev/shm
 	unsigned verbose = 0;
 };
 
@@ -95,6 +98,7 @@ private:
 	PycamApp app_;
 	IpcServer ipc_;
 	CaptureWriter writer_;
+	std::unique_ptr<Display> display_; // null without a screen
 	libcamera::ControlInfoMap const *camera_controls_ = nullptr;
 
 	std::mutex commands_mutex_;
