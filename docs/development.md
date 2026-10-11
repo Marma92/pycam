@@ -5,33 +5,44 @@
 - Pi 3B à `192.168.1.165`, utilisateur `ael`, accès SSH **par clé** (pas de mot de passe dans les scripts).
 - Les scripts lisent l'hôte dans `PI_HOST`, par défaut `ael@192.168.1.165`.
 
-## Organisation du dépôt (cible)
+## Organisation du dépôt
 
 ```
 engine/    moteur C++ (meson) → binaire pycam-engine
-app/       application Python → paquet pycam
-system/    unités systemd, extraits de config.txt, overlays
-tools/     scripts de déploiement, d'audit, de bench
+app/       application Python → paquet pycam            (à venir)
+system/    unités systemd, extraits de config.txt, overlays (à venir)
+tools/     déploiement, audit, client de test du moteur
 docs/
 ```
 
 ## Boucle de travail
 
 1. On édite sur le poste Windows, dans ce dépôt.
-2. `tools/deploy.sh` copie les sources vers `~/pycam` sur le Pi (`tar | ssh`, sans dépendance à rsync).
-3. On compile **sur le Pi** : `meson setup` puis `ninja -C engine/build`. Le moteur reste petit ; on active `ccache` et on limite à `-j2` pour ne pas saturer 1 Go de RAM.
-4. On teste en SSH :
-   - le moteur sans écran (`--no-display`) ;
-   - le pilotage par le socket (`socat`) ;
-   - les images capturées, rapatriées et inspectées ;
-   - les mesures, avec les scripts de bench.
-5. On commite quand c'est validé sur le Pi.
+2. `sh tools/deploy.sh` copie `engine/`, `app/`, `tools/` et `system/` vers `~/pycam` sur le Pi (`tar | ssh`), puis compile le moteur **sur le Pi**. Avec `--no-build`, il copie seulement.
+   - Compilation : meson + ninja, `ccache`, `-j2` pour ne pas saturer 1 Go de RAM.
+   - Une recompilation complète prend ~1 min. Une recompilation incrémentale, quelques secondes.
+3. On lance le moteur sur le Pi, en arrière-plan :
+   ```bash
+   cd ~/pycam && nohup engine/build/pycam-engine > /tmp/pycam-engine.log 2>&1 < /dev/null &
+   ```
+   Options : `--zsl`, `--still-denoise cdn_fast`, `--zsl-buffers 3`… (`--help`).
+4. On le pilote avec le client de test :
+   ```bash
+   python3 tools/engine_cli.py state
+   python3 tools/engine_cli.py set ExposureTime=8000 AnalogueGain=2
+   python3 tools/engine_cli.py capture ~/DCIM/test/PYC_0001
+   python3 tools/engine_cli.py events --seconds 3
+   python3 tools/engine_cli.py raw '{"cmd": "quit"}'
+   ```
+   Le protocole est décrit dans `protocol.md`.
+5. On rapatrie les images (`scp`) pour les inspecter.
+6. On commite quand c'est validé sur le Pi.
 
-## Dépendances côté Pi (prévisionnel)
+## Dépendances installées sur le Pi (2026-10-11)
 
-- **Build** : `build-essential meson ninja-build pkg-config ccache`, `librpicam-app-dev` (ou les en-têtes de rpicam-apps), `libcamera-dev`, `libdrm-dev`, `nlohmann-json3-dev`, `libjpeg-dev libtiff-dev libexif-dev`.
-- **Python** : on utilise les paquets Debian quand ils existent (`python3-pil python3-evdev python3-aiohttp`). Sinon, un venv `--system-site-packages`.
-- **Outils** : `socat`, `i2c-tools`.
+- **Build** : `librpicam-app-dev libcamera-dev libdrm-dev nlohmann-json3-dev libboost-program-options-dev libjpeg-dev libtiff-dev libexif-dev libpng-dev ccache`. gcc, meson et ninja étaient déjà présents.
+- **Python** : `python3-evdev python3-aiohttp` ; Pillow et numpy étaient déjà présents. On utilise les paquets Debian plutôt qu'un venv.
+- **Outils** : `socat i2c-tools`.
 
 ## Audit de la cible
 
@@ -48,14 +59,16 @@ Le script fait l'inventaire de l'OS, de la mémoire et de la CMA, de la caméra,
 | OS | Raspberry Pi OS Trixie (Debian 13), 64 bits |
 | Noyau | 6.18.50+rpt-rpi-v8 |
 | libcamera | 0.7.2+rpt20260817-1 |
-| rpicam-apps / librpicam-app1 | 1.13.0-1 (`librpicam-app-dev` 1.13.0-1 disponible, non installé) |
+| rpicam-apps / librpicam-app1 / librpicam-app-dev | 1.13.0-1 |
 | Picamera2 | 0.3.37-1 (sert seulement aux mesures rapides) |
 | Toolchain | gcc 14.2, meson 1.7.0, ninja 1.12.1, Python 3.13.5 |
-| Python déjà présent | Pillow 11.1, numpy 2.2.4 (manquent : evdev, aiohttp) |
+
+**Les en-têtes de `librpicam-app-dev` diffèrent du dépôt GitHub au même numéro de version.** C'est toujours sur le Pi qu'on vérifie une signature : `/usr/include/rpicam-apps/`.
 
 ## Droits sur le Pi
 
-`sudo` demande un mot de passe pour `ael`, et je ne le saisis pas. Pour les opérations système (apt, systemd, `config.txt`), deux options :
+`ael` a un `sudo` sans mot de passe pendant le développement : `/etc/sudoers.d/010_ael-nopasswd`, créé par l'utilisateur le 2026-10-11. Pour le retirer :
 
-- l'utilisateur lance lui-même la commande que je prépare ;
-- l'utilisateur crée une règle sudo sans mot de passe pour `ael`, qu'il pourra retirer à la fin du développement.
+```bash
+sudo rm /etc/sudoers.d/010_ael-nopasswd
+```

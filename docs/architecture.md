@@ -62,6 +62,7 @@ rpicam-apps installe sa bibliothèque cœur (`librpicam_app.so`, pkg-config `rpi
   - Le serveur IPC (§6).
 - **Pourquoi pas un fork ?** On suit les mises à jour de Raspberry Pi par `apt` : correctifs ISP, tuning IMX477, évolutions de libcamera. Un fork se désynchronise. CinePI est aujourd'hui figé sur une vieille base.
 - **Risque :** l'API de `librpicam_app` n'est pas garantie stable. On fige la version testée dans `development.md`. Si une mise à jour casse la compilation, on embarque les fichiers nécessaires dans le dépôt (licence BSD-2, compatible).
+- ✅ **Validé le 2026-10-11** : le moteur compile et se lie contre `librpicam-app-dev` 1.13.0, sans avertissement. Point d'attention : les en-têtes du paquet Debian ne sont pas identiques au dépôt git du même numéro (les écrivains d'images y prennent des `libcamera::Span`). **La référence, ce sont les en-têtes installés sur le Pi**, pas GitHub.
 
 ### 2.2 Pipeline caméra
 
@@ -70,22 +71,30 @@ rpicam-apps installe sa bibliothèque cœur (`librpicam_app.so`, pkg-config `rpi
 | Visée | 2028×1520, binning, ~30 i/s | `main` YUV420 à la taille de l'écran<br>`lores` YUV420 ~320×240 | `main` va à l'écran par le plan vidéo DRM (aucun travail CPU).<br>`lores` sert à l'analyse. |
 | Loupe ×5 / ×10 | 4056×3040, 10 i/s, avec `ScalerCrop` | `main` + `lores` | Mise au point fine sur de vrais pixels, pas sur une image binnée. |
 | Déclenchement | 4056×3040 | `raw` + `main` YUV pleine résolution | DNG à partir du `raw`, JPEG à partir du `main`. |
-| ZSL (option) | 4056×3040 en continu | `raw` + `main` + `lores` | Déclenchement instantané, mais visée à 10 i/s et plus de mémoire CMA. C'est un réglage « réactivité ou fluidité ». |
+| ZSL (option) | 4056×3040 en continu | `raw` + `still` YUV + `viewfinder` | Déclenchement quasi instantané, mais visée à ~12 i/s et ~111 Mo de CMA (3 jeux de tampons). C'est un réglage « réactivité ou fluidité ». |
 
-- **Latence au déclenchement.** Changer de mode (viewfinder → still) coûte un arrêt/reconfiguration de la caméra. Mesures sur le Pi 3B le 2026-10-11, avec Picamera2 (même libcamera dessous) :
+- **Latence au déclenchement.** Mesures avec `pycam-engine` sur le Pi 3B le 2026-10-11 : pose fixe de 4 ms, bureau graphique actif, scène noire.
 
   | Scénario | Résultat |
   |---|---|
-  | Visée binnée 1024×768 + lores, pose 4 ms | **30,7 i/s** (plafond de la configuration à 30 i/s) |
-  | Bascule visée → pleine résolution → image, pose 4 ms | **360–390 ms** |
-  | Même bascule en scène sombre (pose 66 ms, gain 16) | 650–740 ms : les trames de démarrage durent plus longtemps |
-  | ZSL en Python (pleine résolution + lores en continu) | visée **4 i/s**, image disponible en ~330 ms |
-  | Pleine résolution YUV en continu via `rpicam-vid` (C++) | **~10–11 i/s** : en C++, la ZSL donne une visée à ~10 i/s au lieu de 4 |
-  | `rpicam-still --immediate`, JPEG, de bout en bout | ~4,3 s, dont l'ouverture de la caméra et l'encodage JPEG logiciel 12 MP ; à décomposer dans le moteur |
-  | Idem JPEG + DNG | ~4,6 s (DNG non compressé : 24,8 Mo ; JPEG : 2 Mo) |
+  | Visée « bascule » (2028×1520 binné → 1024×768 + lores 320×240) | **30 i/s** |
+  | Bascule, photo débruitée `cdn_hq` | latence **~505 ms** = 70 ms de reconfiguration + ~435 ms jusqu'à la 1re image |
+  | Bascule, photo débruitée `cdn_fast` ou `cdn_off` | latence **~277 ms** = 70 + ~207 ms |
+  | ZSL, `cdn_fast` / `cdn_off` | visée **11,7 i/s** (le maximum du capteur), latence 20–250 ms |
+  | ZSL, `cdn_hq` | visée **3,9 i/s** seulement : à éviter |
+  | Copie de l'image hors des tampons caméra (YUV + RAW, 37 Mo) | 65–165 ms |
+  | Écriture JPEG 12 MP / DNG 24,8 Mo | ~270 ms / ~170–280 ms, sur une image noire. **À remesurer sur une vraie scène.** |
 
-  Lecture : **~0,4 s de latence en mode « bascule »**, c'est l'ordre d'un compact des années 2000 ; **~0 s en ZSL**, mais avec une visée à ~10 i/s. On implémente les deux et on laisse le choix dans les réglages (« fluidité » ou « réactivité »). L'encodage JPEG logiciel (~1–2 s estimés) doit absolument se faire hors du chemin de visée. Piste d'optimisation : l'encodeur JPEG matériel du VC4 (V4L2 M2M), à évaluer.
+  **Lecture.**
+  - Le débruitage couleur haute qualité (`cdn_hq`) coûte ~225 ms de traitement ISP par image en pleine résolution. C'est lui qui domine la latence, pas le changement de mode.
+  - On propose donc trois réglages : **bascule + cdn_hq** (~0,5 s, meilleure qualité en ISO élevé) ; **bascule + cdn_fast** (~0,28 s) ; **ZSL** (~0–0,25 s, visée à 12 i/s).
+  - La config pipeline `disable_startup_frame_drops` a été essayée sans effet : aucune image n'est jetée au redémarrage.
+  - Pour comparaison, Picamera2 (Python) plafonne la ZSL à 4 i/s, contre 11,7 i/s pour le moteur C++.
 - **File d'écriture.** Après la capture, le moteur revient *tout de suite* en visée. L'encodage JPEG, l'écriture DNG et l'EXIF tournent dans un thread dédié. La file est bornée par la mémoire, à environ 3 vues. Quand elle est pleine, le déclencheur est refusé et l'interface affiche « occupé ».
+- **Optimisations possibles, plus tard** :
+  - réutiliser des tampons préalloués pour la copie, ce qui évite les fautes de page (65–165 ms aujourd'hui) ;
+  - l'encodeur JPEG matériel du VC4 (V4L2 M2M) ;
+  - la compression LJ92 du DNG.
 - **Expositions longues.** L'IMX477 accepte des poses de plusieurs minutes (la limite exacte est à mesurer). La visée ne peut pas suivre : on affiche un compte à rebours.
 
 ### 2.3 Analyse d'image (par trame, sur `lores`)
@@ -158,23 +167,14 @@ Un seul processus `asyncio`, découpé en modules :
 
 ## 6. Protocole moteur ⇄ application
 
-Le moteur écoute sur le socket Unix `/run/pycam/engine.sock`. Chaque message est un objet JSON sur une ligne. On peut le tester à la main avec `socat - UNIX-CONNECT:/run/pycam/engine.sock`.
+Le moteur écoute sur un socket Unix. En développement, c'est `/tmp/pycam-engine.sock` ; le service systemd utilisera `/run/pycam/engine.sock`. Chaque message est un objet JSON sur une ligne.
 
-```jsonc
-// app → moteur (commandes, avec id pour corréler la réponse)
-{"id": 1, "cmd": "configure", "viewfinder": {"mode": "2028x1520", "fps": 30}, "zsl": false}
-{"id": 2, "cmd": "set_controls", "controls": {"ExposureTime": 8000, "AnalogueGain": 2.0, "AeEnable": false}}
-{"id": 3, "cmd": "capture", "formats": ["dng", "jpeg"], "path": "/home/ael/DCIM/100PYCAM/PYC_0042", "exif": {"LensModel": "Arducam 16mm"}}
-{"id": 4, "cmd": "overlay", "peaking": {"on": true, "threshold": 0.3, "color": "#ff0000"}, "zebra": {"on": false}}
-{"id": 5, "cmd": "zoom", "factor": 5.0, "center": [0.5, 0.5]}
+Le protocole implémenté est décrit dans **[protocol.md](protocol.md)** :
 
-// moteur → app (réponses et évènements)
-{"id": 3, "ok": true}
-{"event": "stats", "fps": 29.8, "exposure_us": 8000, "gain": 2.0, "lux": 312, "colour_temp": 5200, "ev_offset": -0.7, "histogram": {"y": [/* 64 classes */]}}
-{"event": "capture_done", "files": ["…/PYC_0042.DNG", "…/PYC_0042.JPG"], "ms": 1830}
-{"event": "busy", "queue": 3}
-{"event": "error", "message": "…"}
-```
+- **commandes** : `ping`, `get_state`, `list_controls`, `set_controls`, `capture`, `configure`, `quit` ;
+- **évènements** : `ready`, `stats`, `captured`, `capture_done`, `capture_error`, `error`.
+
+Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la loupe) viendront avec le module d'affichage.
 
 **Pourquoi un socket Unix en JSON plutôt que Redis (le choix de CinePI) ?**
 
@@ -216,12 +216,13 @@ Le moteur écoute sur le socket Unix `/run/pycam/engine.sock`. Chaque message es
 
 ## 10. Points ouverts / risques
 
-1. ✅ **Latence de changement de mode** : ~0,4 s en bascule, ~0 en ZSL (§2.2). On propose les deux modes.
+1. ✅ **Latence de changement de mode**, mesurée dans le moteur (§2.2) : 0,28 à 0,5 s en bascule selon le débruitage, 0 à 0,25 s en ZSL. On propose les deux modes.
 2. 🟨 **Mémoire CMA** : 256 Mo au total. Avec le bureau actif, il n'en reste que 28 Mo en ZSL, ce qui est juste. Il faut remesurer sans bureau, puis ajuster éventuellement `cma=` dans `config.txt`.
 3. ⬜ **Plans DRM overlay** sur HDMI : à vérifier au premier prototype d'affichage.
-4. ✅ **`librpicam_app`** : `librpicam-app-dev` 1.13.0 est disponible dans les dépôts (pas encore installé). Il reste à valider une compilation.
+4. ✅ **`librpicam_app`** : `librpicam-app-dev` 1.13.0 est installé, et le moteur compile et tourne.
 5. ✅ **Écran** : HDMI sans tactile.
-6. ⬜ **Droits** : `sudo` demande un mot de passe pour `ael`. Il en faut pour installer les paquets de build, arrêter le bureau et éditer `config.txt`.
+6. ✅ **Droits** : `sudo` sans mot de passe pour `ael` pendant le développement.
+7. ⬜ **Temps d'encodage réels** : JPEG et DNG ont été mesurés sur une image noire. Il faut les remesurer sur une vraie scène.
 
 ## 11. Décisions (résumé)
 

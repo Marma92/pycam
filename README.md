@@ -10,12 +10,16 @@ Il vise à offrir :
 - du RAW DNG + JPEG ;
 - des commandes physiques, une batterie et une interface web.
 
-**Statut** : architecture en cours de définition. Pas encore de code exécutable.
+**Statut** : jalon M0 en cours.
+
+- Le moteur caméra C++ (`engine/`) tourne sur le Pi 3B : visée, déclenchement JPEG + DNG, mesures, pilotage par socket.
+- Restent l'affichage HDMI et l'application Python.
 
 ## Documentation
 
 - [Architecture](docs/architecture.md) : découpage moteur C++ / application Python, pipeline caméra, affichage, protocole, décisions.
 - [Fonctionnalités](docs/features.md) : catalogue par jalons (M0 → M3) et état.
+- [Protocole](docs/protocol.md) : commandes et évènements du moteur.
 - [Matériel](docs/hardware.md) : configuration actuelle, ajouts envisagés (écran, boutons, batterie, IMU…), brochage, budget énergétique.
 - [Développement](docs/development.md) : boucle de travail, déploiement et tests sur le Pi par SSH.
 
