@@ -115,7 +115,12 @@ rpicam-apps installe sa bibliothèque cœur (`librpicam_app.so`, pkg-config `rpi
   - Coût mesuré : **~6 ms par image** sur le Pi 3B.
 - **Zébras** : rayures diagonales qui défilent, sur les blocs au-dessus du seuil (95 % par défaut).
 - La commande `snapshot` enregistre l'image de visée telle qu'affichée, aides comprises : c'est ce qui permet de **vérifier l'affichage à distance**.
-- ⬜ **Posemètre** pour le mode M : luminance moyenne pondérée selon le mode de mesure, convertie en écart d'IL par rapport à la cible.
+- ✅ **Posemètre** (`app/pycam/meter.py`).
+  - L'objectif est manuel : impossible de raisonner en ouvertures. Le posemètre raisonne sur la lumière qui arrive au capteur, via l'estimation `Lux` de l'ISP. Elle est calculée sur les statistiques brutes linéaires et ne dépend presque pas des réglages : ±10 % pour ±1 IL, mesuré.
+  - L'exposition automatique, une fois stabilisée, donne la constante `lux × pose × gain ≈ K` (K ≈ 13,8·10⁶ mesuré). Elle est apprise en continu en mode P, correction d'exposition déduite, et conservée dans les réglages.
+  - En manuel, l'écart affiché est `log2(pose × gain × lux / K)`.
+  - Mesuré : pour des réglages à −1,1 / +0,9 IL, le posemètre lit −0,9 / +0,8 (les hautes lumières qui saturent le décalent un peu), soit ~0,15 IL d'écart. C'est suffisant pour un affichage au tiers.
+  - Il ne tient pas encore compte du mode de mesure (spot, centrale), puisque `Lux` est une moyenne de toute l'image.
 
 Plus tard, si le CPU ne suit pas, le peaking pourra passer en NEON, ou en shader GLES2 sur le GPU VC4.
 
