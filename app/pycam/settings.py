@@ -51,6 +51,9 @@ class Settings:
     zebra: bool = False
     review_seconds: int = 2
     histogram: str = "rgb"  # HISTOGRAMS, in the detailed display
+    preset: str = "standard"  # the look of the JPEGs: a folder name (looks.py)
+    keep_base: bool = False  # also write the JPEG without the look (PYB_0001.JPG)
+    lens_shading: bool = False  # correct the lens shading (another ISP tuning)
     fn1: str = "peaking"  # FN_ACTIONS
     fn2: str = "zebra"
     lenses: list = field(default_factory=lambda: copy.deepcopy(DEFAULT_LENSES))  # edit to add yours

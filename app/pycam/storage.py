@@ -36,11 +36,17 @@ class Storage:
             folder, number = _after(folder, number)
         raise RuntimeError(f"no free photo name in {self.root}")
 
+    @staticmethod
+    def base_copy(base):
+        """Where the JPEG without the look goes: PYB_0001 next to PYC_0001."""
+        folder, name = os.path.split(base)
+        return os.path.join(folder, "PYB_" + name[4:])
+
     def commit(self, folder, number):
         """The photo (folder, number) was taken: the next one comes after."""
         self.settings.folder_number, self.settings.next_number = _after(folder, number)
 
-    def shots_remaining(self, formats, dng_compressed=False):
+    def shots_remaining(self, formats, dng_compressed=False, base_jpeg=False):
         path = self.root
         while not os.path.exists(path):  # the card may not have a DCIM folder yet
             parent = os.path.dirname(path)
@@ -48,5 +54,7 @@ class Storage:
                 return 0
             path = parent
         kinds = ["dng_compressed" if f == "dng" and dng_compressed else f for f in formats]
+        if base_jpeg and "jpeg" in formats:
+            kinds.append("jpeg")
         per_shot = sum(BYTES_PER_SHOT[k] for k in kinds) or BYTES_PER_SHOT["jpeg"]
         return shutil.disk_usage(path).free // per_shot

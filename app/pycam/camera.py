@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 
 from . import exposure as exp
-from . import lenses, meter, picture
+from . import lenses, looks, meter, picture
 from .engine_client import EngineError, call_blocking
 from .menu import Menu
 from .settings import DISPLAY_MODES, save_settings
@@ -82,6 +82,8 @@ class Camera:
         self.last_shot = None
         self.review = None  # photo shown after the shot
         self.menu = None  # Menu while open
+        self._look_version = 0  # the last look asked for: only that one is sent
+        self._look_lock = asyncio.Lock()
         self.slowest_shutter = exp.SHUTTER_SPEEDS[-1]
         self._message = ("", False, 0.0)
         self._review_handle = None
@@ -115,6 +117,7 @@ class Camera:
         await self.engine.call("configure", strategy=self.settings.strategy, **picture.engine_config(self.settings))
         await self.apply_exposure()
         await self.apply_picture()
+        await self.apply_look()
         await self.apply_focus_aids()
         self.loupe = 1
         await self.apply_loupe()
@@ -144,7 +147,7 @@ class Camera:
             self.stats = msg
             e = self.settings.exposure
             if e.mode == "P":  # fully automatic: learn the meter constant (saved with the settings)
-                self.settings.meter_k = meter.calibrate(self.settings.meter_k, msg, e.ev)
+                self.settings.meter_k = meter.calibrate(self.settings.meter_k, msg, e.ev + self.preset().exposure_bias)
             self.redraw()
         elif kind == "captured":
             shot = self.last_shot
@@ -167,6 +170,8 @@ class Camera:
         elif kind == "loupe":
             self.loupe = msg.get("loupe", {}).get("zoom", 1)
             self.redraw()
+        elif kind == "tuning":
+            log.info("ISP tuning %s (camera reopened in %.0f ms)", msg.get("tuning"), msg.get("reopen_ms", 0))
         elif kind == "display_ready":
             log.info("the engine got the screen")
             self.spawn(self.setup_hud())
@@ -175,7 +180,7 @@ class Camera:
 
     async def apply_exposure(self):
         try:
-            await self.engine.call("set_controls", controls=self.settings.exposure.controls())
+            await self.engine.call("set_controls", controls=self.settings.exposure.controls(self.preset().exposure_bias))
         except ConnectionError:
             pass  # pushed again on reconnection
         except EngineError as e:
@@ -188,6 +193,38 @@ class Camera:
             pass  # pushed again on reconnection
         except EngineError as e:
             log.error("picture settings refused: %s", e)
+
+    async def apply_look(self):
+        """Compiles the preset with the contrast and the saturation (off the event loop, and
+        once: kept in a cache), then hands it to the engine. Turning a dial asks for several
+        looks in a row: only the last one is sent."""
+        self._look_version += 1
+        version = self._look_version
+        async with self._look_lock:
+            if version != self._look_version:
+                return  # a newer look is waiting for the lock
+            s, preset = self.settings, self.preset()
+            try:
+                lut = await asyncio.to_thread(looks.compiled_lut, preset, s.contrast, s.saturation)
+            except (looks.PresetError, OSError) as e:
+                log.error("cannot compile the preset %s: %s", preset.id, e)
+                self.show_message(f"Preset illisible : {preset.name}", warning=True)
+                return
+            if version != self._look_version:
+                return
+            try:
+                await self.engine.call(
+                    "look",
+                    name=preset.name,
+                    lut=lut,
+                    grain=preset.grain,
+                    grain_size=preset.grain_size,
+                    vignette=preset.vignette,
+                )
+            except ConnectionError:
+                pass  # pushed again on reconnection
+            except EngineError as e:
+                log.error("look refused: %s", e)
 
     async def apply_still_config(self):
         try:
@@ -273,6 +310,8 @@ class Camera:
             return
         if action in ("fn1", "fn2"):  # the action they are given in the menu
             action = getattr(s, action)
+        if action in ("q", "menu") and not (action == "menu" and self.loupe > 1):
+            looks.refresh()  # a preset copied to the camera shows up in the menu
         if action == "q":
             self.menu = Menu(s, quick=True)
             self.redraw()
@@ -386,8 +425,14 @@ class Camera:
                 menu.set(item.attr, value)
             if item.attr == "lens":
                 s.aperture = None  # it belonged to the previous lens
+        if item.attr == "preset":
+            self.spawn(self.apply_exposure())  # its exposure shift
+        if item.attr == "lens_shading":
+            self.show_message("Correction de l'ombrage" if s.lens_shading else "Sans correction de l'ombrage")
         if item.push == "exposure":
             self.spawn(self.apply_exposure())
+        elif item.push == "look":
+            self.spawn(self.apply_look())
         elif item.push == "picture":
             self.spawn(self.apply_picture())
         elif item.push == "config":
@@ -402,14 +447,17 @@ class Camera:
                 self.show_message("Moteur indisponible", warning=True)
                 return
             base, folder, number = self.storage.next_photo()
+            s, preset = self.settings, self.preset()
+            extra = {"base_jpeg": Storage.base_copy(base)} if s.keep_base and "jpeg" in s.formats else {}
             try:
                 reply = await self.engine.call(
                     "capture",
                     path=base,
-                    formats=self.settings.formats,
-                    dng_compression=self.settings.dng_compression,
-                    quality=self.settings.jpeg_quality,
-                    exif=lenses.lens_exif(self.lens(), self.settings.aperture),
+                    formats=s.formats,
+                    dng_compression=s.dng_compression,
+                    quality=s.jpeg_quality,
+                    exif=lenses.lens_exif(self.lens(), s.aperture) + [f"IFD0.Software=pycam, {preset.name}"],
+                    **extra,
                 )
             except EngineError as e:
                 if e.code != "busy":
@@ -438,6 +486,11 @@ class Camera:
         self.show_message("Réactivité (ZSL)" if new == "zsl" else "Fluidité (bascule)")
 
     # --- Measures
+
+    def preset(self):
+        """The chosen preset; the default one if it is gone (a deleted folder)."""
+        presets = looks.registry()
+        return presets.get(self.settings.preset) or presets.get(looks.DEFAULT) or next(iter(presets.values()))
 
     def lens(self):
         """The chosen lens profile, or None."""
@@ -473,11 +526,12 @@ class Camera:
         # cannot reach its aim (out of range), as a warning.
         meter_value, meter_warning = None, False
         stops = meter.offset(s.meter_k, self.stats)
+        bias = self.preset().exposure_bias  # the preset wants this much: that is the aim
         if stops is not None:
             if e.mode == "M":
-                meter_value = meter.to_thirds(stops)
-            elif abs(stops - e.ev) >= 2 / 3:
-                meter_value, meter_warning = meter.to_thirds(stops - e.ev), True
+                meter_value = meter.to_thirds(stops - bias)
+            elif abs(stops - e.ev - bias) >= 2 / 3:
+                meter_value, meter_warning = meter.to_thirds(stops - e.ev - bias), True
         return HudView(
             display=s.display,
             grid=s.grid and self.loupe == 1,  # the rule of thirds means nothing in the loupe
@@ -493,7 +547,8 @@ class Camera:
             awb=e.awb_label(),
             formats="RAW+JPEG" if "dng" in s.formats else "JPEG",
             lens=lenses.format_lens(self.lens(), s.aperture),
-            shots=self.storage.shots_remaining(s.formats, s.dng_compression),
+            shots=self.storage.shots_remaining(s.formats, s.dng_compression, s.keep_base),
+            look=self.preset().short,
             zsl=s.strategy == "zsl",
             peaking=s.peaking_color if s.peaking else "",
             zebra=s.zebra,

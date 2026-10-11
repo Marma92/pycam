@@ -10,7 +10,7 @@ Q, MENU or the shutter close them; the shutter also shoots.
 
 from dataclasses import dataclass
 
-from . import exposure, lenses, picture
+from . import exposure, lenses, looks, picture
 from .settings import FN_ACTIONS, PEAKING_COLORS, PEAKING_SENSITIVITIES
 
 
@@ -20,7 +20,7 @@ class Item:
     attr: str = ""  # in Settings, dotted for nested ones ("exposure.metering"); empty: a section title
     values: tuple = ()  # or settings -> ((value, shown), ...) for lists that depend on other settings
     shown: tuple = ()  # how each value is shown
-    push: str = ""  # what the engine must be told: "exposure", "picture", "config", "focus" or nothing
+    push: str = ""  # what the engine must be told: "exposure", "picture", "look", "config", "focus" or nothing
 
     def options(self, settings):
         """((value, shown), ...)"""
@@ -35,6 +35,10 @@ def _levels(values, black_and_white=False):
 
 def _lens_options(settings):
     return ((-1, "Aucun"),) + tuple((i, lens["name"]) for i, lens in enumerate(settings.lenses))
+
+
+def _preset_options(settings):
+    return tuple((preset_id, preset.name) for preset_id, preset in looks.registry().items())
 
 
 def _aperture_options(settings):
@@ -79,8 +83,10 @@ PEAKING_SENSITIVITY = Item(
 )
 ZEBRA = Item("Zébras", "zebra", *YES_NO, "focus")
 SHARPNESS = Item("Netteté", "sharpness", tuple(picture.SHARPNESS), _levels(picture.SHARPNESS), "picture")
-CONTRAST = Item("Contraste", "contrast", tuple(picture.CONTRAST), _levels(picture.CONTRAST), "picture")
-SATURATION = Item("Saturation", "saturation", tuple(picture.SATURATION), _levels(picture.SATURATION, True), "picture")
+# Contrast and saturation are compiled into the look, after the preset.
+CONTRAST = Item("Contraste", "contrast", tuple(picture.CONTRAST), _levels(picture.CONTRAST), "look")
+SATURATION = Item("Saturation", "saturation", tuple(picture.SATURATION), _levels(picture.SATURATION, True), "look")
+SIMULATION = Item("Simulation", "preset", _preset_options, push="look")
 DENOISE = Item(
     "Réduction du bruit", "denoise", tuple(picture.DENOISE), ("Aucune", "Légère", "Rapide", "Haute qualité"), "config"
 )
@@ -91,6 +97,9 @@ DNG_COMPRESSION = Item("RAW compressé", "dng_compression", (True, False), ("Oui
 # Applied once the engine accepts it (Camera.set_strategy).
 STRATEGY = Item("Déclenchement", "strategy", ("switch", "zsl"), ("Bascule · visée fluide", "ZSL · sans latence"))
 REVIEW = Item("Revue après la prise", "review_seconds", (0, 1, 2, 4), ("Coupée", "1 s", "2 s", "4 s"))
+KEEP_BASE = Item("Garder la base", "keep_base", (False, True), ("Non", "Oui · JPEG neutre en plus"))
+# Another ISP tuning: the camera is reopened (~0.2 s).
+LENS_SHADING = Item("Correction de l'ombrage", "lens_shading", (False, True), ("Non", "Oui"), "config")
 LENS = Item("Objectif", "lens", _lens_options)
 APERTURE = Item("Ouverture", "aperture", _aperture_options)
 GRID = Item("Grille des tiers", "grid", *YES_NO)
@@ -99,11 +108,11 @@ FN1 = Item("Bouton Fn1", "fn1", FN_ACTIONS, tuple(FN_LABELS[a] for a in FN_ACTIO
 FN2 = Item("Bouton Fn2", "fn2", FN_ACTIONS, tuple(FN_LABELS[a] for a in FN_ACTIONS))
 
 QUICK = (
+    SIMULATION,
     METERING,
     WHITE_BALANCE,
     KELVIN,
     PEAKING,
-    ZEBRA,
     SHARPNESS,
     CONTRAST,
     SATURATION,
@@ -117,6 +126,8 @@ FULL = (
     METERING,
     WHITE_BALANCE,
     KELVIN,
+    Item("Simulation"),
+    SIMULATION,
     Item("Mise au point"),
     PEAKING,
     PEAKING_SENSITIVITY,
@@ -134,9 +145,11 @@ FULL = (
     Item("Prise de vue"),
     STRATEGY,
     REVIEW,
+    KEEP_BASE,
     Item("Objectif"),
     LENS,
     APERTURE,
+    LENS_SHADING,
     Item("Affichage"),
     GRID,
     HISTOGRAM,

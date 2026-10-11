@@ -1,6 +1,16 @@
 # Presets et simulations de pellicules (réflexion)
 
-Statut : **orientations décidées le 2026-10-11** (§10), rien n'est encore implémenté. Les mesures datent du même jour, sur le Pi 3B.
+Statut : **orientations décidées le 2026-10-11** (§10). Les mesures datent du même jour, sur le Pi 3B.
+
+**Fait** (étapes 1 à 3 du §11) :
+- la base fixe : `engine/tuning`, chargée dès le démarrage, et la correction d'ombrage en réglage séparé ;
+- le moteur : LUT 3D, grain et vignettage sur le JPEG, option « garder la base » (`docs/protocol.md`, « look ») ;
+- l'application (`app/pycam/looks.py`) : lecture des presets, compilation en LUT avec le contraste et la saturation du menu, mise en cache (`~/.cache/pycam/looks`), ligne « Simulation » des menus, nom court dans le bandeau, nom du preset dans l'EXIF (`Software`) ;
+- deux presets intégrés : « Standard », le rendu par défaut (la courbe du tuning standard du Pi, sans son contraste adaptatif), et « Base (neutre) », la base telle quelle.
+
+**Reste** : l'aperçu en visée (la visée montre encore la base, plus sombre dans les tons moyens que « Standard »), l'outil `pycam-preset`, puis les pellicules.
+
+**Ajouter un preset** : copier son dossier dans `~/.config/pycam/presets/`. Il apparaît à la prochaine ouverture d'un menu, et un preset du même nom de dossier qu'un preset intégré le remplace. Un preset illisible est ignoré, avec un avertissement dans le journal (`journalctl -u pycam`).
 
 ## 1. Objectifs
 
@@ -92,7 +102,6 @@ lut = "look.cube"                # facultatif ; appliqué en premier
 strength = 1.0                   # mélange avec la base
 tone_curve = [[0.0, 0.03], [0.25, 0.23], [0.5, 0.52], [0.75, 0.79], [1.0, 0.95]]  # noirs relevés, épaule douce
 saturation = 0.92
-hue = { red = 2, yellow = -4, green = -10, blue = 4 }       # décalages de teinte, en degrés
 split_toning = { shadows = [190, 0.04], highlights = [45, 0.03] }  # teinte, intensité
 
 [grain]
@@ -103,7 +112,9 @@ size = 1.2
 amount = 0.1
 ```
 
-- Pour une pellicule noir et blanc, on ajoute un **mélangeur de canaux** (la sensibilité spectrale de l'émulsion) et des **filtres** jaune, orange, rouge ou vert, réglables dans le menu comme sur un boîtier argentique.
+- Pour une pellicule noir et blanc : `monochrome = true` et un **mélangeur de canaux**, `mixer = [rouge, vert, bleu]` (la sensibilité spectrale de l'émulsion). Plus tard, des **filtres** jaune, orange, rouge ou vert, réglables dans le menu comme sur un boîtier argentique.
+- Les courbes par canal s'écrivent `red_curve`, `green_curve` et `blue_curve`, sur le modèle de `tone_curve`. Les décalages de teinte (`hue`) ne sont pas encore gérés : en attendant, ils passent par une LUT.
+- Ordre d'application, comme dans un boîtier argentique : la LUT du preset, le mélange noir et blanc, les courbes, la saturation, le virage (`split_toning`), le mélange avec la base (`strength`), puis le contraste et la saturation du menu.
 - Tout est optionnel : un preset peut n'être qu'une LUT, ou qu'une recette.
 
 ## 5. Créer ses presets sur un ordinateur

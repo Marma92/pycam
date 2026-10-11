@@ -173,6 +173,8 @@ class Hud:
             text(view.ev, self.font, WHITE)
         text(view.awb, self.font, WHITE)
         text(view.formats, self.font, WHITE)
+        if view.look:
+            text(view.look, self.font_bold, WHITE)
         if view.lens:
             text(view.lens, self.font, WHITE)
 

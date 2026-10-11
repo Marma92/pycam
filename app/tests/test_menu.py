@@ -15,7 +15,7 @@ class MenuTest(unittest.TestCase):
         self.assertTrue(all(item in FULL for item in QUICK))
 
     def test_the_dial_stops_at_the_ends(self):
-        menu = Menu(Settings())  # metering: centre, the first value
+        menu = Menu(Settings(), quick=False)  # metering, the first line: centre, its first value
         self.assertEqual(menu.next_value(-1), "centre")
         self.assertEqual(menu.next_value(+10), "matrix")
 

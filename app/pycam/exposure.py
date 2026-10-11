@@ -109,9 +109,10 @@ class Exposure:
             (True, True): "M",
         }[(self.shutter is not None, self.iso is not None)]
 
-    def controls(self):
-        """The libcamera controls for the engine (protocol.md, set_controls)."""
-        controls = {"ExposureValue": self.ev, "AeMeteringMode": METERING[self.metering]}
+    def controls(self, bias=0.0):
+        """The libcamera controls for the engine (protocol.md, set_controls). bias: the
+        preset's exposure shift, added to the compensation."""
+        controls = {"ExposureValue": self.ev + bias, "AeMeteringMode": METERING[self.metering]}
         # libcamera applies a colour temperature or gains only with the automatic white
         # balance off; back to a preset, it must be turned on again.
         if self.awb == "Kelvin":

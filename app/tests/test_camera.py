@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 
+from pycam import looks
 from pycam.camera import Camera
 from pycam.engine_client import EngineError
 from pycam.settings import Settings, load_settings
@@ -52,12 +53,22 @@ class FakeHud:
 class CameraTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        # Compiled looks and user presets: in the test folder, not in the home directory.
+        self.env = {k: os.environ.get(k) for k in ("XDG_CACHE_HOME", "XDG_CONFIG_HOME")}
+        os.environ["XDG_CACHE_HOME"] = os.environ["XDG_CONFIG_HOME"] = self.tmp.name
+        looks.refresh()
         self.settings_path = os.path.join(self.tmp.name, "settings.json")
         self.settings = Settings(dcim=os.path.join(self.tmp.name, "DCIM"))
         self.engine = FakeEngine()
         self.camera = Camera(self.settings, self.settings_path, self.engine)
 
     async def asyncTearDown(self):
+        for key, value in self.env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        looks.refresh()
         self.tmp.cleanup()
 
     async def settle(self):
@@ -77,10 +88,17 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
     async def test_sync_pushes_the_whole_state(self):
         await self.camera.sync_engine()
         names = [name for name, _ in self.engine.calls]
-        self.assertEqual(names, ["list_controls", "configure", "set_controls", "set_controls", "focus_aids", "loupe"])
+        self.assertEqual(
+            names, ["list_controls", "configure", "set_controls", "set_controls", "look", "focus_aids", "loupe"]
+        )
         self.assertEqual(self.engine.last("loupe")["zoom"], 1)
         configure = self.engine.last("configure")
-        self.assertEqual((configure["still_denoise"], configure["still_size"]), ("cdn_hq", None))
+        self.assertEqual(
+            (configure["still_denoise"], configure["still_size"], configure["tuning"]), ("cdn_hq", None, "pycam-imx477")
+        )
+        look = self.engine.last("look")
+        self.assertEqual(look["name"], "Standard")
+        self.assertTrue(look["lut"].endswith(".lut") and os.path.exists(look["lut"]))
         self.assertEqual(self.engine.last("set_controls")["controls"]["Contrast"], 1.0)
         exposure = next(p["controls"] for n, p in self.engine.calls if n == "set_controls" and "ExposureValue" in p["controls"])
         self.assertEqual(exposure["AeMeteringMode"], "MeteringCentreWeighted")
@@ -89,12 +107,13 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
     async def test_quick_menu(self):
         self.camera.on_action("q")
         view = self.camera.view()
-        self.assertEqual((view.menu_title, view.menu_index), ("Réglages rapides", 0))
-        self.camera.on_action("front_dial_plus")  # line 1, metering: spot
+        self.assertEqual((view.menu_title, view.menu_index, view.menu[0]), ("Réglages rapides", 0, ("Simulation", "Standard")))
+        self.menu_line("Mesure de la lumière")
+        self.camera.on_action("front_dial_plus")  # spot
         await self.settle()
         self.assertEqual(self.engine.last("set_controls")["controls"]["AeMeteringMode"], "MeteringSpot")
         self.assertEqual(self.camera.view().metering, "spot")
-        self.assertEqual(self.camera.view().menu[0], ("Mesure de la lumière", "Spot"))
+        self.assertEqual(dict(self.camera.view().menu)["Mesure de la lumière"], "Spot")
         self.menu_line("Netteté")
         self.camera.on_action("front_dial_plus")
         await self.settle()
@@ -103,9 +122,8 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.camera.on_action("rear_dial_minus")  # saturation
         for _ in range(5):
             self.camera.on_action("front_dial_minus")  # down to black and white, and stays there
-        await self.settle()
-        self.assertEqual(self.engine.last("set_controls")["controls"]["Saturation"], 0.0)
-        self.assertEqual(self.camera.view().menu[7], ("Saturation", "N&B"))
+        self.assertEqual(self.settings.saturation, -3)  # compiled into the look
+        self.assertEqual(dict(self.camera.view().menu)["Saturation"], "N&B")
         self.camera.on_action("rear_dial_minus")  # denoise: an engine setting
         self.camera.on_action("front_dial_minus")
         await self.settle()
@@ -158,7 +176,7 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         e = self.settings.exposure
         self.camera.on_event({"event": "stats", "colour_temp": 4480, "colour_gains": [2.5, 1.6]})
         self.menu_line("Température", quick=True)
-        self.assertEqual(self.camera.view().menu[2], ("Température", "≈ 4500 K"))  # measured: not in use
+        self.assertEqual(dict(self.camera.view().menu)["Température"], "≈ 4500 K")  # measured: not in use
         self.camera.on_action("front_dial_plus")  # from the auto balance: the measured temperature first
         await self.settle()
         self.assertEqual((e.awb, e.kelvin), ("Kelvin", 4500))
@@ -166,11 +184,11 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.camera.on_action("front_dial_plus")
         self.assertEqual(e.kelvin, 4800)
         self.camera.on_action("rear_dial_plus")  # the white balance line
-        self.assertEqual(self.camera.view().menu[1], ("Balance des blancs", "Température"))
+        self.assertEqual(dict(self.camera.view().menu)["Balance des blancs"], "Température")
         self.camera.on_action("front_dial_plus")  # Kelvin -> Locked: keeps the gains measured now
         await self.settle()
         self.assertEqual((e.awb, e.wb_gains), ("Locked", [2.5, 1.6]))
-        self.assertEqual(self.camera.view().menu[1], ("Balance des blancs", "Mémorisée"))
+        self.assertEqual(dict(self.camera.view().menu)["Balance des blancs"], "Mémorisée")
         self.camera.on_action("front_dial_minus")
         self.camera.stats = {}
         self.camera.on_action("front_dial_plus")  # nothing measured: stays where it was
@@ -302,7 +320,8 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
     async def test_lens_and_aperture_go_into_the_exif(self):
         self.camera.on_action("shutter")
         await self.settle()
-        self.assertEqual(self.engine.last("capture")["exif"], [])  # no lens chosen
+        exif = self.engine.last("capture")["exif"]
+        self.assertEqual(exif, ["IFD0.Software=pycam, Standard"])  # no lens chosen: only the preset
         self.menu_line("Objectif")
         self.camera.on_action("front_dial_plus")  # first default profile: 6 mm f/1.2
         self.camera.on_action("front_dial_plus")  # 16 mm f/1.4
@@ -426,6 +445,54 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.settings.strategy, "zsl")
         self.assertTrue(self.camera.view().zsl)
+
+    async def look_settled(self):
+        """apply_look compiles in a thread: wait for it."""
+        for _ in range(200):
+            await asyncio.sleep(0.02)
+            if not self.camera._look_lock.locked() and self.engine.calls and self.engine.calls[-1][0] == "look":
+                return self.engine.last("look")
+        self.fail("no look sent")
+
+    async def test_preset_from_the_menu(self):
+        self.menu_line("Simulation", quick=True)
+        self.camera.on_action("front_dial_plus")  # Standard -> Base (neutre)
+        look = await self.look_settled()
+        self.assertEqual((look["name"], look["lut"]), ("Base (neutre)", None))  # nothing to apply
+        self.assertEqual(self.camera.view().look, "BASE")
+        self.camera.on_action("front_dial_minus")
+        look = await self.look_settled()
+        self.assertEqual(look["name"], "Standard")
+        self.assertIsNotNone(look["lut"])
+
+    async def test_user_preset_with_exposure_bias(self):
+        folder = os.path.join(self.tmp.name, "pycam", "presets", "dense")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "preset.toml"), "w", encoding="utf-8") as f:
+            f.write('format = 1\nname = "Dense"\n[shooting]\nexposure_bias = -0.7\n[grain]\namount = 0.2\n')
+        self.camera.on_action("q")  # opening a menu looks for new presets
+        self.assertEqual(looks.registry()["dense"].name, "Dense")
+        self.settings.preset = "dense"
+        await self.camera.apply_exposure()
+        await self.camera.apply_look()
+        self.assertAlmostEqual(self.engine.last("set_controls")["controls"]["ExposureValue"], -0.7)
+        self.assertEqual(self.engine.last("look")["grain"], 0.2)
+        self.settings.preset = "gone"  # a deleted preset: back to the default one
+        self.assertEqual(self.camera.preset().id, "standard")
+
+    async def test_keep_base_writes_a_neutral_jpeg(self):
+        self.settings.keep_base = True
+        self.camera.on_action("shutter")
+        await self.settle()
+        capture = self.engine.last("capture")
+        self.assertEqual(os.path.basename(capture["base_jpeg"]), "PYB_0001")
+        self.assertEqual(os.path.dirname(capture["base_jpeg"]), os.path.dirname(capture["path"]))
+
+    async def test_lens_shading_is_another_tuning(self):
+        self.menu_line("Correction de l'ombrage")
+        self.camera.on_action("front_dial_plus")
+        await self.settle()
+        self.assertEqual(self.engine.last("configure")["tuning"], "pycam-imx477-alsc")
 
     async def test_strategy_from_the_menu(self):
         self.engine.refuse["configure"] = "busy"

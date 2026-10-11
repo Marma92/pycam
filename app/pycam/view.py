@@ -20,6 +20,7 @@ class HudView:
     meter_warning: bool = False  # the automatic exposure cannot reach it (out of range)
     awb: str = "AWB"
     formats: str = "RAW+JPEG"
+    look: str = ""  # short name of the preset
     lens: str = ""  # "16 mm f/2.8"
     shots: int = 0
     zsl: bool = False

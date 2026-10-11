@@ -224,18 +224,19 @@ Pendant la revue après la prise, toute touche la ferme ; le déclencheur la fer
 
 **Les menus** (`menu.py`). La molette arrière choisit la ligne, la molette avant change la valeur, qui s'applique tout de suite.
 
-- **Q, réglages rapides** : les 12 réglages de prise de vue. Mesure de la lumière, balance des blancs, température, peaking (coupé ou sa couleur), zébras, netteté, contraste, saturation (dont N&B), réduction du bruit, format, déclenchement (bascule ou ZSL), ouverture.
+- **Q, réglages rapides** : les 12 réglages de prise de vue. Simulation (le preset), mesure de la lumière, balance des blancs, température, peaking (coupé ou sa couleur), netteté, contraste, saturation (dont N&B), réduction du bruit, format, déclenchement (bascule ou ZSL), ouverture.
 - **MENU, menu complet** : tous les réglages, par section, la configuration comprise.
   - Exposition : mesure, balance des blancs, température.
+  - Simulation : le preset (`presets.md`).
   - Mise au point : peaking, sensibilité du peaking, zébras.
   - Image : netteté, contraste, saturation, réduction du bruit.
   - Fichiers : format, taille et qualité JPEG, compression du RAW.
-  - Prise de vue : déclenchement, revue après la prise.
-  - Objectif : profil d'objectif, ouverture.
+  - Prise de vue : déclenchement, revue après la prise, garder la base (un JPEG neutre en plus, `PYB_0001.JPG`).
+  - Objectif : profil d'objectif, ouverture, correction de l'ombrage (un autre tuning : la caméra est rouverte, ~0,2 s).
   - Affichage : grille des tiers, histogramme.
   - Boutons : fonctions de Fn1 et Fn2.
 
-  Il fait 22 lignes et défile ; une barre à droite montre où l'on est.
+  Il fait 25 lignes et défile ; une barre à droite montre où l'on est.
 - Quelques lignes ont un comportement propre :
   - **Balance des blancs** : la valeur « Mémorisée » garde les gains que la balance automatique mesure à cet instant (viser une charte grise d'abord). Fn peut faire la même chose sans ouvrir le menu.
   - **Température** : hors mode Kelvin, elle affiche la température mesurée (« ≈ 4500 K »). Le premier cran part de cette valeur et passe la balance en Kelvin.
