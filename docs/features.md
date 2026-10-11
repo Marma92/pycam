@@ -26,10 +26,11 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Visée en direct | Sur l'écran HDMI par plan DRM, zéro copie (30 i/s en bascule, 11,7 i/s en ZSL). | ✅ |
 | Déclenchement | DNG + JPEG pleine résolution ; deux stratégies (bascule / ZSL) ; retour immédiat à la visée. | ✅ |
 | File d'écriture | Asynchrone, bornée, écriture atomique (`.part` puis renommage) ; évènement `capture_done`. | ✅ |
-| Réglages de base | Vitesse, ISO, AWB : n'importe quel contrôle libcamera via `set_controls`. Reste à les exposer dans l'application. | 🟨 |
+| Réglages de base | Vitesse, ISO, balance des blancs (préréglages), correction d'exposition, au clavier. | ✅ |
 | Mesures en visée | Histogramme, luminance, lux, température de couleur, netteté ISP (`focus_fom`), à 5 Hz. | ✅ |
-| HUD minimal | Vitesse, ISO, nombre de vues restantes, grille des tiers. On bascule entre visée nature et visée détaillée. Le plan HUD et le protocole sont faits, et une démo (`tools/hud_demo.py`) affiche grille, bandeau et histogramme. Reste le HUD de l'application. | 🟨 |
-| Entrées | Clavier USB via evdev, qui simule les futurs boutons. | ⬜ |
+| HUD minimal | Mode, vitesse, ISO (valeurs auto en bleu), correction, balance des blancs, formats, vues restantes, grille des tiers, messages. Trois affichages : détaillé (avec histogramme et état ZSL / écriture), simple, nature. | ✅ |
+| Entrées | Claviers USB via evdev, branchés à chaud ; ils simulent les futurs boutons (`architecture.md` §5). | ✅ |
+| Rangement | `~/DCIM/100PYCAM/PYC_0001.JPG/.DNG`, numérotation persistante. | ✅ |
 | Service | Démarrage automatique (systemd). | ⬜ |
 | Mesures | Latence de déclenchement, fps de visée, temps d'écriture : voir `architecture.md` §2.2. À refaire sur une vraie scène et sans bureau. | 🟨 |
 
@@ -37,19 +38,19 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 
 | Fonctionnalité | Détail | État |
 |---|---|---|
-| Modes P / S / A / M | Voir `architecture.md` §3 ; pas de 1/3 IL. | ⬜ |
-| Correction d'exposition | ±3 IL. | ⬜ |
+| Modes P / S / A / M | Voir `architecture.md` §3 ; pas de 1/3 IL. Fait en avance avec M0 : le mode découle de ce qui est manuel. | ✅ |
+| Correction d'exposition | ±3 IL. | ✅ |
 | Mode de mesure | Pondérée centrale, spot, matricielle. | ⬜ |
 | Posemètre | Indicateur d'écart en IL en mode M. | ⬜ |
-| Balance des blancs | Auto, préréglages, Kelvin manuel, mémorisation sur une charte grise. | ⬜ |
-| Histogramme | Luminance et RVB dans le HUD. | ⬜ |
+| Balance des blancs | Auto, préréglages, Kelvin manuel, mémorisation sur une charte grise. Auto et préréglages sont faits ; Kelvin et charte grise restent à faire. | 🟨 |
+| Histogramme | Luminance et RVB dans le HUD. La luminance est faite, le RVB reste à faire. | 🟨 |
 | Peaking | Couleur et sensibilité réglables. | ⬜ |
 | Zébras | Seuil réglable. | ⬜ |
 | Loupe de mise au point | ×2,5 / ×5 / ×10 ; vrais pixels grâce au passage en pleine résolution. | ⬜ |
 | Revue après la prise | Affichage N secondes, désactivable. | ⬜ |
 | Profils d'objectifs | Nom, focale, ouverture max, écrits dans l'EXIF. | ⬜ |
 | Paramètres d'image | Qualité JPEG, RAW on/off, résolution, netteté, contraste, saturation, débruitage. | ⬜ |
-| Réglages persistants | Fichier TOML ; reprise à l'allumage. | ⬜ |
+| Réglages persistants | Fichier JSON, écriture atomique ; reprise à l'allumage. | ✅ |
 
 ## M2 — « Autonome » (dépend du matériel, voir `hardware.md`)
 

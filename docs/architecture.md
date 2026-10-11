@@ -160,27 +160,45 @@ Le moteur est **maître DRM/KMS**. Il n'y a pas de bureau graphique : on utilise
 
 ## 5. L'application `pycam` (Python)
 
-Un seul processus `asyncio`, découpé en modules :
+Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modules :
 
-| Module | Rôle |
+| Module | Rôle | État |
+|---|---|---|
+| `engine_client` | Client du socket du moteur : commandes et flux d'évènements, reconnexion automatique. | ✅ |
+| `camera` | Le contrôleur : actions, état, rendu du HUD (5 Hz max, seulement si la vue change). Il renvoie tout l'état au moteur à chaque (re)connexion. | ✅ |
+| `exposure` | Modes P/S/A/M, pas de 1/3 IL, tables de vitesses et d'ISO. Une molette tournée en auto part de la valeur mesurée. | ✅ |
+| `inputs` | Lecture **evdev** de tout ce qui a des touches utiles ; les périphériques sont « grabbés » et ceux branchés à chaud sont détectés. | ✅ |
+| `hud` / `view` | `view` décrit ce qu'il faut montrer (une valeur comparable) ; `hud` le dessine avec Pillow. | ✅ |
+| `settings` | Réglages persistants dans `~/.config/pycam/settings.json`, écriture atomique. JSON plutôt que TOML : la bibliothèque standard sait le lire *et* l'écrire. | ✅ |
+| `storage` | DCIM, numérotation persistante, espace libre. | ✅ (suppression à venir) |
+| `state` | Machine d'états : `VIEW` → `MENU` / `PLAYBACK` / `SLEEP`. | ⬜ |
+| `drive` | Vue par vue, rafale, retardateur, intervallomètre, bracketing, pose B. | ⬜ |
+| `sensors` | IMU (niveau, orientation), batterie, RTC. | ⬜ |
+| `web` | `aiohttp` : télécommande, galerie, téléchargement, visée distante en MJPEG basse résolution. | ⬜ |
+
+**Commandes clavier, en attendant les boutons.** Les lettres sont choisies pour être au même endroit en QWERTY et en AZERTY.
+
+| Touche | Action |
 |---|---|
-| `engine_client` | Client du socket du moteur : commandes et flux d'évènements, reconnexion. |
-| `state` | Machine d'états : `VIEW` → `MENU` / `PLAYBACK` / `CAPTURING` / `SLEEP`. |
-| `exposure` | Modes P/S/A/M, pas d'IL (1/3), tables de vitesses et d'ISO. |
-| `drive` | Vue par vue, rafale, retardateur, intervallomètre, bracketing, pose B. |
-| `input` | Lecture **evdev** : boutons et molettes passent par les pilotes noyau `gpio-keys` et `rotary-encoder`. Pas de polling GPIO en Python. |
-| `hud` | Rendu Pillow des calques : réglages, grille des tiers, niveau, histogramme, menus. |
-| `settings` | Réglages persistants dans `~/.config/pycam/settings.toml`, avec des profils d'objectifs. |
-| `storage` | DCIM, numérotation, espace libre, suppression. |
-| `sensors` | IMU (niveau, orientation), batterie, RTC. |
-| `web` | `aiohttp` : télécommande, galerie, téléchargement, visée distante en MJPEG basse résolution. |
+| Espace / Entrée | Déclencher |
+| ← / → | Vitesse plus lente / plus rapide (molette avant) |
+| ↓ / ↑ | ISO (molette arrière) |
+| Page↓ / Page↑ | Correction d'exposition |
+| S / I | Vitesse / ISO : basculer automatique ⇄ manuel |
+| B | Balance des blancs suivante |
+| D | Affichage : détaillé → simple → nature |
+| G | Grille des tiers |
+| R | RAW + JPEG ⇄ JPEG seul |
+| X | Stratégie : fluidité (bascule) ⇄ réactivité (ZSL) |
 
 **Pourquoi evdev.** Avec les overlays noyau, chaque bouton devient un évènement clavier (`KEY_*`) et chaque molette un évènement relatif (`REL_*`). Ça apporte plusieurs choses :
 
 - l'anti-rebond est fait par le noyau ;
 - aucun CPU n'est consommé à l'attente ;
 - on peut **brancher un clavier USB** pour développer ;
-- on peut simuler des appuis par `uinput` dans les tests automatiques.
+- on peut simuler des appuis par `uinput` dans les tests automatiques (`tools/press.py`).
+
+Constaté le 2026-10-11 : le pilote HDMI du Pi expose aussi un périphérique `vc4-hdmi` (HDMI-CEC) avec des touches de navigation. La télécommande d'une TV compatible CEC peut donc piloter l'appareil, gratuitement.
 
 ## 6. Protocole moteur ⇄ application
 

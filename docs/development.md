@@ -35,11 +35,19 @@ docs/
    python3 tools/engine_cli.py raw '{"cmd": "quit"}'
    ```
    Le protocole est décrit dans `protocol.md`.
-5. On rapatrie les images (`scp`) pour les inspecter.
-6. Pour voir le rendu sur l'écran du Pi :
+5. On lance l'application, le moteur tournant déjà :
+   ```bash
+   cd ~/pycam/app && nohup python3 -m pycam -v > /tmp/pycam-app.log 2>&1 < /dev/null &
+   ```
+   - Elle prend la main sur les claviers branchés au Pi : voir les touches dans `architecture.md` §5.
+   - Sans clavier, on simule des appuis : `sudo python3 tools/press.py right up space`.
+   - Ses réglages sont dans `~/.config/pycam/settings.json`, et les photos dans `~/DCIM/100PYCAM/`.
+   - Tests de la logique, sans Pi ni Pillow ni evdev : `cd app && python3 -m unittest discover -s tests -t .`
+6. On rapatrie les images (`scp`) pour les inspecter.
+7. Pour voir le rendu sur l'écran du Pi sans l'application :
    - avec le moteur lancé, `python3 tools/hud_demo.py` dessine un HUD de démonstration (grille, bandeau, histogramme) par-dessus la visée ;
    - sans le moteur, `sh tools/focus-preview.sh [loupe]` affiche l'aperçu rpicam et la netteté en direct dans le terminal, pratique pour régler la mise au point. À lancer avec `ssh -t` pour que Ctrl-C l'arrête.
-6. On commite quand c'est validé sur le Pi.
+8. On commite quand c'est validé sur le Pi.
 
 ## Dépendances installées sur le Pi (2026-10-11)
 
