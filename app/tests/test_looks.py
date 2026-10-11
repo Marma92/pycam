@@ -124,10 +124,15 @@ class LooksTest(unittest.TestCase):
         histogram = list(range(64))
         identity = list(range(256))
         self.assertEqual(looks.remap_histogram(histogram, identity), histogram)
+        # A curve that stretches the tones: each class covers two, without gaps between
+        # them (they showed as black bands in the HUD).
         brighter = [min(255, 2 * i) for i in range(256)]
-        remapped = looks.remap_histogram(histogram, brighter)
-        self.assertEqual(sum(remapped), sum(histogram))  # nothing lost
-        self.assertEqual(remapped[1], 0)  # the darkest classes moved up
+        remapped = looks.remap_histogram([10] * 64, brighter)
+        self.assertAlmostEqual(sum(remapped), 640)  # nothing lost
+        self.assertTrue(all(remapped[k] > 0 for k in range(63)))
+        self.assertAlmostEqual(remapped[63], 10 * 32 + 10 * 3 / 7)  # the upper half clips to white
+        inverted = looks.remap_histogram(histogram, [255 - i for i in range(256)])
+        self.assertEqual(inverted, histogram[::-1])
 
     def test_compiled_lut_is_cached(self):
         cache = os.path.join(self.tmp.name, "cache")

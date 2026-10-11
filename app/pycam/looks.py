@@ -577,12 +577,23 @@ def compiled_lut(preset, contrast=0, saturation=0, folder=None):
 
 
 def remap_histogram(histogram, curve):
-    """A histogram of the base (64 classes) as it will be after the look, for the greys."""
-    out = [0] * len(histogram)
-    width = 256 // len(histogram)
+    """A histogram of the base (64 classes) as it will be after the look, for the greys.
+
+    Each class is spread over all the levels the curve sends it to: where the curve
+    stretches the tones, one class covers several, and moving it whole would leave empty
+    classes in between (black bands in the HUD)."""
+    n = len(histogram)
+    width = 256 // n
+    out = [0.0] * n
     for i, count in enumerate(histogram):
-        level = curve[min(255, i * width + width // 2)]
-        out[min(len(out) - 1, level // width)] += count
+        if not count:
+            continue
+        a, b = curve[i * width], curve[min(255, (i + 1) * width - 1)]
+        low, high = min(a, b), max(a, b) + 1  # levels [low, high)
+        for k in range(low // width, min(n - 1, (high - 1) // width) + 1):
+            overlap = min(high, (k + 1) * width) - max(low, k * width)
+            if overlap > 0:
+                out[k] += count * overlap / (high - low)
     return out
 
 
