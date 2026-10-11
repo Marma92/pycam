@@ -17,7 +17,7 @@ static void usage()
 {
 	std::cerr << "usage: pycam-engine [--socket PATH] [--zsl] [--viewfinder WxH] [--lores WxH] [--queue N]\n"
 				 "                    [--zsl-buffers N] [--zsl-denoise D] [--still-denoise D] [--no-display] [-v]\n"
-				 "  --socket PATH     Unix socket to listen on (default /tmp/pycam-engine.sock)\n"
+				 "  --socket PATH     Unix socket to listen on (default /run/pycam/engine.sock)\n"
 				 "  --zsl             zero shutter lag: sensor at full resolution all the time\n"
 				 "  --viewfinder WxH  viewfinder stream size (default 1024x768)\n"
 				 "  --lores WxH       analysis stream size (default 320x240)\n"

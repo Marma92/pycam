@@ -76,14 +76,19 @@ class Camera:
             self.slowest_shutter = exposure_max / 1e6
         await self.engine.call("configure", strategy=self.settings.strategy)
         await self.apply_exposure()
-        if self.hud_factory:
-            try:
-                info = (await self.engine.call("hud_info"))["display"]
-            except EngineError as e:
-                log.warning("no HUD: %s", e)
-            else:
-                self.close_hud()
-                self.hud = self.hud_factory(info)
+        await self.setup_hud()
+
+    async def setup_hud(self):
+        """At connection, or when the engine gets the screen later ("display_ready")."""
+        if not self.hud_factory:
+            return
+        try:
+            info = (await self.engine.call("hud_info"))["display"]
+        except EngineError as e:
+            log.warning("no HUD for now: %s", e)
+            return
+        self.close_hud()
+        self.hud = self.hud_factory(info)
         self.redraw()
 
     def on_engine_lost(self):
@@ -103,6 +108,9 @@ class Camera:
             self.writing = max(0, self.writing - 1)
             log.error("capture %s failed: %s", msg.get("capture_id"), msg.get("error"))
             self.show_message("Erreur d'enregistrement", warning=True)
+        elif kind == "display_ready":
+            log.info("the engine got the screen")
+            self.spawn(self.setup_hud())
         elif kind == "error":
             log.error("engine: %s", msg.get("error"))
 

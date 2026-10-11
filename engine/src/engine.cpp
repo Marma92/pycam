@@ -90,17 +90,7 @@ int Engine::Run()
 			   });
 	writer_.Start([this](json event) { ipc_.Broadcast(event); });
 
-	if (cfg_.display)
-	{
-		try
-		{
-			display_ = std::make_unique<Display>(cfg_.vf_width, cfg_.vf_height, cfg_.hud_shm);
-		}
-		catch (std::exception const &e)
-		{
-			std::cerr << "pycam-engine: no display: " << e.what() << "\n";
-		}
-	}
+	TryDisplay();
 
 	app_.OpenCamera();
 	for (auto const &camera : app_.GetCameras())
@@ -131,6 +121,7 @@ int Engine::Run()
 		} // the frame goes back to the camera here, before any reconfiguration
 
 		DrainCommands();
+		TryDisplay();
 
 		if (next_phase_)
 		{
@@ -165,6 +156,28 @@ int Engine::Run()
 	writer_.Stop(); // finish writing the photos already taken
 	ipc_.Stop();
 	return 0;
+}
+
+void Engine::TryDisplay()
+{
+	// Without the screen (still held by the boot splash, or plugged in later), keep trying
+	// every couple of seconds; the application learns it from "display_ready".
+	if (!cfg_.display || display_ || Clock::now() < next_display_try_)
+		return;
+	try
+	{
+		display_ = std::make_unique<Display>(cfg_.vf_width, cfg_.vf_height, cfg_.hud_shm);
+	}
+	catch (std::exception const &e)
+	{
+		if (!display_failure_logged_)
+			std::cerr << "pycam-engine: no display yet (" << e.what() << "), retrying\n";
+		display_failure_logged_ = true;
+		next_display_try_ = Clock::now() + std::chrono::seconds(2);
+		return;
+	}
+	std::cerr << "pycam-engine: display ready\n";
+	ipc_.Broadcast({ { "event", "display_ready" }, { "display", display_->Info() } });
 }
 
 void Engine::RequestQuit()

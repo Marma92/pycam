@@ -18,7 +18,7 @@ import socket
 import sys
 import time
 
-DEFAULT_SOCKET = "/tmp/pycam-engine.sock"
+DEFAULT_SOCKET = "/run/pycam/engine.sock"
 
 
 class Engine:

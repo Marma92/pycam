@@ -1,0 +1,24 @@
+# pycam camera application. Installed by tools/install-services.sh (@USER@, @PYCAM@ filled in).
+[Unit]
+Description=pycam camera application
+Documentation=file://@PYCAM@/docs/architecture.md
+# Loose coupling: the application waits for the engine and reconnects by itself, so an
+# engine restart does not restart it.
+Wants=pycam-engine.service
+After=pycam-engine.service
+StartLimitIntervalSec=0
+
+[Service]
+User=@USER@
+Group=@USER@
+SupplementaryGroups=input
+WorkingDirectory=@PYCAM@/app
+ExecStart=/usr/bin/python3 -m pycam --socket /run/pycam/engine.sock
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=2
+# SIGTERM: settings saved, default HUD back on the screen.
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

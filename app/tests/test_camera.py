@@ -26,10 +26,20 @@ class FakeEngine:
             return {"ok": True, "controls": {"ExposureTime": {"min": 60, "max": 10_000_000}}}
         if cmd == "capture":
             return {"ok": True, "capture_id": len(self.calls)}
+        if cmd == "hud_info":
+            return {"ok": True, "display": {}}
         return {"ok": True}
 
     def last(self, cmd):
         return next(params for name, params in reversed(self.calls) if name == cmd)
+
+
+class FakeHud:
+    def close(self):
+        pass
+
+    def draw(self, view):
+        pass
 
 
 class CameraTest(unittest.IsolatedAsyncioTestCase):
@@ -52,6 +62,18 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         names = [name for name, _ in self.engine.calls]
         self.assertEqual(names, ["list_controls", "configure", "set_controls"])
         self.assertEqual(self.camera.slowest_shutter, 10)
+
+    async def test_hud_set_up_when_the_engine_gets_the_screen_later(self):
+        made = []
+        self.camera.hud_factory = lambda info: made.append(info) or FakeHud()
+        self.engine.refuse["hud_info"] = "unsupported"
+        await self.camera.sync_engine()
+        self.assertIsNone(self.camera.hud)
+        del self.engine.refuse["hud_info"]
+        self.camera.on_event({"event": "display_ready"})
+        await self.settle()
+        self.assertIsNotNone(self.camera.hud)
+        self.assertEqual(len(made), 1)
 
     async def test_dial_goes_manual_from_the_measure(self):
         self.camera.on_event({"event": "stats", "exposure_us": 16667, "analogue_gain": 2.0, "digital_gain": 1.0})

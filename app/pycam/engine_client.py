@@ -8,7 +8,7 @@ import socket
 
 log = logging.getLogger(__name__)
 
-DEFAULT_SOCKET = "/tmp/pycam-engine.sock"
+DEFAULT_SOCKET = "/run/pycam/engine.sock"
 
 
 class EngineError(Exception):

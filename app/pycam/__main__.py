@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import logging
+import os
 import signal
 
 from .camera import Camera
@@ -18,10 +19,11 @@ def main():
     parser.add_argument("--settings", default=default_path(), help="fichier de réglages")
     parser.add_argument("-v", "--verbose", action="store_true", help="journal détaillé")
     args = parser.parse_args()
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s pycam %(levelname)s %(name)s: %(message)s",
-    )
+    # Under systemd the journal already timestamps and names each line.
+    fmt = "%(levelname)s %(name)s: %(message)s"
+    if not os.environ.get("JOURNAL_STREAM"):
+        fmt = "%(asctime)s pycam " + fmt
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format=fmt)
     asyncio.run(run(args))
 
 

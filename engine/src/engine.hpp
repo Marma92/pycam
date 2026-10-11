@@ -25,7 +25,7 @@ namespace pycam
 
 struct EngineConfig
 {
-	std::string socket_path = "/tmp/pycam-engine.sock";
+	std::string socket_path = "/run/pycam/engine.sock"; // /run/pycam: system/pycam.tmpfiles
 	bool zsl = false; // capture strategy at startup, can be changed with "configure"
 	unsigned vf_width = 1024, vf_height = 768;
 	unsigned lores_width = 320, lores_height = 240;
@@ -82,6 +82,7 @@ private:
 		Clock::time_point t_command;
 	};
 
+	void TryDisplay();
 	void Start(Phase phase);
 	void Restart(Phase phase);
 	void OnFrame(CompletedRequestPtr &request);
@@ -99,6 +100,8 @@ private:
 	IpcServer ipc_;
 	CaptureWriter writer_;
 	std::unique_ptr<Display> display_; // null without a screen
+	Clock::time_point next_display_try_ {};
+	bool display_failure_logged_ = false;
 	libcamera::ControlInfoMap const *camera_controls_ = nullptr;
 
 	std::mutex commands_mutex_;
