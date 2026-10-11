@@ -29,6 +29,7 @@ executable('dng-roundtrip',
            dependencies : deps)
 
 test('analysis', executable('analysis-test', files('tests/analysis_test.cpp', 'src/analysis.cpp')))
+test('look', executable('look-test', files('tests/look_test.cpp', 'src/look.cpp'), dependencies : dependency('threads')))
 
 executable('pycam-engine',
            files(
@@ -41,6 +42,7 @@ executable('pycam-engine',
                'src/dng_writer.cpp',
                'src/focus_aids.cpp',
                'src/analysis.cpp',
+               'src/look.cpp',
            ),
            # Vendored code (see its README): a system include, its warnings are not ours.
            include_directories : lj92_inc,

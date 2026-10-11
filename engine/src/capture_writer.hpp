@@ -16,6 +16,8 @@
 #include "core/still_options.hpp"
 #include "core/stream_info.hpp"
 
+#include "look.hpp"
+
 namespace pycam
 {
 
@@ -35,6 +37,8 @@ struct CaptureJob
 	libcamera::ControlList metadata;
 	std::unique_ptr<StillOptions> options; // snapshot: JPEG quality, EXIF tags, thumbnail
 	std::string camera_model;
+	std::shared_ptr<const Look> look; // applied to the JPEG only
+	std::string base_jpeg_path; // without extension; not empty: also write the JPEG without the look
 };
 
 // Writes capture jobs on a background thread, one at a time, and reports each one

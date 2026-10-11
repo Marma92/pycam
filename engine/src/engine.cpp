@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 
@@ -56,6 +58,28 @@ double ms_between(std::chrono::steady_clock::time_point from, std::chrono::stead
 	return std::chrono::duration<double, std::milli>(to - from).count();
 }
 
+bool valid_tuning_name(std::string const &name)
+{
+	return !name.empty() && name.size() < 64 &&
+		   std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_'; });
+}
+
+// libcamera reads the tuning file when the camera manager starts, from this variable.
+// Returns the name of the tuning in use: empty for libcamera's own.
+std::string export_tuning(std::string const &dir, std::string const &name)
+{
+	std::filesystem::path path = std::filesystem::path(dir) / (name + ".json");
+	if (dir.empty() || name.empty() || !std::filesystem::exists(path))
+	{
+		if (!name.empty())
+			std::cerr << "pycam-engine: no tuning file " << path << ", using libcamera's" << std::endl;
+		unsetenv("LIBCAMERA_RPI_TUNING_FILE");
+		return "";
+	}
+	setenv("LIBCAMERA_RPI_TUNING_FILE", path.c_str(), 1);
+	return name;
+}
+
 std::string control_name(unsigned int id)
 {
 	auto it = controls::controls.find(id);
@@ -64,7 +88,9 @@ std::string control_name(unsigned int id)
 
 } // namespace
 
-Engine::Engine(EngineConfig cfg) : cfg_(std::move(cfg)), zsl_(cfg_.zsl), still_denoise_(cfg_.still_denoise)
+Engine::Engine(EngineConfig cfg)
+	: cfg_(std::move(cfg)), tuning_(export_tuning(cfg_.tuning_dir, cfg_.tuning)), zsl_(cfg_.zsl),
+	  still_denoise_(cfg_.still_denoise)
 {
 	if (cfg_.verbose < 2)
 		setenv("LIBCAMERA_LOG_LEVELS", "*:ERROR", 0);
@@ -105,9 +131,7 @@ int Engine::Run()
 	TryDisplay();
 
 	app_.OpenCamera();
-	for (auto const &camera : app_.GetCameras())
-		if (camera->id() == app_.CameraId())
-			camera_controls_ = &camera->controls();
+	FindCameraControls();
 	Start(Phase::Viewfinder);
 
 	std::cerr << "pycam-engine: ready, " << (zsl_ ? "zsl" : "switch") << " strategy, socket " << cfg_.socket_path
@@ -147,7 +171,13 @@ int Engine::Run()
 		DrainCommands();
 		TryDisplay();
 
-		if (next_phase_ && may_stop_camera())
+		if (reopen_ && may_stop_camera())
+		{
+			reopen_ = false;
+			next_phase_.reset(); // Reopen() starts the viewfinder anyway
+			Reopen();
+		}
+		else if (next_phase_ && may_stop_camera())
 		{
 			Phase phase = *next_phase_;
 			next_phase_.reset();
@@ -322,6 +352,40 @@ void Engine::Restart(Phase phase)
 	reconfigure_ms_ = ms_between(t, started_);
 }
 
+void Engine::SetTuning()
+{
+	tuning_ = export_tuning(cfg_.tuning_dir, tuning_);
+}
+
+void Engine::FindCameraControls()
+{
+	camera_controls_ = nullptr;
+	for (auto const &camera : app_.GetCameras())
+		if (camera->id() == app_.CameraId())
+			camera_controls_ = &camera->controls();
+}
+
+void Engine::Reopen()
+{
+	// A new tuning file: the camera manager must start again (CloseCamera() drops it).
+	Clock::time_point t = Clock::now();
+	app_.StopCamera();
+	if (display_)
+		display_->Reset();
+	app_.Teardown();
+	app_.CloseCamera();
+	SetTuning();
+	app_.OpenCamera();
+	FindCameraControls();
+	Start(Phase::Viewfinder);
+	reconfigure_ms_ = ms_between(t, started_);
+	std::cerr << "pycam-engine: tuning " << (tuning_.empty() ? std::string("libcamera") : tuning_)
+			  << ", camera reopened in " << int(reconfigure_ms_) << " ms\n";
+	ipc_.Broadcast({ { "event", "tuning" },
+					 { "tuning", tuning_.empty() ? json(nullptr) : json(tuning_) },
+					 { "reopen_ms", reconfigure_ms_ } });
+}
+
 void Engine::OnFrame(CompletedRequestPtr &request)
 {
 	frames_since_start_++;
@@ -386,6 +450,8 @@ void Engine::GrabStill(CompletedRequestPtr &request)
 	job->options->Set().quality = capture.quality;
 	job->options->Set().exif = capture.exif;
 	job->camera_model = app_.CameraModel();
+	job->look = look_;
+	job->base_jpeg_path = capture.base_jpeg_path;
 
 	FrameInfo info(request);
 	json event = {
@@ -489,6 +555,11 @@ void Engine::HandleCommand(int client, json const &command, Clock::time_point re
 			Configure(command);
 		else if (name == "focus_aids")
 			focus_aids_.Configure(command);
+		else if (name == "look")
+		{
+			SetLook(command);
+			reply["look"] = LookState();
+		}
 		else if (name == "loupe")
 		{
 			Loupe(command);
@@ -555,6 +626,7 @@ json Engine::Capture(json const &command, Clock::time_point received)
 	capture.compress_dng = command.value("dng_compression", false);
 	capture.quality = command.value("quality", 93);
 	capture.exif = command.value("exif", std::vector<std::string> {});
+	capture.base_jpeg_path = command.value("base_jpeg", "");
 	capture.t_command = received;
 
 	uint64_t id = capture.id;
@@ -614,8 +686,54 @@ void Engine::Configure(json const &command)
 		restart |= zsl_ && still_size != still_size_;
 		still_size_ = still_size;
 	}
+	if (command.contains("tuning"))
+	{
+		// A file name (without .json) in the tuning folder, or null for libcamera's own.
+		json const &value = command["tuning"];
+		std::string tuning = value.is_null() ? "" : value.get<std::string>();
+		if (!tuning.empty() &&
+			(!valid_tuning_name(tuning) || cfg_.tuning_dir.empty() ||
+			 !std::filesystem::exists(std::filesystem::path(cfg_.tuning_dir) / (tuning + ".json"))))
+			throw CommandError("bad_request", "tuning: unknown tuning file " + tuning);
+		if (tuning != tuning_)
+		{
+			tuning_ = tuning;
+			reopen_ = true; // a few seconds without viewfinder
+		}
+	}
 	if (restart)
 		next_phase_ = Phase::Viewfinder;
+}
+
+void Engine::SetLook(json const &command)
+{
+	// The whole look at once: what is not given is off. Photos already taken keep theirs.
+	auto look = std::make_shared<Look>();
+	look->name = command.value("name", "");
+	if (command.contains("lut") && !command["lut"].is_null())
+	{
+		try
+		{
+			look->lut = Lut3D::Load(command["lut"].get<std::string>());
+		}
+		catch (std::exception const &e)
+		{
+			throw CommandError("bad_request", e.what());
+		}
+	}
+	look->vignette = std::clamp(command.value("vignette", 0.0f), 0.0f, 1.0f);
+	look->grain = std::clamp(command.value("grain", 0.0f), 0.0f, 1.0f);
+	look->grain_size = std::clamp(command.value("grain_size", 1.0f), 0.5f, 8.0f);
+	look_ = std::move(look);
+}
+
+json Engine::LookState() const
+{
+	return { { "name", look_->name },
+			 { "lut", look_->lut ? json(look_->lut->size) : json(nullptr) },
+			 { "vignette", look_->vignette },
+			 { "grain", look_->grain },
+			 { "grain_size", look_->grain_size } };
 }
 
 void Engine::Loupe(json const &command)
@@ -688,6 +806,8 @@ json Engine::State() const
 		{ "loupe", LoupeState() },
 		{ "still_denoise", still_denoise_ },
 		{ "still_size", still_size_ ? json(*still_size_) : json(nullptr) },
+		{ "tuning", tuning_.empty() ? json(nullptr) : json(tuning_) },
+		{ "look", LookState() },
 	};
 }
 
