@@ -1,0 +1,27 @@
+# pycam camera engine. Installed by tools/install-services.sh (@USER@, @PYCAM@ filled in).
+[Unit]
+Description=pycam camera engine
+Documentation=file://@PYCAM@/docs/architecture.md
+After=local-fs.target systemd-tmpfiles-setup.service
+# The camera may show up a little after us at boot: keep retrying.
+StartLimitIntervalSec=0
+
+[Service]
+User=@USER@
+Group=@USER@
+SupplementaryGroups=video render
+WorkingDirectory=@PYCAM@
+# The boot splash (Plymouth) holds the screen until late in the boot (43 s measured):
+# take the screen over from it, like display managers do, keeping its last image until
+# the viewfinder replaces it. "+": as root; "-": fine if there is no splash.
+ExecStartPre=-+/usr/bin/plymouth quit --retain-splash
+ExecStart=@PYCAM@/engine/build/pycam-engine --socket /run/pycam/engine.sock
+Restart=on-failure
+RestartSec=2
+# The camera loop and the display before anything else on the Pi.
+Nice=-5
+# SIGTERM: the engine stops the camera and finishes writing the photos already taken.
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

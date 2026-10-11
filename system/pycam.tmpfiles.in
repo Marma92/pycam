@@ -1,0 +1,3 @@
+# /run/pycam: the engine socket. Created at boot, owned by the camera user, so that the
+# engine can also be started by hand during development.
+d /run/pycam 0755 @USER@ @USER@ -
