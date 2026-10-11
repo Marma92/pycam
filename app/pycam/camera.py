@@ -7,7 +7,7 @@ import time
 
 from . import exposure as exp
 from .engine_client import EngineError, call_blocking
-from .settings import DISPLAY_MODES, save_settings
+from .settings import DISPLAY_MODES, PEAKING_COLORS, PEAKING_SENSITIVITIES, save_settings
 from .storage import Storage
 from .view import HudView
 
@@ -28,6 +28,14 @@ EXPOSURE_ACTIONS = {
     "iso_auto",
     "awb",
 }
+FOCUS_AID_ACTIONS = {"peaking", "peaking_color", "peaking_sensitivity", "zebra"}
+
+COLOR_LABELS = {"red": "rouge", "yellow": "jaune", "green": "vert", "blue": "bleu", "white": "blanc"}
+SENSITIVITY_LABELS = {"low": "faible", "medium": "moyenne", "high": "forte"}
+
+
+def _next(values, current):
+    return values[(values.index(current) + 1) % len(values)]
 
 
 class Camera:
@@ -76,6 +84,7 @@ class Camera:
             self.slowest_shutter = exposure_max / 1e6
         await self.engine.call("configure", strategy=self.settings.strategy)
         await self.apply_exposure()
+        await self.apply_focus_aids()
         await self.setup_hud()
 
     async def setup_hud(self):
@@ -122,6 +131,21 @@ class Camera:
         except EngineError as e:
             log.error("exposure refused: %s", e)
 
+    async def apply_focus_aids(self):
+        s = self.settings
+        try:
+            await self.engine.call(
+                "focus_aids",
+                peaking=s.peaking,
+                peaking_color=s.peaking_color,
+                peaking_sensitivity=s.peaking_sensitivity,
+                zebra=s.zebra,
+            )
+        except ConnectionError:
+            pass  # pushed again on reconnection
+        except EngineError as e:
+            log.error("focus aids refused: %s", e)
+
     # --- Actions (inputs.py)
 
     def on_action(self, action):
@@ -159,11 +183,27 @@ class Camera:
         elif action == "raw":
             s.formats = ["jpeg"] if "dng" in s.formats else ["jpeg", "dng"]
             self.show_message("RAW + JPEG" if "dng" in s.formats else "JPEG seul")
+        elif action == "peaking":
+            s.peaking = not s.peaking
+            self.show_message("Peaking" if s.peaking else "Peaking coupé")
+        elif action == "peaking_color":
+            s.peaking = True
+            s.peaking_color = _next(PEAKING_COLORS, s.peaking_color)
+            self.show_message(f"Peaking {COLOR_LABELS[s.peaking_color]}")
+        elif action == "peaking_sensitivity":
+            s.peaking = True
+            s.peaking_sensitivity = _next(PEAKING_SENSITIVITIES, s.peaking_sensitivity)
+            self.show_message(f"Peaking : sensibilité {SENSITIVITY_LABELS[s.peaking_sensitivity]}")
+        elif action == "zebra":
+            s.zebra = not s.zebra
+            self.show_message("Zébras" if s.zebra else "Zébras coupés")
         else:
             log.warning("unknown action %s", action)
             return
         if action in EXPOSURE_ACTIONS:
             self.spawn(self.apply_exposure())
+        if action in FOCUS_AID_ACTIONS:
+            self.spawn(self.apply_focus_aids())
         self.save_soon()
         self.redraw()
 
@@ -230,6 +270,8 @@ class Camera:
             formats="RAW+JPEG" if "dng" in s.formats else "JPEG",
             shots=self.storage.shots_remaining(s.formats),
             zsl=s.strategy == "zsl",
+            peaking=s.peaking_color if s.peaking else "",
+            zebra=s.zebra,
             writing=self.writing,
             histogram=tuple(self.stats.get("histogram", ())) if s.display == "detailed" else (),
             message=text if time.monotonic() < until else "",

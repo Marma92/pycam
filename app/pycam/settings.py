@@ -15,6 +15,8 @@ log = logging.getLogger(__name__)
 
 DISPLAY_MODES = ("detailed", "simple", "clean")  # visée détaillée, simple, nature
 STRATEGIES = ("switch", "zsl")
+PEAKING_COLORS = ("red", "yellow", "green", "blue", "white")
+PEAKING_SENSITIVITIES = ("low", "medium", "high")
 
 
 def default_path():
@@ -30,6 +32,10 @@ class Settings:
     strategy: str = "switch"
     display: str = "detailed"
     grid: bool = True
+    peaking: bool = False
+    peaking_color: str = "red"
+    peaking_sensitivity: str = "medium"
+    zebra: bool = False
     dcim: str = "~/DCIM"
     folder_number: int = 100
     next_number: int = 1
@@ -68,6 +74,10 @@ def load_settings(path):
         settings.display = defaults.display
     if settings.strategy not in STRATEGIES:
         settings.strategy = defaults.strategy
+    if settings.peaking_color not in PEAKING_COLORS:
+        settings.peaking_color = defaults.peaking_color
+    if settings.peaking_sensitivity not in PEAKING_SENSITIVITIES:
+        settings.peaking_sensitivity = defaults.peaking_sensitivity
     if not set(settings.formats) <= {"jpeg", "dng"} or not settings.formats:
         settings.formats = defaults.formats
     return settings

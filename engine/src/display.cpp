@@ -54,8 +54,8 @@ std::optional<uint64_t> plane_property(int fd, uint32_t plane, char const *name)
 
 } // namespace
 
-Display::Display(unsigned image_width, unsigned image_height, std::string const &hud_shm_name)
-	: hud_shm_name_(hud_shm_name)
+Display::Display(unsigned image_width, unsigned image_height, std::string const &hud_shm_name, FrameHook hook)
+	: hud_shm_name_(hud_shm_name), frame_hook_(std::move(hook))
 {
 	fd_ = drmOpen("vc4", nullptr);
 	if (fd_ < 0)
@@ -485,6 +485,18 @@ void Display::Loop()
 
 void Display::ShowVideo(Pending &frame)
 {
+	if (frame_hook_)
+	{
+		try
+		{
+			frame_hook_(frame.request, frame.stream, frame.info);
+		}
+		catch (std::exception const &e) // the frame is still worth showing
+		{
+			std::cerr << "pycam-engine: display: frame hook: " << e.what() << "\n";
+		}
+	}
+
 	libcamera::FrameBuffer *buffer = frame.request->buffers.at(frame.stream);
 	int dmabuf = buffer->planes()[0].fd.get();
 	auto it = frame_fbs_.find(dmabuf);

@@ -19,6 +19,8 @@ class HudView:
     formats: str = "RAW+JPEG"
     shots: int = 0
     zsl: bool = False
+    peaking: str = ""  # its colour when on
+    zebra: bool = False
     writing: int = 0  # photos waiting to be written
     histogram: tuple = ()
     message: str = ""

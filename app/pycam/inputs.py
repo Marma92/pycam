@@ -34,6 +34,10 @@ KEYMAP = {
     ecodes.KEY_G: "grid",
     ecodes.KEY_R: "raw",
     ecodes.KEY_X: "strategy",  # ZSL on/off
+    ecodes.KEY_P: "peaking",
+    ecodes.KEY_C: "peaking_color",
+    ecodes.KEY_V: "peaking_sensitivity",
+    ecodes.KEY_E: "zebra",
 }
 # Actions that repeat while the key is held, like turning a dial.
 REPEATABLE = {"shutter_faster", "shutter_slower", "iso_up", "iso_down", "ev_up", "ev_down"}

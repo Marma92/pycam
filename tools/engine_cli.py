@@ -8,6 +8,7 @@ Exemples (sur le Pi) :
     python3 tools/engine_cli.py set ExposureTime=8000 AnalogueGain=2.0 AwbMode=Daylight
     python3 tools/engine_cli.py capture ~/DCIM/test/PYC_0001 --formats jpeg dng
     python3 tools/engine_cli.py events --seconds 5
+    python3 tools/engine_cli.py snapshot /tmp/ecran.jpg     # l'image de visée affichée, aides comprises
     python3 tools/engine_cli.py raw '{"cmd": "configure", "strategy": "zsl"}'
 """
 
@@ -92,6 +93,8 @@ def main():
     p.add_argument("--timeout", type=float, default=30.0)
     p = sub.add_parser("events")
     p.add_argument("--seconds", type=float, default=3.0)
+    p = sub.add_parser("snapshot")
+    p.add_argument("path", help="fichier JPEG à écrire")
     p = sub.add_parser("raw")
     p.add_argument("json")
     args = parser.parse_args()
@@ -128,6 +131,19 @@ def main():
                 if msg.get("event") in ("capture_done", "capture_error"):
                     sys.exit(0 if msg["event"] == "capture_done" else 1)
         sys.exit("timeout waiting for capture_done")
+    elif args.command == "snapshot":
+        path = os.path.abspath(os.path.expanduser(args.path))
+        reply = engine.call({"cmd": "snapshot", "path": path})
+        if not reply.get("ok"):
+            show(reply)
+            sys.exit(1)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            msg = engine.read(deadline - time.monotonic())
+            if msg and msg.get("path") == path:
+                show(msg)
+                sys.exit(0 if msg.get("event") == "snapshot_done" else 1)
+        sys.exit("timeout waiting for snapshot_done")
     elif args.command == "events":
         deadline = time.monotonic() + args.seconds
         while time.monotonic() < deadline:

@@ -20,6 +20,13 @@ BAR = (0, 0, 0, 150)
 GRID = (255, 255, 255, 80)
 TRANSPARENT = (0, 0, 0, 0)
 OPAQUE_BLACK = (0, 0, 0, 255)
+PEAKING_COLOURS = {
+    "red": (255, 70, 60, 255),
+    "yellow": (255, 230, 0, 255),
+    "green": (70, 255, 70, 255),
+    "blue": (100, 150, 255, 255),
+    "white": WHITE,
+}
 
 
 class Hud:
@@ -53,8 +60,8 @@ class Hud:
         d = ImageDraw.Draw(img)
         if view.display != "clean":
             self._info_bar(d, view)
-        if view.display == "detailed":
             self._status(d, view)
+        if view.display == "detailed":
             self._histogram(d, view.histogram)
         if view.message:
             self._message(d, view.message, view.warning)
@@ -110,19 +117,27 @@ class Hud:
         d.text((x + w - self.px(24), top + bar_h // 2), shots, font=self.font_bold, fill=WHITE, anchor="rm")
 
     def _status(self, d, view):
+        """Top left: what is switched on (ZSL, peaking, zebras) and the photos being written."""
         x, y, w, h = self.rect
         cx, cy = x + self.px(24), y + self.px(24)
-        if view.zsl:
-            label = "ZSL"
+        badge_h = self.font.size + self.px(14)
+
+        def badge(label, colour):
+            nonlocal cx
             tw = d.textlength(label, font=self.font)
-            d.rounded_rectangle(
-                [cx, cy, cx + tw + self.px(20), cy + self.font.size + self.px(14)], radius=self.px(6), fill=BAR
-            )
-            d.text((cx + self.px(10), cy + self.px(5)), label, font=self.font, fill=AMBER)
-            cx += tw + self.px(40)
+            d.rounded_rectangle([cx, cy, cx + tw + self.px(20), cy + badge_h], radius=self.px(6), fill=BAR)
+            d.text((cx + self.px(10), cy + self.px(5)), label, font=self.font, fill=colour)
+            cx += tw + self.px(32)
+
+        if view.zsl:
+            badge("ZSL", AMBER)
+        if view.peaking:
+            badge("PEAK", PEAKING_COLOURS.get(view.peaking, WHITE))
+        if view.zebra:
+            badge("ZÉBRAS", WHITE)
         if view.writing:
             r = self.px(10)
-            cy_mid = cy + (self.font.size + self.px(14)) // 2
+            cy_mid = cy + badge_h // 2
             d.ellipse([cx, cy_mid - r, cx + 2 * r, cy_mid + r], fill=RED)
             d.text((cx + 3 * r, cy_mid), str(view.writing), font=self.font, fill=WHITE, anchor="lm")
 

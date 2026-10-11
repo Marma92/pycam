@@ -60,8 +60,25 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
     async def test_sync_pushes_the_whole_state(self):
         await self.camera.sync_engine()
         names = [name for name, _ in self.engine.calls]
-        self.assertEqual(names, ["list_controls", "configure", "set_controls"])
+        self.assertEqual(names, ["list_controls", "configure", "set_controls", "focus_aids"])
         self.assertEqual(self.camera.slowest_shutter, 10)
+
+    async def test_focus_aids(self):
+        self.camera.on_action("peaking")
+        await self.settle()
+        self.assertTrue(self.engine.last("focus_aids")["peaking"])
+        self.assertEqual(self.camera.view().peaking, "red")
+        self.camera.on_action("peaking_color")
+        self.camera.on_action("peaking_sensitivity")
+        self.camera.on_action("zebra")
+        await self.settle()
+        sent = self.engine.last("focus_aids")
+        self.assertEqual((sent["peaking_color"], sent["peaking_sensitivity"], sent["zebra"]), ("yellow", "high", True))
+
+    async def test_changing_the_peaking_colour_turns_it_on(self):
+        self.camera.on_action("peaking_color")
+        await self.settle()
+        self.assertTrue(self.engine.last("focus_aids")["peaking"])
 
     async def test_hud_set_up_when_the_engine_gets_the_screen_later(self):
         made = []

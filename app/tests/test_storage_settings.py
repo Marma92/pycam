@@ -67,9 +67,13 @@ class SettingsTest(unittest.TestCase):
     def test_bad_values_are_ignored(self):
         os.makedirs(os.path.dirname(self.path))
         with open(self.path, "w") as f:
-            json.dump({"display": "sparkles", "grid": "yes", "formats": ["gif"], "jpeg_quality": 80}, f)
+            json.dump(
+                {"display": "sparkles", "grid": "yes", "formats": ["gif"], "jpeg_quality": 80, "peaking_color": "pink"},
+                f,
+            )
         loaded = load_settings(self.path)
         self.assertEqual(loaded.display, "detailed")
+        self.assertEqual(loaded.peaking_color, "red")
         self.assertTrue(loaded.grid)
         self.assertEqual(loaded.formats, ["jpeg", "dng"])
         self.assertEqual(loaded.jpeg_quality, 80)

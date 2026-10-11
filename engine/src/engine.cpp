@@ -10,6 +10,7 @@
 
 #include "core/buffer_sync.hpp"
 #include "core/frame_info.hpp"
+#include "image/image.hpp"
 
 #include "analysis.hpp"
 #include "control_codec.hpp"
@@ -166,7 +167,9 @@ void Engine::TryDisplay()
 		return;
 	try
 	{
-		display_ = std::make_unique<Display>(cfg_.vf_width, cfg_.vf_height, cfg_.hud_shm);
+		display_ = std::make_unique<Display>(cfg_.vf_width, cfg_.vf_height, cfg_.hud_shm,
+											 [this](CompletedRequestPtr const &request, Stream *stream,
+													StreamInfo const &info) { BeforeShow(request, stream, info); });
 	}
 	catch (std::exception const &e)
 	{
@@ -178,6 +181,37 @@ void Engine::TryDisplay()
 	}
 	std::cerr << "pycam-engine: display ready\n";
 	ipc_.Broadcast({ { "event", "display_ready" }, { "display", display_->Info() } });
+}
+
+void Engine::BeforeShow(CompletedRequestPtr const &request, Stream *stream, StreamInfo const &info)
+{
+	// Display thread. The viewfinder buffer only feeds the screen: drawing into it leaves
+	// the photos untouched.
+	std::string snapshot;
+	{
+		std::lock_guard<std::mutex> lock(snapshot_mutex_);
+		snapshot.swap(snapshot_path_);
+	}
+	if (!focus_aids_.Active() && snapshot.empty())
+		return;
+
+	BufferWriteSync sync(&app_, request->buffers.at(stream));
+	focus_aids_.Apply(sync.Get()[0].data(), info);
+
+	if (!snapshot.empty())
+	{
+		try
+		{
+			StillOptions options;
+			options.Set() = app_.GetOptions()->Get();
+			jpeg_save(sync.Get(), info, request->metadata, snapshot, app_.CameraModel(), &options);
+			ipc_.Broadcast({ { "event", "snapshot_done" }, { "path", snapshot } });
+		}
+		catch (std::exception const &e)
+		{
+			ipc_.Broadcast({ { "event", "snapshot_error" }, { "path", snapshot }, { "error", e.what() } });
+		}
+	}
 }
 
 void Engine::RequestQuit()
@@ -419,6 +453,18 @@ void Engine::HandleCommand(int client, json const &command, Clock::time_point re
 				next_phase_ = Phase::Viewfinder;
 			}
 		}
+		else if (name == "focus_aids")
+			focus_aids_.Configure(command);
+		else if (name == "snapshot")
+		{
+			if (!display_)
+				throw CommandError("unsupported", "no display");
+			std::string path = command.at("path").get<std::string>();
+			if (path.empty())
+				throw CommandError("bad_request", "empty path");
+			std::lock_guard<std::mutex> lock(snapshot_mutex_);
+			snapshot_path_ = path;
+		}
 		else if (name == "hud_info" || name == "hud_commit")
 		{
 			if (!display_)
@@ -503,6 +549,7 @@ json Engine::State() const
 		{ "streams", streams },
 		{ "controls", controls_to_json(user_controls_) },
 		{ "display", display_ ? display_->Info() : json(nullptr) },
+		{ "focus_aids", focus_aids_.State() },
 	};
 }
 

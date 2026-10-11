@@ -2,6 +2,7 @@
 
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -29,8 +30,11 @@ namespace pycam
 class Display
 {
 public:
+	// Called on the display thread with each frame about to be shown, e.g. to draw into it.
+	using FrameHook = std::function<void(CompletedRequestPtr const &, libcamera::Stream *, StreamInfo const &)>;
+
 	// image_width/height: the viewfinder stream size, to place the image on the screen.
-	Display(unsigned image_width, unsigned image_height, std::string const &hud_shm_name);
+	Display(unsigned image_width, unsigned image_height, std::string const &hud_shm_name, FrameHook hook = {});
 	~Display();
 
 	// Shows a camera frame. The latest frame wins; the display keeps the request (and so
@@ -116,6 +120,7 @@ private:
 	std::thread thread_;
 
 	// Display thread only.
+	FrameHook frame_hook_;
 	std::map<int, FrameFb> frame_fbs_; // camera dmabuf fd -> DRM framebuffer
 	std::vector<FrameFb> retired_fbs_; // from before Reset(), freed once replaced on the screen
 	CompletedRequestPtr on_screen_;

@@ -18,6 +18,7 @@
 
 #include "capture_writer.hpp"
 #include "display.hpp"
+#include "focus_aids.hpp"
 #include "ipc_server.hpp"
 
 namespace pycam
@@ -83,6 +84,7 @@ private:
 	};
 
 	void TryDisplay();
+	void BeforeShow(CompletedRequestPtr const &request, libcamera::Stream *stream, StreamInfo const &info);
 	void Start(Phase phase);
 	void Restart(Phase phase);
 	void OnFrame(CompletedRequestPtr &request);
@@ -102,6 +104,9 @@ private:
 	std::unique_ptr<Display> display_; // null without a screen
 	Clock::time_point next_display_try_ {};
 	bool display_failure_logged_ = false;
+	FocusAids focus_aids_; // drawn into the viewfinder frames, on the display thread
+	std::mutex snapshot_mutex_;
+	std::string snapshot_path_; // next shown frame to save as JPEG ("snapshot" command)
 	libcamera::ControlInfoMap const *camera_controls_ = nullptr;
 
 	std::mutex commands_mutex_;
