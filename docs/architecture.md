@@ -132,7 +132,10 @@ L'ouverture est réglée sur l'objectif, donc les modes « classiques » se trad
 
 À ces modes s'ajoutent :
 
-- **Balance des blancs** : auto, préréglages (`AwbMode`), ou manuelle en Kelvin / gains (`ColourGains`).
+- ✅ **Balance des blancs** : automatique, préréglages (`AwbMode`), ou manuelle.
+  - Le **Kelvin** passe par `ColourTemperature` : l'ISP en déduit les gains par la courbe de calibration de l'IMX477 (3000 K → gains R/B 2,08 / 2,20 ; 6500 K → 3,24 / 1,39, mesurés).
+  - La **mémorisation** fige les gains (`ColourGains`) trouvés par la balance automatique, par exemple sur une charte grise.
+  - Les deux demandent `AwbEnable` à faux, et un préréglage le remet à vrai. Les valeurs manuelles restées en mémoire dans le moteur sont alors ignorées (vérifié).
 - **Rendu** : débruitage, netteté, contraste, saturation.
 - **Profils d'image** : plus tard, via des fichiers de tuning alternatifs.
 
@@ -196,7 +199,9 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | ↓ / ↑ | ISO (molette arrière) |
 | Page↓ / Page↑ | Correction d'exposition |
 | S / I | Vitesse / ISO : basculer automatique ⇄ manuel |
-| B | Balance des blancs suivante |
+| B | Balance des blancs : auto → soleil → nuageux → tungstène → fluo → intérieur → Kelvin → auto |
+| U / J | Température en Kelvin, plus chaude / plus froide (le premier appui part de la température mesurée) |
+| H | Mémoriser la balance actuelle (viser une charte grise en automatique, puis H) |
 | D | Affichage : détaillé → simple → nature |
 | G | Grille des tiers |
 | R | RAW + JPEG ⇄ JPEG seul |
