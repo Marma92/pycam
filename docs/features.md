@@ -40,7 +40,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 |---|---|---|
 | Modes P / S / A / M | Voir `architecture.md` §3 ; pas de 1/3 IL. Fait en avance avec M0 : le mode découle de ce qui est manuel. | ✅ |
 | Correction d'exposition | ±3 IL. | ✅ |
-| Mode de mesure | Pondérée centrale, spot, matricielle. | ⬜ |
+| Mode de mesure | Pondérée centrale, spot, matricielle, dans le menu rapide. Icône dans le bandeau, cercle au centre de la visée en spot. Agit sur l'exposition automatique ; le posemètre du mode M mesure toute l'image. | ✅ |
 | Posemètre | Échelle −3…+3 IL au tiers dans le bandeau : toujours en M, et en avertissement (orange) quand l'exposition automatique est hors de portée. Précision ~0,15 IL. | ✅ |
 | Balance des blancs | Auto, 5 préréglages, Kelvin manuel (2000–10 000 K, en partant de la mesure), mémorisation des gains mesurés (charte grise). | ✅ |
 | Histogramme | Luminance et RVB dans le HUD. La luminance est faite, le RVB reste à faire. | 🟨 |

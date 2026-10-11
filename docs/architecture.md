@@ -141,6 +141,11 @@ L'ouverture est réglée sur l'objectif, donc les modes « classiques » se trad
   - Le **Kelvin** passe par `ColourTemperature` : l'ISP en déduit les gains par la courbe de calibration de l'IMX477 (3000 K → gains R/B 2,08 / 2,20 ; 6500 K → 3,24 / 1,39, mesurés).
   - La **mémorisation** fige les gains (`ColourGains`) trouvés par la balance automatique, par exemple sur une charte grise.
   - Les deux demandent `AwbEnable` à faux, et un préréglage le remet à vrai. Les valeurs manuelles restées en mémoire dans le moteur sont alors ignorées (vérifié).
+- ✅ **Mode de mesure** (`AeMeteringMode`, ligne en tête du menu rapide) : pondérée centrale (par défaut), spot, matricielle.
+  - L'ISP découpe l'image en 15 zones de statistiques. Chaque mode est un jeu de poids sur ces zones, défini dans le fichier de tuning (`/usr/share/libcamera/ipa/rpi/vc4/imx477.json`) : centrale `[3,3,3,2,2,2,2,1,1,1,1,0,0,0,0]`, spot `[2,1,1,0…]`, matricielle tous à 1.
+  - Mesuré sur une même scène : spot −1,6 IL, matricielle +0,4 IL par rapport à la centrale.
+  - Le HUD montre une icône dans le bandeau (anneau, point, grille) et, en spot, un cercle au centre de la visée. Sa taille est approximative : la zone exacte dépend du découpage de l'ISP.
+  - Le mode n'agit que sur l'exposition automatique (P, S, A). En M, le posemètre mesure toujours toute l'image (voir §2.3).
 - **Rendu** : débruitage, netteté, contraste, saturation.
 - **Profils d'image** : plus tard, via des fichiers de tuning alternatifs.
 
@@ -219,7 +224,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | N | Objectif suivant parmi les profils, ou « non précisé ». Les profils sont dans `settings.json` : par défaut, les deux objectifs officiels Raspberry Pi. |
 | F | Ouverture réglée sur la bague : non précisée → ouverture max → f/2 → … → f/16. Écrite dans l'EXIF, affichée dans le bandeau. |
 | L | Loupe ×5 → ×10 → coupée. Dans la loupe, les flèches la déplacent au lieu de régler vitesse et ISO (en attendant le joystick). La grille est masquée, et le HUD montre le grossissement et une mini-carte de la zone. |
-| Tab | **Menu rapide** (le bouton Q de l'appareil) : ↑ / ↓ choisissent la ligne, ← / → changent la valeur, Tab ou Échap le ferment, le déclencheur le ferme et déclenche. Il contient les paramètres d'image (netteté, contraste, saturation dont N&B, réduction du bruit, taille et qualité JPEG), le format, la compression du RAW et la revue. Les touches directes restent, en attendant d'y regrouper le reste. |
+| Tab | **Menu rapide** (le bouton Q de l'appareil) : ↑ / ↓ choisissent la ligne, ← / → changent la valeur, Tab ou Échap le ferment, le déclencheur le ferme et déclenche. Il contient le mode de mesure, les paramètres d'image (netteté, contraste, saturation dont N&B, réduction du bruit, taille et qualité JPEG), le format, la compression du RAW et la revue. Les touches directes restent, en attendant d'y regrouper le reste. |
 | Échap | Fermer le menu, ou quitter la loupe |
 
 **Pourquoi evdev.** Avec les overlays noyau, chaque bouton devient un évènement clavier (`KEY_*`) et chaque molette un évènement relatif (`REL_*`). Ça apporte plusieurs choses :

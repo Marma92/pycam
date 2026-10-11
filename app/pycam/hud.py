@@ -80,6 +80,8 @@ class Hud:
         if view.display != "clean":
             self._info_bar(d, view)
             self._status(d, view)
+            if view.metering == "spot" and view.loupe == 1 and not view.menu:
+                self._spot_area(d)
         if view.display == "detailed":
             self._histogram(d, view.histogram)
         if view.loupe > 1:  # whatever the display: you must know the image is magnified
@@ -144,6 +146,8 @@ class Hud:
         by = top + (bar_h - box) // 2
         d.rounded_rectangle([cx, by, cx + box, by + box], radius=self.px(8), outline=WHITE, width=self.px(3))
         d.text((cx + box / 2, by + box / 2), view.mode, font=self.font_bold, fill=WHITE, anchor="mm")
+        cx += box + self.px(14)
+        self._metering_icon(d, cx, by, box, view.metering)
         cx += box + gap
 
         text(view.shutter, self.font_bold, AUTO if view.shutter_auto else WHITE)
@@ -159,6 +163,33 @@ class Hud:
 
         shots = str(view.shots)
         d.text((x + w - self.px(24), top + bar_h // 2), shots, font=self.font_bold, fill=WHITE, anchor="rm")
+
+    def _metering_icon(self, d, x, y, size, metering):
+        """A frame with what the metering looks at: a ring (centre), a dot (spot), a grid (matrix)."""
+        w = self.px(2)
+        d.rectangle([x, y + size * 0.15, x + size, y + size * 0.85], outline=WHITE, width=w)
+        cx, cy = x + size / 2, y + size / 2
+        if metering == "spot":
+            r = size * 0.09
+            d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=WHITE)
+        elif metering == "matrix":
+            for gx in (0.25, 0.5, 0.75):
+                for gy in (0.32, 0.5, 0.68):
+                    r = size * 0.05
+                    px, py = x + size * gx, y + size * gy
+                    d.ellipse([px - r, py - r, px + r, py + r], fill=WHITE)
+        else:
+            r = size * 0.2
+            d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=WHITE, width=w)
+            r = size * 0.06
+            d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=WHITE)
+
+    def _spot_area(self, d):
+        """Where spot metering looks: the central zone of the ISP statistics (approximate)."""
+        x, y, w, h = self.rect
+        r = h * 0.09
+        cx, cy = x + w / 2, y + h / 2
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(255, 255, 255, 160), width=self.px(2))
 
     def _meter(self, d, x, top, bar_h, stops, warning):
         """The exposure scale, -3 to +3 stops in thirds, with a bar from 0 to the measure.

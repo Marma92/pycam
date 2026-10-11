@@ -72,12 +72,20 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         configure = self.engine.last("configure")
         self.assertEqual((configure["still_denoise"], configure["still_size"]), ("cdn_hq", None))
         self.assertEqual(self.engine.last("set_controls")["controls"]["Contrast"], 1.0)
+        exposure = next(p["controls"] for n, p in self.engine.calls if n == "set_controls" and "ExposureValue" in p["controls"])
+        self.assertEqual(exposure["AeMeteringMode"], "MeteringCentreWeighted")
         self.assertEqual(self.camera.slowest_shutter, 10)
 
     async def test_quick_menu(self):
         self.camera.on_action("menu")
         self.assertTrue(self.camera.view().menu)
-        self.camera.on_action("shutter_faster")  # line 1, sharpness: +1
+        self.camera.on_action("shutter_faster")  # line 1, metering: spot
+        await self.settle()
+        self.assertEqual(self.engine.last("set_controls")["controls"]["AeMeteringMode"], "MeteringSpot")
+        self.assertEqual(self.camera.view().metering, "spot")
+        self.assertEqual(self.camera.view().menu[0], ("Mesure de la lumière", "Spot"))
+        self.camera.on_action("iso_down")  # sharpness: +1
+        self.camera.on_action("shutter_faster")
         await self.settle()
         self.assertEqual(self.engine.last("set_controls")["controls"]["Sharpness"], 1.5)
         self.camera.on_action("iso_down")  # contrast
@@ -86,7 +94,7 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
             self.camera.on_action("shutter_slower")  # down to black and white, and stays there
         await self.settle()
         self.assertEqual(self.engine.last("set_controls")["controls"]["Saturation"], 0.0)
-        self.assertEqual(self.camera.view().menu[2], ("Saturation", "N&B"))
+        self.assertEqual(self.camera.view().menu[3], ("Saturation", "N&B"))
         self.camera.on_action("iso_down")  # denoise: an engine setting
         self.camera.on_action("shutter_slower")
         await self.settle()

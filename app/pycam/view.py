@@ -10,6 +10,7 @@ class HudView:
     display: str = "detailed"  # detailed | simple | clean
     grid: bool = True
     mode: str = "P"
+    metering: str = "centre"  # centre | spot | matrix
     shutter: str = "--"
     shutter_auto: bool = True
     iso: str = "--"

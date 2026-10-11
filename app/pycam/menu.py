@@ -7,16 +7,16 @@ closes it and shoots.
 
 from dataclasses import dataclass
 
-from . import picture
+from . import exposure, picture
 
 
 @dataclass(frozen=True)
 class Item:
     label: str
-    attr: str  # in Settings
+    attr: str  # in Settings, dotted for nested ones ("exposure.metering")
     values: tuple
     shown: tuple  # how each value is shown
-    push: str = ""  # what the engine must be told: "picture", "config" or nothing
+    push: str = ""  # what the engine must be told: "exposure", "picture", "config" or nothing
 
 
 def _levels(values, black_and_white=False):
@@ -24,6 +24,13 @@ def _levels(values, black_and_white=False):
 
 
 ITEMS = (
+    Item(
+        "Mesure de la lumière",
+        "exposure.metering",
+        tuple(exposure.METERING),
+        tuple(exposure.METERING_LABELS[m] for m in exposure.METERING),
+        "exposure",
+    ),
     Item("Netteté", "sharpness", tuple(picture.SHARPNESS), _levels(picture.SHARPNESS), "picture"),
     Item("Contraste", "contrast", tuple(picture.CONTRAST), _levels(picture.CONTRAST), "picture"),
     Item("Saturation", "saturation", tuple(picture.SATURATION), _levels(picture.SATURATION, True), "picture"),
@@ -47,22 +54,34 @@ class QuickMenu:
         self.settings = settings
         self.index = 0
 
+    def _owner(self, attr):
+        """The object holding a (dotted) attribute, and the attribute's last name."""
+        owner, *path = [self.settings] + attr.split(".")
+        for name in path[:-1]:
+            owner = getattr(owner, name)
+        return owner, path[-1]
+
+    def get(self, attr):
+        owner, name = self._owner(attr)
+        return getattr(owner, name)
+
     def move(self, steps):
         self.index = (self.index + steps) % len(ITEMS)
 
     def change(self, steps):
         """Moves the chosen setting along its values (stopping at the ends); returns its item."""
         item = ITEMS[self.index]
-        current = getattr(self.settings, item.attr)
+        current = self.get(item.attr)
         i = item.values.index(current) if current in item.values else 0
-        setattr(self.settings, item.attr, item.values[max(0, min(len(item.values) - 1, i + steps))])
+        owner, name = self._owner(item.attr)
+        setattr(owner, name, item.values[max(0, min(len(item.values) - 1, i + steps))])
         return item
 
     def rows(self):
         """(label, value shown) for each line."""
         rows = []
         for item in ITEMS:
-            current = getattr(self.settings, item.attr)
+            current = self.get(item.attr)
             shown = item.shown[item.values.index(current)] if current in item.values else "?"
             rows.append((item.label, shown))
         return tuple(rows)

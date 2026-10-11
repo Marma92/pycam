@@ -390,7 +390,9 @@ class Camera:
             self.menu.move(-1 if action == "iso_up" else +1)
         elif action in ("shutter_faster", "shutter_slower"):  # front dial: change the value
             item = self.menu.change(+1 if action == "shutter_faster" else -1)
-            if item.push == "picture":
+            if item.push == "exposure":
+                self.spawn(self.apply_exposure())
+            elif item.push == "picture":
                 self.spawn(self.apply_picture())
             elif item.push == "config":
                 self.spawn(self.apply_still_config())
@@ -482,6 +484,7 @@ class Camera:
             display=s.display,
             grid=s.grid and self.loupe == 1,  # the rule of thirds means nothing in the loupe
             mode=e.mode,
+            metering=e.metering,
             shutter=exp.format_shutter(shutter),
             shutter_auto=e.shutter is None,
             iso=f"ISO {iso}" if iso else "ISO --",

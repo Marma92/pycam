@@ -101,6 +101,13 @@ class ExposureTest(unittest.TestCase):
         e.next_awb()
         self.assertEqual(e.awb, "Auto")
 
+    def test_metering(self):
+        self.assertEqual(Exposure().controls()["AeMeteringMode"], "MeteringCentreWeighted")
+        e = Exposure.from_dict({"metering": "spot"})
+        self.assertEqual(e.controls()["AeMeteringMode"], "MeteringSpot")
+        self.assertEqual(Exposure.from_dict(e.to_dict()).metering, "spot")
+        self.assertEqual(Exposure.from_dict({"metering": "evaluative"}).metering, "centre")
+
 
 if __name__ == "__main__":
     unittest.main()
