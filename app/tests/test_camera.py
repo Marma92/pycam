@@ -60,7 +60,8 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
     async def test_sync_pushes_the_whole_state(self):
         await self.camera.sync_engine()
         names = [name for name, _ in self.engine.calls]
-        self.assertEqual(names, ["list_controls", "configure", "set_controls", "focus_aids"])
+        self.assertEqual(names, ["list_controls", "configure", "set_controls", "focus_aids", "loupe"])
+        self.assertEqual(self.engine.last("loupe")["zoom"], 1)
         self.assertEqual(self.camera.slowest_shutter, 10)
 
     async def test_focus_aids(self):
@@ -74,6 +75,30 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         sent = self.engine.last("focus_aids")
         self.assertEqual((sent["peaking_color"], sent["peaking_sensitivity"], sent["zebra"]), ("yellow", "high", True))
+
+    async def test_loupe_cycles_and_the_arrows_move_it(self):
+        self.camera.on_action("loupe")
+        await self.settle()
+        self.assertEqual(self.engine.last("loupe")["zoom"], 5)
+        self.camera.on_action("shutter_faster")  # right arrow: moves the loupe, not the speed
+        await self.settle()
+        self.assertEqual(self.engine.last("loupe")["center"], [0.6, 0.5])
+        self.assertIsNone(self.settings.exposure.shutter)
+        for _ in range(10):  # never past the edge of the image
+            self.camera.on_action("shutter_faster")
+        await self.settle()
+        self.assertAlmostEqual(self.engine.last("loupe")["center"][0], 0.9)
+        self.camera.on_action("loupe")
+        self.camera.on_action("loupe")
+        await self.settle()
+        self.assertEqual(self.engine.last("loupe")["zoom"], 1)
+
+    async def test_shutter_leaves_the_loupe(self):
+        self.camera.on_action("loupe")
+        self.camera.on_action("shutter")
+        await self.settle()
+        self.assertEqual(self.camera.loupe, 1)
+        self.assertTrue(self.camera.view().grid)
 
     async def test_changing_the_peaking_colour_turns_it_on(self):
         self.camera.on_action("peaking_color")

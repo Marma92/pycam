@@ -29,6 +29,14 @@ EXPOSURE_ACTIONS = {
     "awb",
 }
 FOCUS_AID_ACTIONS = {"peaking", "peaking_color", "peaking_sensitivity", "zebra"}
+LOUPE_LEVELS = (1, 5, 10)
+# In the loupe, the dials move it (until the camera has a joystick): action -> (dx, dy).
+LOUPE_MOVES = {
+    "shutter_faster": (1, 0),
+    "shutter_slower": (-1, 0),
+    "iso_up": (0, -1),
+    "iso_down": (0, 1),
+}
 
 COLOR_LABELS = {"red": "rouge", "yellow": "jaune", "green": "vert", "blue": "bleu", "white": "blanc"}
 SENSITIVITY_LABELS = {"low": "faible", "medium": "moyenne", "high": "forte"}
@@ -53,6 +61,8 @@ class Camera:
         self.hud = None
         self.stats = {}
         self.writing = 0
+        self.loupe = 1  # not a setting: the camera always starts unmagnified
+        self.loupe_center = (0.5, 0.5)
         self.slowest_shutter = exp.SHUTTER_SPEEDS[-1]
         self._message = ("", False, 0.0)
         self._redraw = asyncio.Event()
@@ -85,6 +95,8 @@ class Camera:
         await self.engine.call("configure", strategy=self.settings.strategy)
         await self.apply_exposure()
         await self.apply_focus_aids()
+        self.loupe = 1
+        await self.apply_loupe()
         await self.setup_hud()
 
     async def setup_hud(self):
@@ -117,6 +129,9 @@ class Camera:
             self.writing = max(0, self.writing - 1)
             log.error("capture %s failed: %s", msg.get("capture_id"), msg.get("error"))
             self.show_message("Erreur d'enregistrement", warning=True)
+        elif kind == "loupe":
+            self.loupe = msg.get("loupe", {}).get("zoom", 1)
+            self.redraw()
         elif kind == "display_ready":
             log.info("the engine got the screen")
             self.spawn(self.setup_hud())
@@ -146,6 +161,23 @@ class Camera:
         except EngineError as e:
             log.error("focus aids refused: %s", e)
 
+    async def apply_loupe(self):
+        try:
+            await self.engine.call("loupe", zoom=self.loupe, center=list(self.loupe_center))
+        except ConnectionError:
+            pass
+        except EngineError as e:
+            log.warning("loupe refused: %s", e)
+            self.show_message("Impossible pour l'instant", warning=True)
+
+    def move_loupe(self, dx, dy):
+        """One step = half of what the loupe shows; the centre stays where it can be shown."""
+        half = 0.5 / self.loupe
+        x, y = self.loupe_center
+        x = min(1 - half, max(half, x + dx * half))
+        y = min(1 - half, max(half, y + dy * half))
+        self.loupe_center = (x, y)
+
     # --- Actions (inputs.py)
 
     def on_action(self, action):
@@ -156,6 +188,16 @@ class Camera:
             return
         if action == "strategy":
             self.spawn(self.toggle_strategy())
+            return
+        if action == "loupe":
+            self.loupe = _next(LOUPE_LEVELS, self.loupe) if self.loupe in LOUPE_LEVELS else 1
+            self.show_message(f"Loupe ×{self.loupe}" if self.loupe > 1 else "Loupe coupée")
+            self.spawn(self.apply_loupe())
+            return
+        if self.loupe > 1 and action in LOUPE_MOVES:
+            self.move_loupe(*LOUPE_MOVES[action])
+            self.spawn(self.apply_loupe())
+            self.redraw()
             return
         if action == "shutter_faster":
             e.step_shutter(-1, self.measured_shutter(), self.slowest_shutter)
@@ -228,6 +270,7 @@ class Camera:
             self.storage.commit(folder, number)
             self.save_now()  # never give the same number twice, even after a crash
             self.writing += 1
+            self.loupe = 1  # the engine leaves the loupe to shoot the full frame
             self.show_message(os.path.basename(base))
 
     async def toggle_strategy(self):
@@ -259,7 +302,7 @@ class Camera:
         text, warning, until = self._message
         return HudView(
             display=s.display,
-            grid=s.grid,
+            grid=s.grid and self.loupe == 1,  # the rule of thirds means nothing in the loupe
             mode=e.mode,
             shutter=exp.format_shutter(shutter),
             shutter_auto=e.shutter is None,
@@ -272,6 +315,8 @@ class Camera:
             zsl=s.strategy == "zsl",
             peaking=s.peaking_color if s.peaking else "",
             zebra=s.zebra,
+            loupe=self.loupe,
+            loupe_center=self.loupe_center,
             writing=self.writing,
             histogram=tuple(self.stats.get("histogram", ())) if s.display == "detailed" else (),
             message=text if time.monotonic() < until else "",

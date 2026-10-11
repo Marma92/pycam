@@ -32,6 +32,14 @@ constexpr int64_t kViewfinderMinFrameUs = 33'333;
 constexpr int64_t kViewfinderMaxFrameUs = 100'000;
 constexpr int64_t kZslMaxFrameUs = 250'000;
 
+// Sensor modes. Viewfinder: 2x2 binning, full field of view. Stills: full resolution.
+// Loupe: full resolution in 10 bits, the fastest full resolution mode (14 fps), so that
+// the magnified image shows real pixels.
+constexpr char kViewfinderMode[] = "2028:1520:12:P";
+constexpr char kStillMode[] = "4056:3040:12:P";
+constexpr char kLoupeMode[] = "4056:3040:10:P";
+constexpr float kLoupeMaxZoom = 16;
+
 // A command that cannot be executed; `code` is meant for the app, `what()` for humans.
 struct CommandError : std::runtime_error
 {
@@ -66,9 +74,8 @@ Engine::Engine(EngineConfig cfg) : cfg_(std::move(cfg)), zsl_(cfg_.zsl)
 		"--viewfinder-height", std::to_string(cfg_.vf_height),
 		"--lores-width", std::to_string(cfg_.lores_width),
 		"--lores-height", std::to_string(cfg_.lores_height),
-		// Binned mode (full field of view) for the viewfinder, full resolution for stills.
-		"--viewfinder-mode", "2028:1520:12:P",
-		"--mode", "4056:3040:12:P",
+		"--viewfinder-mode", kViewfinderMode,
+		"--mode", kStillMode,
 	};
 	std::vector<char *> argv;
 	for (auto &arg : args)
@@ -237,7 +244,15 @@ void Engine::Start(Phase phase)
 		manual_exposure = user_controls_.get(controls::ExposureTime).value_or(0);
 
 	std::optional<std::array<int64_t, 2>> frame_limits;
-	if (zsl_)
+	bool const loupe = phase == Phase::Viewfinder && loupe_zoom_ > 1;
+	if (loupe)
+	{
+		// A plain viewfinder, even in ZSL: the crop would also apply to the still stream.
+		options->Set().viewfinder_mode = Mode(kLoupeMode);
+		app_.ConfigureViewfinder();
+		frame_limits = { kViewfinderMinFrameUs, std::max(kViewfinderMaxFrameUs, manual_exposure) };
+	}
+	else if (zsl_)
 	{
 		options->Set().buffer_count = cfg_.zsl_buffers;
 		options->Set().denoise = cfg_.zsl_denoise;
@@ -255,6 +270,7 @@ void Engine::Start(Phase phase)
 	}
 	else
 	{
+		options->Set().viewfinder_mode = Mode(kViewfinderMode);
 		app_.ConfigureViewfinder();
 		frame_limits = { kViewfinderMinFrameUs, std::max(kViewfinderMaxFrameUs, manual_exposure) };
 	}
@@ -266,6 +282,8 @@ void Engine::Start(Phase phase)
 		limits.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(*frame_limits));
 		app_.SetControls(limits);
 	}
+	if (loupe)
+		app_.SetControls(LoupeCrop()); // otherwise rpicam sets the full field of view
 	app_.StartCamera();
 	phase_ = phase;
 }
@@ -295,8 +313,9 @@ void Engine::OnFrame(CompletedRequestPtr &request)
 		next_phase_ = Phase::Viewfinder;
 		return;
 	}
-	// ZSL: the photo is the first frame completed after the command was handled.
-	if (pending_ && zsl_)
+	// ZSL: the photo is the first frame completed after the command was handled (there is
+	// no still stream in the loupe: the capture command leaves it first).
+	if (pending_ && zsl_ && app_.StillStream())
 		GrabStill(request);
 
 	if (display_)
@@ -455,6 +474,11 @@ void Engine::HandleCommand(int client, json const &command, Clock::time_point re
 		}
 		else if (name == "focus_aids")
 			focus_aids_.Configure(command);
+		else if (name == "loupe")
+		{
+			Loupe(command);
+			reply["loupe"] = LoupeState();
+		}
 		else if (name == "snapshot")
 		{
 			if (!display_)
@@ -519,9 +543,60 @@ json Engine::Capture(json const &command, Clock::time_point received)
 
 	uint64_t id = capture.id;
 	pending_ = std::move(capture);
+
+	// Like on any camera, the shutter leaves the loupe: the photo is always the full frame.
+	bool const leave_loupe = loupe_zoom_ > 1;
+	if (leave_loupe)
+	{
+		loupe_zoom_ = 1;
+		ipc_.Broadcast({ { "event", "loupe" }, { "loupe", LoupeState() } });
+	}
 	if (!zsl_)
 		next_phase_ = Phase::Still;
+	else if (leave_loupe)
+		next_phase_ = Phase::Viewfinder; // back to the ZSL configuration; its first frame is the photo
 	return { { "capture_id", id } };
+}
+
+void Engine::Loupe(json const &command)
+{
+	float zoom = command.value("zoom", loupe_zoom_);
+	if (!(zoom >= 1 && zoom <= kLoupeMaxZoom))
+		throw CommandError("bad_request", "zoom: between 1 (off) and 16");
+	if (pending_ || phase_ == Phase::Still)
+		throw CommandError("busy", "a capture is in progress");
+	if (command.contains("center"))
+	{
+		json const &center = command["center"];
+		if (!center.is_array() || center.size() != 2)
+			throw CommandError("bad_request", "center: [x, y], fractions of the image");
+		loupe_x_ = std::clamp(center[0].get<float>(), 0.0f, 1.0f);
+		loupe_y_ = std::clamp(center[1].get<float>(), 0.0f, 1.0f);
+	}
+	bool const was_on = loupe_zoom_ > 1;
+	loupe_zoom_ = zoom;
+	if (was_on != (zoom > 1))
+		next_phase_ = Phase::Viewfinder; // sensor mode change: reconfigure
+	else if (zoom > 1)
+		app_.SetControls(LoupeCrop()); // same mode: the crop follows within a few frames
+}
+
+libcamera::ControlList Engine::LoupeCrop() const
+{
+	// ScalerCrop is in sensor pixels; its maximum is the whole sensor area.
+	auto const max = camera_controls_->at(&controls::ScalerCrop).max().get<libcamera::Rectangle>();
+	unsigned const w = static_cast<unsigned>(max.width / loupe_zoom_) & ~1u;
+	unsigned const h = static_cast<unsigned>(max.height / loupe_zoom_) & ~1u;
+	int const x = std::clamp(int(loupe_x_ * max.width - w / 2.0f), 0, int(max.width - w));
+	int const y = std::clamp(int(loupe_y_ * max.height - h / 2.0f), 0, int(max.height - h));
+	libcamera::ControlList crop;
+	crop.set(controls::ScalerCrop, libcamera::Rectangle(max.x + (x & ~1), max.y + (y & ~1), w, h));
+	return crop;
+}
+
+json Engine::LoupeState() const
+{
+	return { { "zoom", loupe_zoom_ }, { "center", { loupe_x_, loupe_y_ } } };
 }
 
 json Engine::State() const
@@ -550,6 +625,7 @@ json Engine::State() const
 		{ "controls", controls_to_json(user_controls_) },
 		{ "display", display_ ? display_->Info() : json(nullptr) },
 		{ "focus_aids", focus_aids_.State() },
+		{ "loupe", LoupeState() },
 	};
 }
 

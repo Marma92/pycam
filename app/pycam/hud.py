@@ -63,6 +63,8 @@ class Hud:
             self._status(d, view)
         if view.display == "detailed":
             self._histogram(d, view.histogram)
+        if view.loupe > 1:  # whatever the display: you must know the image is magnified
+            self._loupe(d, view)
         if view.message:
             self._message(d, view.message, view.warning)
         self.shm[:] = img.tobytes()
@@ -154,6 +156,20 @@ class Hud:
             bh = round(hh * v / peak)
             if bh:
                 d.rectangle([hx + i * bw, hy + hh - bh, hx + (i + 1) * bw - 1, hy + hh], fill=(255, 255, 255, 200))
+
+    def _loupe(self, d, view):
+        """Bottom right, above the info bar: the magnification and a map of where we look."""
+        x, y, w, h = self.rect
+        mw, mh = self.px(160), self.px(120)
+        mx = x + w - mw - self.px(24)
+        my = y + h - self.px(68) - mh - self.px(24)
+        d.rectangle([mx, my, mx + mw, my + mh], fill=BAR, outline=WHITE, width=self.px(2))
+        cx, cy = view.loupe_center
+        lw, lh = mw / view.loupe, mh / view.loupe
+        lx = mx + min(max(cx * mw - lw / 2, 0), mw - lw)
+        ly = my + min(max(cy * mh - lh / 2, 0), mh - lh)
+        d.rectangle([lx, ly, lx + lw, ly + lh], fill=AMBER)
+        d.text((mx - self.px(16), my + mh / 2), f"×{view.loupe:g}", font=self.font_bold, fill=AMBER, anchor="rm")
 
     def _message(self, d, message, warning):
         x, y, w, h = self.rect

@@ -38,6 +38,7 @@ KEYMAP = {
     ecodes.KEY_C: "peaking_color",
     ecodes.KEY_V: "peaking_sensitivity",
     ecodes.KEY_E: "zebra",
+    ecodes.KEY_L: "loupe",  # x5, x10, off; in the loupe, the arrows move it
 }
 # Actions that repeat while the key is held, like turning a dial.
 REPEATABLE = {"shutter_faster", "shutter_slower", "iso_up", "iso_down", "ev_up", "ev_down"}

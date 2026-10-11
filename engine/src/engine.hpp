@@ -93,6 +93,9 @@ private:
 	void DrainCommands();
 	void HandleCommand(int client, json const &command, Clock::time_point received);
 	json Capture(json const &command, Clock::time_point received);
+	void Loupe(json const &command);
+	libcamera::ControlList LoupeCrop() const;
+	json LoupeState() const;
 	json State() const;
 	json ListControls() const;
 	void PostToCameraLoop(RPiCamApp::MsgType type);
@@ -118,6 +121,10 @@ private:
 	std::optional<Phase> next_phase_; // reconfiguration to do once the current frame is released
 	std::optional<PendingCapture> pending_;
 	uint64_t next_capture_id_ = 1;
+	// Loupe: zoom 1 = off. Above 1, the viewfinder runs the sensor at full resolution and
+	// crops around the centre (a fraction of the image), whatever the capture strategy.
+	float loupe_zoom_ = 1;
+	float loupe_x_ = 0.5f, loupe_y_ = 0.5f;
 	std::atomic<bool> quit_ { false };
 
 	float fps_ = 0;
