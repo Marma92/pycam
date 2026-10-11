@@ -29,7 +29,10 @@ KEYMAP = {
     ecodes.KEY_KPMINUS: "ev_down",
     ecodes.KEY_S: "shutter_auto",  # S: back to automatic speed (or manual from the measure)
     ecodes.KEY_I: "iso_auto",
-    ecodes.KEY_B: "awb",  # balance des blancs
+    ecodes.KEY_B: "awb",  # balance des blancs: presets, Kelvin
+    ecodes.KEY_U: "kelvin_up",  # U above J: warmer / cooler, in Kelvin
+    ecodes.KEY_J: "kelvin_down",
+    ecodes.KEY_H: "awb_lock",  # hold the balance measured on a grey card
     ecodes.KEY_D: "disp",
     ecodes.KEY_G: "grid",
     ecodes.KEY_R: "raw",
@@ -45,7 +48,7 @@ KEYMAP = {
     ecodes.KEY_F: "aperture",  # aperture set on the ring, for the EXIF
 }
 # Actions that repeat while the key is held, like turning a dial.
-REPEATABLE = {"shutter_faster", "shutter_slower", "iso_up", "iso_down", "ev_up", "ev_down"}
+REPEATABLE = {"shutter_faster", "shutter_slower", "iso_up", "iso_down", "ev_up", "ev_down", "kelvin_up", "kelvin_down"}
 
 RESCAN_SECONDS = 2
 

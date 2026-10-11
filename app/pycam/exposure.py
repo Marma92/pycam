@@ -19,7 +19,10 @@ SHUTTER_SPEEDS = (
 ISO_VALUES = (100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600)
 EV_MAX = 3.0
 EV_STEP = 1 / 3
-AWB_MODES = ("Auto", "Daylight", "Cloudy", "Tungsten", "Fluorescent", "Indoor")
+# White balance: libcamera presets, then a colour temperature ("Kelvin"), then the gains
+# measured on a grey card ("Locked"). B goes through the first ones; Locked comes from H.
+AWB_PRESETS = ("Auto", "Daylight", "Cloudy", "Tungsten", "Fluorescent", "Indoor")
+AWB_MODES = AWB_PRESETS + ("Kelvin",)
 AWB_LABELS = {
     "Auto": "AWB",
     "Daylight": "Soleil",
@@ -27,7 +30,12 @@ AWB_LABELS = {
     "Tungsten": "Tungstène",
     "Fluorescent": "Fluo",
     "Indoor": "Intérieur",
+    "Locked": "Mémorisée",
 }
+KELVIN_STEPS = (
+    2000, 2200, 2500, 2700, 3000, 3200, 3500, 3800, 4000, 4300, 4500, 4800, 5000, 5300, 5500, 5800,
+    6000, 6500, 7000, 7500, 8000, 9000, 10000,
+)
 
 
 def nearest_index(values, x):
@@ -56,7 +64,9 @@ class Exposure:
     shutter: float | None = None  # seconds, None = automatic
     iso: int | None = None  # None = automatic
     ev: float = 0.0  # compensation, used by whatever is automatic
-    awb: str = "Auto"
+    awb: str = "Auto"  # AWB_MODES, or "Locked"
+    kelvin: int = 5500  # for awb == "Kelvin"
+    wb_gains: list | None = None  # [red, blue] for awb == "Locked"
 
     @classmethod
     def from_dict(cls, data):
@@ -68,8 +78,14 @@ class Exposure:
             exposure.iso = ISO_VALUES[nearest_index(ISO_VALUES, iso)]
         if isinstance(data.get("ev"), (int, float)):
             exposure.ev = max(-EV_MAX, min(EV_MAX, float(data["ev"])))
-        if data.get("awb") in AWB_MODES:
-            exposure.awb = data["awb"]
+        if isinstance(data.get("kelvin"), (int, float)) and data["kelvin"] > 0:
+            exposure.kelvin = KELVIN_STEPS[nearest_index(KELVIN_STEPS, data["kelvin"])]
+        gains = data.get("wb_gains")
+        if isinstance(gains, list) and len(gains) == 2 and all(isinstance(g, (int, float)) and 0 < g < 32 for g in gains):
+            exposure.wb_gains = [float(g) for g in gains]
+        awb = data.get("awb")
+        if awb in AWB_MODES or (awb == "Locked" and exposure.wb_gains):
+            exposure.awb = awb
         return exposure
 
     def to_dict(self):
@@ -86,7 +102,15 @@ class Exposure:
 
     def controls(self):
         """The libcamera controls for the engine (protocol.md, set_controls)."""
-        controls = {"ExposureValue": self.ev, "AwbMode": self.awb}
+        controls = {"ExposureValue": self.ev}
+        # libcamera applies a colour temperature or gains only with the automatic white
+        # balance off; back to a preset, it must be turned on again.
+        if self.awb == "Kelvin":
+            controls.update(AwbEnable=False, ColourTemperature=self.kelvin)
+        elif self.awb == "Locked" and self.wb_gains:
+            controls.update(AwbEnable=False, ColourGains=list(self.wb_gains))
+        else:
+            controls.update(AwbEnable=True, AwbMode=self.awb if self.awb in AWB_PRESETS else "Auto")
         if self.shutter is None:
             controls["ExposureTimeMode"] = "Auto"
         else:
@@ -130,4 +154,24 @@ class Exposure:
             self.iso = None
 
     def next_awb(self):
-        self.awb = AWB_MODES[(AWB_MODES.index(self.awb) + 1) % len(AWB_MODES)]
+        """Presets, then Kelvin, then back to Auto (a locked balance is left for Auto)."""
+        index = AWB_MODES.index(self.awb) if self.awb in AWB_MODES else -1
+        self.awb = AWB_MODES[(index + 1) % len(AWB_MODES)]
+
+    def step_kelvin(self, steps, measured_kelvin):
+        """Turns the white balance dial; from another mode, starts at the measured temperature."""
+        current = self.kelvin if self.awb == "Kelvin" else (measured_kelvin or self.kelvin)
+        index = nearest_index(KELVIN_STEPS, current) + (steps if self.awb == "Kelvin" else 0)
+        self.kelvin = KELVIN_STEPS[max(0, min(len(KELVIN_STEPS) - 1, index))]
+        self.awb = "Kelvin"
+
+    def lock_awb(self, measured_gains):
+        """Keeps the gains the automatic balance found (point at a grey card first)."""
+        if not measured_gains or len(measured_gains) != 2 or not all(g > 0 for g in measured_gains):
+            return False
+        self.wb_gains = [round(float(g), 4) for g in measured_gains]
+        self.awb = "Locked"
+        return True
+
+    def awb_label(self):
+        return f"{self.kelvin} K" if self.awb == "Kelvin" else AWB_LABELS.get(self.awb, self.awb)

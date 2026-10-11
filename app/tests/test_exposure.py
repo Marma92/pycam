@@ -72,6 +72,34 @@ class ExposureTest(unittest.TestCase):
         self.assertEqual(e.iso, 400)
         self.assertEqual(e.ev, 3)
         self.assertEqual(e.awb, "Auto")
+        self.assertEqual(Exposure.from_dict({"awb": "Locked"}).awb, "Auto")  # no gains: nothing to lock
+
+    def test_white_balance_controls(self):
+        self.assertEqual(Exposure(awb="Daylight").controls()["AwbEnable"], True)
+        self.assertEqual(Exposure(awb="Daylight").controls()["AwbMode"], "Daylight")
+        kelvin = Exposure(awb="Kelvin", kelvin=3200).controls()
+        self.assertEqual((kelvin["AwbEnable"], kelvin["ColourTemperature"]), (False, 3200))
+        self.assertNotIn("AwbMode", kelvin)
+        locked = Exposure(awb="Locked", wb_gains=[2.1, 1.7]).controls()
+        self.assertEqual((locked["AwbEnable"], locked["ColourGains"]), (False, [2.1, 1.7]))
+
+    def test_kelvin_dial_starts_from_the_measure(self):
+        e = Exposure()
+        e.step_kelvin(+1, 4480)  # first press: the measured temperature, rounded
+        self.assertEqual((e.awb, e.kelvin), ("Kelvin", 4500))
+        e.step_kelvin(+1, 4480)
+        self.assertEqual(e.kelvin, 4800)
+        self.assertEqual(e.awb_label(), "4800 K")
+        e.next_awb()  # Kelvin is last: back to Auto
+        self.assertEqual(e.awb, "Auto")
+
+    def test_lock_needs_a_measure(self):
+        e = Exposure()
+        self.assertFalse(e.lock_awb(None))
+        self.assertTrue(e.lock_awb([2.72, 1.56]))
+        self.assertEqual((e.awb, e.awb_label()), ("Locked", "Mémorisée"))
+        e.next_awb()
+        self.assertEqual(e.awb, "Auto")
 
 
 if __name__ == "__main__":

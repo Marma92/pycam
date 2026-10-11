@@ -29,6 +29,9 @@ EXPOSURE_ACTIONS = {
     "shutter_auto",
     "iso_auto",
     "awb",
+    "kelvin_up",
+    "kelvin_down",
+    "awb_lock",
 }
 FOCUS_AID_ACTIONS = {"peaking", "peaking_color", "peaking_sensitivity", "zebra"}
 LOUPE_LEVELS = (1, 5, 10)
@@ -281,7 +284,14 @@ class Camera:
             e.toggle_iso_auto(self.measured_iso())
         elif action == "awb":
             e.next_awb()
-            self.show_message(f"Balance des blancs : {exp.AWB_LABELS[e.awb]}")
+            self.show_message(f"Balance des blancs : {e.awb_label()}")
+        elif action in ("kelvin_up", "kelvin_down"):
+            e.step_kelvin(+1 if action == "kelvin_up" else -1, self.stats.get("colour_temp"))
+        elif action == "awb_lock":
+            if not e.lock_awb(self.stats.get("colour_gains")):
+                self.show_message("Pas de mesure de balance des blancs", warning=True)
+                return
+            self.show_message("Balance des blancs mémorisée")
         elif action == "disp":
             s.display = DISPLAY_MODES[(DISPLAY_MODES.index(s.display) + 1) % len(DISPLAY_MODES)]
         elif action == "grid":
@@ -413,7 +423,7 @@ class Camera:
             iso=f"ISO {iso}" if iso else "ISO --",
             iso_auto=e.iso is None,
             ev=exp.format_ev(e.ev) if e.mode != "M" else "",
-            awb=exp.AWB_LABELS[e.awb],
+            awb=e.awb_label(),
             formats="RAW+JPEG" if "dng" in s.formats else "JPEG",
             lens=lenses.format_lens(self.lens(), s.aperture),
             shots=self.storage.shots_remaining(s.formats, s.dng_compression),
