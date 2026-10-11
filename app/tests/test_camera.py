@@ -63,6 +63,8 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.camera = Camera(self.settings, self.settings_path, self.engine)
 
     async def asyncTearDown(self):
+        # Looks compile in a thread: let them finish before removing their folder.
+        await asyncio.gather(*self.camera._tasks, return_exceptions=True)
         for key, value in self.env.items():
             if value is None:
                 os.environ.pop(key, None)

@@ -106,6 +106,29 @@ class LooksTest(unittest.TestCase):
             presets = looks.find_presets([self.tmp.name])
         self.assertEqual(list(presets), ["good"])
 
+    def test_viewfinder_preview(self):
+        presets = looks.find_presets([looks.BUILTIN_DIR])
+        self.assertIsNone(looks.fit_preview(looks.compile_look(presets["base"], size=9), 9))
+        standard = looks.fit_preview(looks.compile_look(presets["standard"], size=17), 17)
+        self.assertAlmostEqual(standard["luma"][128] / 255, 0.638, delta=0.01)  # the standard curve
+        self.assertLess(max(abs(v) for v in standard["luma_mix"]), 0.1)  # small: the curve, channel by channel
+        red_filter = self.preset("[look]\nmonochrome = true\nmixer = [1, 0, 0]\n")
+        preview = looks.fit_preview(looks.compile_look(red_filter, size=17), 17)
+        self.assertAlmostEqual(preview["luma_mix"][1], 1.402, delta=0.05)  # R = Y + 1.402 Cr
+        self.assertLess(max(abs(v) for v in preview["chroma"]), 0.01)  # no colour left
+        vivid = looks.fit_preview(looks.compile_look(self.preset("", "plain"), saturation=2, size=17), 17)
+        self.assertAlmostEqual(vivid["chroma"][0], 1.5, delta=0.1)  # a little less: some colours clip
+        self.assertAlmostEqual(vivid["chroma"][1], 0.0, delta=0.05)
+
+    def test_histogram_remap(self):
+        histogram = list(range(64))
+        identity = list(range(256))
+        self.assertEqual(looks.remap_histogram(histogram, identity), histogram)
+        brighter = [min(255, 2 * i) for i in range(256)]
+        remapped = looks.remap_histogram(histogram, brighter)
+        self.assertEqual(sum(remapped), sum(histogram))  # nothing lost
+        self.assertEqual(remapped[1], 0)  # the darkest classes moved up
+
     def test_compiled_lut_is_cached(self):
         cache = os.path.join(self.tmp.name, "cache")
         standard = looks.find_presets([looks.BUILTIN_DIR])["standard"]

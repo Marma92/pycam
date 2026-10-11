@@ -24,7 +24,7 @@ Toute commande peut porter un `id`, qui est renvoyé tel quel dans la réponse. 
 | `configure` | Toutes facultatives :<br>• `strategy` : `"switch"` ou `"zsl"` ;<br>• `still_denoise` : `off`, `cdn_off`, `cdn_fast`, `cdn_hq` (en ZSL, `cdn_hq` devient `cdn_fast` pour garder 11,7 i/s) ;<br>• `still_size` : `[w, h]` du JPEG, ou `null` pour le capteur entier. Le DNG reste en pleine résolution ;<br>• `tuning` : le fichier de tuning de l'ISP, sans `.json`, dans le dossier `--tuning-dir` (`engine/tuning` par défaut), ou `null` pour celui de libcamera. Au démarrage : `pycam-imx477`. | — : en ZSL, un changement de réglage photo redémarre la caméra ; un changement de tuning la ferme et la rouvre (~0,2 s), puis envoie l'évènement `tuning` |
 | `focus_aids` | `peaking` (bool), `peaking_color` (`red`, `yellow`, `green`, `blue`, `white` ou `[r, g, b]`), `peaking_sensitivity` (`low`, `medium`, `high`), `zebra` (bool), `zebra_level` (0–1, défaut 0,95) ; les clés absentes gardent leur valeur | — |
 | `loupe` | `zoom` (1 = coupée, jusqu'à 16), `center` `[x, y]` (fractions de l'image, défaut le centre) ; les clés absentes gardent leur valeur | `loupe` : `{zoom, center}`. Entrer ou sortir de la loupe reconfigure la caméra (le capteur passe en pleine résolution) ; déplacer la zone ou changer de grossissement, non. |
-| `look` | Tout le look d'un coup, les clés absentes étant coupées :<br>• `name` : pour l'état et les journaux ;<br>• `lut` : chemin d'un fichier LUT (voir plus bas), ou `null` ;<br>• `vignette` : assombrissement des coins, 0–1 ;<br>• `grain` : 0–1, et `grain_size`, en pixels de l'image pleine résolution (0,5–8, 1 par défaut). | `look` : l'état. Les photos déjà prises gardent le look du moment où elles ont été prises. |
+| `look` | Tout le look d'un coup, les clés absentes étant coupées :<br>• `name` : pour l'état et les journaux ;<br>• `lut` : chemin d'un fichier LUT (voir plus bas), ou `null` ;<br>• `vignette` : assombrissement des coins, 0–1 ;<br>• `grain` : 0–1, et `grain_size`, en pixels de l'image pleine résolution (0,5–8, 1 par défaut) ;<br>• `preview` : l'aperçu en visée, ou `null` (voir plus bas). | `look` : l'état. Les photos déjà prises gardent le look du moment où elles ont été prises. |
 | `snapshot` | `path` | — : la prochaine image de visée affichée, aides comprises mais sans le HUD, sera écrite en JPEG ; évènement `snapshot_done` ou `snapshot_error`. Sert au débogage à distance. |
 | `hud_info` | — | `display` : taille de l'écran, `image_rect` `[x, y, w, h]` (où est l'image), `hud` (chemin de la mémoire partagée, largeur, hauteur, stride, format `"RGBA"`), compteurs d'images affichées et perdues |
 | `hud_commit` | — | — (le contenu de la mémoire partagée a été copié : on peut dessiner le HUD suivant) |
@@ -49,7 +49,7 @@ Par défaut, et tant que l'application n'a rien dessiné, le HUD est noir opaque
 
 ### Look
 
-Le look s'applique au JPEG seul, jamais au DNG ni à la visée, dans le fil d'écriture, avant l'encodage. L'ordre est celui d'un appareil argentique : le vignettage (l'objectif), puis la LUT (la pellicule), puis le grain.
+Le look s'applique au JPEG seul, jamais au DNG, dans le fil d'écriture, avant l'encodage. La visée en reçoit une approximation, l'aperçu. L'ordre est celui d'un appareil argentique : le vignettage (l'objectif), puis la LUT (la pellicule), puis le grain.
 
 **Fichier LUT** (`docs/presets.md`), écrit par l'application, petit-boutiste :
 
@@ -63,6 +63,14 @@ Le look s'applique au JPEG seul, jamais au DNG ni à la visée, dans le fil d'é
 L'entrée est la base pycam : le YUV pleine plage BT.601 de l'ISP, vu comme du RVB 0–255. L'interpolation est tétraédrique.
 
 **Coût mesuré** sur une photo de 12 Mpx, sur 3 fils (2026-10-11) : LUT ~0,75 s, grain ~0,25 à 0,4 s en plus selon sa taille. Il s'ajoute à l'écriture, en arrière-plan.
+
+**Aperçu** (`preview`). La LUT complète occuperait les 4 cœurs à 30 i/s : la visée reçoit une approximation, que l'application ajuste sur la LUT par moindres carrés (`looks.fit_preview`) :
+
+- `luma` : 256 valeurs, la courbe des gris ;
+- `luma_mix` : `[a, b]`, la part de chrominance qui passe dans la luminance (le mélangeur noir et blanc) : Y' = `luma`[Y + a·Cb + b·Cr] ;
+- `chroma` : la matrice 2×2 `[m00, m01, m10, m11]` appliquée à (Cb, Cr) par bloc de 2×2 pixels (saturation, décalages de teinte).
+
+Elle est appliquée dans le fil d'affichage, en entiers, avant le peaking et les zébras, qui montrent donc la photo telle qu'elle sera : 5 à 8,5 ms par image de visée 1024×768. Mesuré sur une scène réelle avec « Standard » : RVB moyen 118/106/112 en visée, 117/104/111 dans le JPEG.
 
 ### Contrôles
 

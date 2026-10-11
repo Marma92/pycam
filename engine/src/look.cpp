@@ -274,6 +274,46 @@ std::shared_ptr<const Lut3D> Lut3D::Identity(unsigned size)
 	return lut;
 }
 
+void apply_preview(Preview const &preview, uint8_t *frame, unsigned width, unsigned height, unsigned stride)
+{
+	// Fixed point, 8 fractional bits.
+	int const mix_cb = static_cast<int>(std::lround(preview.mix_cb * 256)),
+			  mix_cr = static_cast<int>(std::lround(preview.mix_cr * 256));
+	int m[4];
+	for (int i = 0; i < 4; i++)
+		m[i] = static_cast<int>(std::lround(preview.chroma[i] * 256));
+	bool const mix = mix_cb || mix_cr;
+	unsigned const uv_stride = stride / 2;
+	uint8_t *const u_plane = frame + static_cast<size_t>(stride) * height;
+	uint8_t *const v_plane = u_plane + static_cast<size_t>(uv_stride) * (height / 2);
+	uint8_t const *const luma = preview.luma.data();
+
+	for (unsigned y = 0; y < height; y += 2)
+	{
+		uint8_t *rows[2] = { frame + static_cast<size_t>(y) * stride, frame + static_cast<size_t>(y + 1) * stride };
+		uint8_t *u = u_plane + static_cast<size_t>(y / 2) * uv_stride;
+		uint8_t *v = v_plane + static_cast<size_t>(y / 2) * uv_stride;
+		for (unsigned bx = 0; bx < width / 2; bx++)
+		{
+			int const cb = u[bx] - 128, cr = v[bx] - 128;
+			if (mix)
+			{
+				int const offset = (mix_cb * cb + mix_cr * cr) >> 8;
+				for (uint8_t *row : rows)
+				{
+					row[2 * bx] = luma[std::clamp(row[2 * bx] + offset, 0, 255)];
+					row[2 * bx + 1] = luma[std::clamp(row[2 * bx + 1] + offset, 0, 255)];
+				}
+			}
+			else
+				for (uint8_t *row : rows)
+					row[2 * bx] = luma[row[2 * bx]], row[2 * bx + 1] = luma[row[2 * bx + 1]];
+			u[bx] = static_cast<uint8_t>(std::clamp(128 + ((m[0] * cb + m[1] * cr) >> 8), 0, 255));
+			v[bx] = static_cast<uint8_t>(std::clamp(128 + ((m[2] * cb + m[3] * cr) >> 8), 0, 255));
+		}
+	}
+}
+
 void apply_look(Look const &look, uint8_t *frame, unsigned width, unsigned height, unsigned stride, uint64_t seed,
 				unsigned threads)
 {

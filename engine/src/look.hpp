@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -37,5 +38,19 @@ struct Look
 // after the luma plane). `seed` changes the grain from one photo to the next.
 void apply_look(Look const &look, uint8_t *frame, unsigned width, unsigned height, unsigned stride, uint64_t seed,
 				unsigned threads);
+
+// The look, roughly, for the viewfinder: the full LUT would take the 4 cores at 30 fps.
+// Fitted by the application on the compiled LUT (docs/protocol.md, "look"):
+//   luma:   Y' = luma[Y + mix_cb * Cb + mix_cr * Cr]  (the tone curve, the black and white mix)
+//   chroma: (Cb', Cr') = matrix * (Cb, Cr), per 2x2 block  (saturation, hue shifts)
+struct Preview
+{
+	std::array<uint8_t, 256> luma {};
+	float mix_cb = 0, mix_cr = 0;
+	std::array<float, 4> chroma { 1, 0, 0, 1 }; // row by row
+};
+
+// In place, on the viewfinder frame. A few milliseconds: integer arithmetic only.
+void apply_preview(Preview const &preview, uint8_t *frame, unsigned width, unsigned height, unsigned stride);
 
 } // namespace pycam

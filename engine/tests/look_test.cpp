@@ -2,6 +2,7 @@
 
 #include "../src/look.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -117,6 +118,31 @@ int main()
 		expect(a != c, "grain: changes with the seed");
 		expect(std::abs(mean_luma(a, 0, 0, w, h) - 128) < 2, "grain: mean kept");
 		expect(max_difference(a, grey) > 3, "grain: visible");
+	}
+
+	// The viewfinder preview.
+	{
+		Preview identity;
+		for (int i = 0; i < 256; i++)
+			identity.luma[i] = static_cast<uint8_t>(i);
+		auto frame = original;
+		apply_preview(identity, frame.data(), w, h, stride);
+		expect(frame == original, "preview: identity");
+
+		Preview grey = identity; // a negative, in black and white
+		for (int i = 0; i < 256; i++)
+			grey.luma[i] = static_cast<uint8_t>(255 - i);
+		grey.chroma = { 0, 0, 0, 0 };
+		apply_preview(grey, frame.data(), w, h, stride);
+		uint8_t const *u = frame.data() + stride * h, *v = u + (stride / 2) * (h / 2);
+		expect(frame[0] == 255 - original[0] && u[0] == 128 && v[0] == 128, "preview: curve and chroma");
+
+		Preview red_filter = identity; // the reds lighter: luma + Cr
+		red_filter.mix_cr = 1;
+		frame = original;
+		apply_preview(red_filter, frame.data(), w, h, stride);
+		int const cr = original[stride * h + (stride / 2) * (h / 2)] - 128;
+		expect(frame[0] == std::clamp(original[0] + cr, 0, 255), "preview: luma mix");
 	}
 
 	// The LUT file: what the application writes (docs/protocol.md, "look").

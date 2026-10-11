@@ -241,14 +241,19 @@ void Engine::BeforeShow(CompletedRequestPtr const &request, Stream *stream, Stre
 	// Display thread. The viewfinder buffer only feeds the screen: drawing into it leaves
 	// the photos untouched.
 	std::string snapshot;
+	std::shared_ptr<const Preview> preview;
 	{
 		std::lock_guard<std::mutex> lock(snapshot_mutex_);
 		snapshot.swap(snapshot_path_);
+		preview = preview_;
 	}
-	if (!focus_aids_.Active() && snapshot.empty())
+	if (!preview && !focus_aids_.Active() && snapshot.empty())
 		return;
 
 	BufferWriteSync sync(&app_, request->buffers.at(stream));
+	// The look first: the peaking and the zebras show on what the photo will look like.
+	if (preview)
+		apply_preview(*preview, sync.Get()[0].data(), info.width, info.height, info.stride);
 	focus_aids_.Apply(sync.Get()[0].data(), info);
 
 	if (!snapshot.empty())
@@ -724,7 +729,26 @@ void Engine::SetLook(json const &command)
 	look->vignette = std::clamp(command.value("vignette", 0.0f), 0.0f, 1.0f);
 	look->grain = std::clamp(command.value("grain", 0.0f), 0.0f, 1.0f);
 	look->grain_size = std::clamp(command.value("grain_size", 1.0f), 0.5f, 8.0f);
+	std::shared_ptr<Preview> preview;
+	if (command.contains("preview") && !command["preview"].is_null())
+	{
+		json const &p = command["preview"];
+		auto luma = p.value("luma", std::vector<int> {});
+		auto mix = p.value("luma_mix", std::vector<float> { 0, 0 });
+		auto chroma = p.value("chroma", std::vector<float> { 1, 0, 0, 1 });
+		if (luma.size() != 256 || mix.size() != 2 || chroma.size() != 4)
+			throw CommandError("bad_request", "preview: luma (256 values), luma_mix [cb, cr], chroma [4 values]");
+		preview = std::make_shared<Preview>();
+		for (unsigned i = 0; i < 256; i++)
+			preview->luma[i] = static_cast<uint8_t>(std::clamp(luma[i], 0, 255));
+		preview->mix_cb = std::clamp(mix[0], -4.0f, 4.0f);
+		preview->mix_cr = std::clamp(mix[1], -4.0f, 4.0f);
+		for (unsigned i = 0; i < 4; i++)
+			preview->chroma[i] = std::clamp(chroma[i], -4.0f, 4.0f);
+	}
 	look_ = std::move(look);
+	std::lock_guard<std::mutex> lock(snapshot_mutex_); // the display thread reads it
+	preview_ = std::move(preview);
 }
 
 json Engine::LookState() const
@@ -733,7 +757,8 @@ json Engine::LookState() const
 			 { "lut", look_->lut ? json(look_->lut->size) : json(nullptr) },
 			 { "vignette", look_->vignette },
 			 { "grain", look_->grain },
-			 { "grain_size", look_->grain_size } };
+			 { "grain_size", look_->grain_size },
+			 { "preview", preview_ != nullptr } };
 }
 
 void Engine::Loupe(json const &command)

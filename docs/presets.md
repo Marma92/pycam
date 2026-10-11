@@ -2,13 +2,14 @@
 
 Statut : **orientations décidées le 2026-10-11** (§10). Les mesures datent du même jour, sur le Pi 3B.
 
-**Fait** (étapes 1 à 3 du §11) :
+**Fait** (étapes 1, 2, 3 et 5 du §11) :
 - la base fixe : `engine/tuning`, chargée dès le démarrage, et la correction d'ombrage en réglage séparé ;
 - le moteur : LUT 3D, grain et vignettage sur le JPEG, option « garder la base » (`docs/protocol.md`, « look ») ;
 - l'application (`app/pycam/looks.py`) : lecture des presets, compilation en LUT avec le contraste et la saturation du menu, mise en cache (`~/.cache/pycam/looks`), ligne « Simulation » des menus, nom court dans le bandeau, nom du preset dans l'EXIF (`Software`) ;
-- deux presets intégrés : « Standard », le rendu par défaut (la courbe du tuning standard du Pi, sans son contraste adaptatif), et « Base (neutre) », la base telle quelle.
+- deux presets intégrés : « Standard », le rendu par défaut (la courbe du tuning standard du Pi, sans son contraste adaptatif), et « Base (neutre) », la base telle quelle ;
+- l'aperçu en visée (`docs/protocol.md`, « look ») : une courbe, un mélange et une matrice, ajustés sur la LUT ; l'histogramme en direct est corrigé par les courbes des gris du look.
 
-**Reste** : l'aperçu en visée (la visée montre encore la base, plus sombre dans les tons moyens que « Standard »), l'outil `pycam-preset`, puis les pellicules.
+**Reste** : l'outil `pycam-preset`, puis les pellicules.
 
 **Ajouter un preset** : copier son dossier dans `~/.config/pycam/presets/`. Il apparaît à la prochaine ouverture d'un menu, et un preset du même nom de dossier qu'un preset intégré le remplace. Un preset illisible est ignoré, avec un avertissement dans le journal (`journalctl -u pycam`).
 

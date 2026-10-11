@@ -124,8 +124,9 @@ private:
 	Clock::time_point next_display_try_ {};
 	bool display_failure_logged_ = false;
 	FocusAids focus_aids_; // drawn into the viewfinder frames, on the display thread
-	std::mutex snapshot_mutex_;
+	std::mutex snapshot_mutex_; // also guards preview_
 	std::string snapshot_path_; // next shown frame to save as JPEG ("snapshot" command)
+	std::shared_ptr<const Preview> preview_; // the look on the viewfinder, roughly; none: the base
 	libcamera::ControlInfoMap const *camera_controls_ = nullptr;
 
 	std::mutex commands_mutex_;

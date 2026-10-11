@@ -12,6 +12,7 @@ computer (tools/pycam_preset.py): a preset gives the same result on both.
 import bisect
 import colorsys
 import hashlib
+import json
 import logging
 import os
 import struct
@@ -23,7 +24,7 @@ log = logging.getLogger(__name__)
 BASE = "pycam-1"  # the ISP rendering presets are written for (engine/tuning)
 FORMAT = 1  # of preset.toml
 LUT_SIZE = 33
-COMPILER = 1  # bump when compile() changes: the cached LUTs are then remade
+COMPILER = 3  # bump when compile() changes: the cached LUTs are then remade
 BUILTIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
 DEFAULT = "standard"
 
@@ -444,25 +445,145 @@ def is_identity(table, size, tolerance=0.5 / 255):
     return True
 
 
-def compiled_lut(preset, contrast=0, saturation=0, folder=None, keep=64):
-    """Path of the engine LUT file for this preset and these settings, compiled once and
-    kept in the cache (~0.2 MB each); None when it changes nothing (the base as it is)."""
+def _yuv(r, g, b):
+    """Full range BT.601, 0..255, as the engine."""
+    return (
+        255 * (0.299 * r + 0.587 * g + 0.114 * b),
+        255 * (-0.168736 * r - 0.331264 * g + 0.5 * b),
+        255 * (0.5 * r - 0.418688 * g - 0.081312 * b),
+    )
+
+
+def _solve2(sxx, sxy, syy, tx, ty):
+    """[a, b] minimising the squared error of a*x + b*y against t, from the sums."""
+    det = sxx * syy - sxy * sxy
+    if abs(det) < 1e-9:
+        return 0.0, 0.0
+    return (tx * syy - ty * sxy) / det, (ty * sxx - tx * sxy) / det
+
+
+def neutral_curves(table, size):
+    """What the look does to the greys: 256-entry tables (0..255) for the luma and each
+    channel. They also correct the histograms, measured on the base."""
+    step = 1 / (size - 1)
+    diagonal = [table[(k * size + k) * size + k] for k in range(size)]
+    curves = {}
+    for name, f in (
+        ("luma", lambda c: 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]),
+        ("red", lambda c: c[0]),
+        ("green", lambda c: c[1]),
+        ("blue", lambda c: c[2]),
+    ):
+        values = [f(c) for c in diagonal]
+        curve = []
+        for i in range(256):
+            pos = i / 255 / step
+            k = min(int(pos), size - 2)
+            curve.append(round(255 * (values[k] + (values[k + 1] - values[k]) * (pos - k))))
+        curves[name] = curve
+    return curves
+
+
+def fit_preview(table, size):
+    """The viewfinder preview (engine "look" command): a luma curve, a mix of the chroma
+    into the luma, a chroma matrix, fitted on the LUT by least squares. None: no change."""
+    luma = neutral_curves(table, size)["luma"]
+    inverse = [0] * 256  # the curve is monotone: first input reaching each output level
+    j = 0
+    for level in range(256):
+        while j < 255 and luma[j] < level:
+            j += 1
+        inverse[level] = j
+    sums = [0.0] * 5  # cb*cb, cb*cr, cr*cr, cb*d, cr*d
+    m = [0.0] * 7  # cb*cb, cb*cr, cr*cr, cb'*cb, cb'*cr, cr'*cb, cr'*cr
+    for bi in range(0, size, 2):  # every other point: plenty for 6 numbers
+        for gi in range(0, size, 2):
+            for ri in range(0, size, 2):
+                y, cb, cr = _yuv(ri / (size - 1), gi / (size - 1), bi / (size - 1))
+                # The colours of real scenes: moderate. The extreme ones clip whatever the
+                # look, and would drag the fit down.
+                if not 24 < y < 232 or cb * cb + cr * cr > 48 * 48:
+                    continue
+                y2, cb2, cr2 = _yuv(*table[(bi * size + gi) * size + ri])
+                d = inverse[min(255, max(0, round(y2)))] - y
+                sums[0] += cb * cb
+                sums[1] += cb * cr
+                sums[2] += cr * cr
+                sums[3] += cb * d
+                sums[4] += cr * d
+                m[3] += cb2 * cb
+                m[4] += cb2 * cr
+                m[5] += cr2 * cb
+                m[6] += cr2 * cr
+    mix = _solve2(sums[0], sums[1], sums[2], sums[3], sums[4])
+    # (cb', cr') = M (cb, cr): each row is a two-variable least squares problem.
+    row_cb = _solve2(sums[0], sums[1], sums[2], m[3], m[4])
+    row_cr = _solve2(sums[0], sums[1], sums[2], m[5], m[6])
+    chroma = [row_cb[0], row_cb[1], row_cr[0], row_cr[1]]
+    if (
+        max(abs(v - i) for i, v in enumerate(luma)) <= 1
+        and max(abs(v) for v in mix) < 0.01
+        and max(abs(a - b) for a, b in zip(chroma, (1, 0, 0, 1))) < 0.02
+    ):
+        return None
+    return {
+        "luma": luma,
+        "luma_mix": [round(v, 4) for v in mix],
+        "chroma": [round(v, 4) for v in chroma],
+    }
+
+
+@dataclass(frozen=True)
+class Compiled:
+    lut: str | None  # the engine LUT file; None: nothing to apply
+    preview: dict | None  # for the viewfinder (engine "look" command)
+    curves: dict | None  # neutral_curves(), for the histograms; None: unchanged
+    monochrome: bool = False
+
+
+def compiled_look(preset, contrast=0, saturation=0, folder=None, keep=96):
+    """The look for this preset and these settings, compiled once and kept in the cache
+    (~0.2 MB per LUT): the LUT file, the viewfinder preview, the curves of the greys."""
     folder = folder or cache_dir()
     key = f"{preset.digest}-c{contrast}-s{saturation}-v{COMPILER}-{LUT_SIZE}"
     path = os.path.join(folder, f"{key}.lut")
-    none_marker = path + ".identity"
-    if os.path.exists(path):
-        return path
-    if os.path.exists(none_marker):
-        return None
+    info_path = os.path.join(folder, f"{key}.json")
+    try:
+        with open(info_path, encoding="utf-8") as f:
+            info = json.load(f)
+        if info["lut"] is None or os.path.exists(info["lut"]):
+            return Compiled(info["lut"], info["preview"], info["curves"], info["monochrome"])
+    except (OSError, ValueError, KeyError):
+        pass
     os.makedirs(folder, exist_ok=True)
     table = compile_look(preset, contrast, saturation)
-    if is_identity(table, LUT_SIZE):
-        open(none_marker, "w").close()
-        return None
-    write_engine_lut(path, LUT_SIZE, table)
+    identity = is_identity(table, LUT_SIZE)
+    if not identity:
+        write_engine_lut(path, LUT_SIZE, table)
+    preview = None if identity else fit_preview(table, LUT_SIZE)
+    monochrome = all(abs(r - g) < 1e-6 and abs(g - b) < 1e-6 for r, g, b in table)
+    compiled = Compiled(None if identity else path, preview, None if identity else neutral_curves(table, LUT_SIZE), monochrome)
+    tmp = info_path + ".part"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(compiled.__dict__, f)
+    os.replace(tmp, info_path)
     _trim(folder, keep)
-    return path
+    return compiled
+
+
+def compiled_lut(preset, contrast=0, saturation=0, folder=None):
+    """Path of the engine LUT file for this preset and these settings; None: nothing to do."""
+    return compiled_look(preset, contrast, saturation, folder).lut
+
+
+def remap_histogram(histogram, curve):
+    """A histogram of the base (64 classes) as it will be after the look, for the greys."""
+    out = [0] * len(histogram)
+    width = 256 // len(histogram)
+    for i, count in enumerate(histogram):
+        level = curve[min(255, i * width + width // 2)]
+        out[min(len(out) - 1, level // width)] += count
+    return out
 
 
 def _trim(folder, keep):

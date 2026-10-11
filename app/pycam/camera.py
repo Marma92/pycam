@@ -83,6 +83,7 @@ class Camera:
         self.review = None  # photo shown after the shot
         self.menu = None  # Menu while open
         self._look_version = 0  # the last look asked for: only that one is sent
+        self._look = None  # looks.Compiled sent to the engine: its curves correct the histograms
         self._look_lock = asyncio.Lock()
         self.slowest_shutter = exp.SHUTTER_SPEEDS[-1]
         self._message = ("", False, 0.0)
@@ -205,7 +206,7 @@ class Camera:
                 return  # a newer look is waiting for the lock
             s, preset = self.settings, self.preset()
             try:
-                lut = await asyncio.to_thread(looks.compiled_lut, preset, s.contrast, s.saturation)
+                compiled = await asyncio.to_thread(looks.compiled_look, preset, s.contrast, s.saturation)
             except (looks.PresetError, OSError) as e:
                 log.error("cannot compile the preset %s: %s", preset.id, e)
                 self.show_message(f"Preset illisible : {preset.name}", warning=True)
@@ -216,15 +217,19 @@ class Camera:
                 await self.engine.call(
                     "look",
                     name=preset.name,
-                    lut=lut,
+                    lut=compiled.lut,
+                    preview=compiled.preview,
                     grain=preset.grain,
                     grain_size=preset.grain_size,
                     vignette=preset.vignette,
                 )
             except ConnectionError:
-                pass  # pushed again on reconnection
+                return  # pushed again on reconnection
             except EngineError as e:
                 log.error("look refused: %s", e)
+                return
+            self._look = compiled
+            self.redraw()
 
     async def apply_still_config(self):
         try:
@@ -516,7 +521,7 @@ class Camera:
                 display=s.display,
                 review=r.path,
                 review_info=r.info,
-                **self._histograms(r.histogram, r.histogram_rgb),
+                **self._histograms(r.histogram, r.histogram_rgb, live=False),
                 message=message,
                 warning=warning,
             )
@@ -563,11 +568,22 @@ class Camera:
             warning=warning,
         )
 
-    def _histograms(self, luma, rgb):
-        """The one histogram the HUD draws: in the detailed display, RGB when chosen and known."""
+    def _histograms(self, luma, rgb, live=True):
+        """The one histogram the HUD draws: in the detailed display, RGB when chosen and known.
+        Live, the engine measures the base: it is corrected with the look's curves of the
+        greys, to show roughly what the JPEG will be (the review measures the JPEG itself)."""
         if self.settings.display != "detailed":
             return {}
+        curves = self._look.curves if live and self._look else None
+        if curves and luma:
+            luma = looks.remap_histogram(luma, curves["luma"])
         if self.settings.histogram == "rgb" and len(rgb) == 3:
+            if curves:
+                rgb = (
+                    [luma] * 3
+                    if self._look.monochrome
+                    else [looks.remap_histogram(c, curves[name]) for c, name in zip(rgb, ("red", "green", "blue"))]
+                )
             return {"histogram_rgb": tuple(tuple(c) for c in rgb)}
         return {"histogram": tuple(luma)}
 
