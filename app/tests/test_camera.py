@@ -352,7 +352,7 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.camera.hud)
         self.assertEqual(len(made), 1)
 
-    async def test_front_dial_compensation_in_auto_speed_in_manual(self):
+    async def test_dials_set_their_value_when_manual_else_the_compensation(self):
         self.camera.on_event({"event": "stats", "exposure_us": 16667, "analogue_gain": 2.0, "digital_gain": 1.0})
         self.camera.on_action("front_dial_plus")  # P: the compensation
         await self.settle()
@@ -366,13 +366,21 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.engine.last("set_controls")["controls"]["ExposureTime"], 12500)  # 1/80
         self.assertEqual(self.camera.view().mode, "S")
         self.assertAlmostEqual(self.settings.exposure.ev, 1 / 3)  # kept for the automatic ISO
-        self.camera.on_action("rear_dial_plus")  # the rear dial still goes manual from the measure
+        self.camera.on_action("rear_dial_plus")  # S: the rear dial is the compensation
+        self.assertAlmostEqual(self.settings.exposure.ev, 2 / 3)
+        self.camera.on_action("iso_auto")  # its press: manual ISO, from the measure (200)
+        self.camera.on_action("rear_dial_plus")  # M: the ISO
         await self.settle()
         self.assertEqual(self.engine.last("set_controls")["controls"]["AnalogueGain"], 2.5)  # ISO 250
         self.assertEqual(self.camera.view().mode, "M")
         self.camera.on_action("shutter_auto")  # A: the front dial is the compensation again
         self.camera.on_action("front_dial_minus")
+        self.camera.on_action("front_dial_minus")
         self.assertEqual((self.camera.view().mode, self.settings.exposure.ev), ("A", 0))
+        self.camera.on_action("iso_auto")  # P: both dials are the compensation
+        self.camera.on_action("rear_dial_minus")
+        self.assertEqual(self.camera.view().mode, "P")
+        self.assertAlmostEqual(self.settings.exposure.ev, -1 / 3)
 
     async def test_captures_are_numbered_and_the_number_is_saved(self):
         self.camera.on_action("shutter")

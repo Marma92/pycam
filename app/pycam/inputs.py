@@ -25,11 +25,7 @@ KEYMAP = {
     ecodes.KEY_UP: "rear_dial_plus",  # rear dial
     ecodes.KEY_DOWN: "rear_dial_minus",
     ecodes.KEY_S: "shutter_auto",  # front dial press: automatic speed, or manual from the measure
-    ecodes.KEY_I: "iso_auto",  # rear dial press
-    ecodes.KEY_PAGEUP: "ev_up",
-    ecodes.KEY_KPPLUS: "ev_up",
-    ecodes.KEY_PAGEDOWN: "ev_down",
-    ecodes.KEY_KPMINUS: "ev_down",
+    ecodes.KEY_I: "iso_auto",  # rear dial press: the same for the ISO
     ecodes.KEY_TAB: "q",  # quick menu
     ecodes.KEY_ESC: "menu",  # full menu; closes a menu, leaves the loupe
     ecodes.KEY_D: "disp",
@@ -38,7 +34,7 @@ KEYMAP = {
     ecodes.KEY_2: "fn2",
 }
 # Actions that repeat while the key is held, like turning a dial.
-REPEATABLE = {"front_dial_plus", "front_dial_minus", "rear_dial_plus", "rear_dial_minus", "ev_up", "ev_down"}
+REPEATABLE = {"front_dial_plus", "front_dial_minus", "rear_dial_plus", "rear_dial_minus"}
 
 RESCAN_SECONDS = 2
 

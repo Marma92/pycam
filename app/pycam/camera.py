@@ -25,8 +25,6 @@ EXPOSURE_ACTIONS = {
     "front_dial_minus",
     "rear_dial_plus",
     "rear_dial_minus",
-    "ev_up",
-    "ev_down",
     "shutter_auto",
     "iso_auto",
     "awb_lock",
@@ -305,20 +303,19 @@ class Camera:
             return
         if action in ("front_dial_plus", "front_dial_minus"):
             # The speed when it is manual (S, M), else the exposure compensation (P, A), as
-            # in docs/hardware.md §2. Pressing the dial switches the speed to manual.
+            # in docs/hardware.md §2. Turning a dial never changes the mode: pressing it does.
             step = +1 if action == "front_dial_plus" else -1
             if e.shutter is None:
                 e.step_ev(step)
             else:
                 e.step_shutter(-step, self.measured_shutter(), self.slowest_shutter)  # plus: faster
-        elif action == "rear_dial_plus":
-            e.step_iso(+1, self.measured_iso())
-        elif action == "rear_dial_minus":
-            e.step_iso(-1, self.measured_iso())
-        elif action == "ev_up":
-            e.step_ev(+1)
-        elif action == "ev_down":
-            e.step_ev(-1)
+        elif action in ("rear_dial_plus", "rear_dial_minus"):
+            # The ISO when it is manual (A, M), else the exposure compensation (P, S).
+            step = +1 if action == "rear_dial_plus" else -1
+            if e.iso is None:
+                e.step_ev(step)
+            else:
+                e.step_iso(step, self.measured_iso())
         elif action == "shutter_auto":
             e.toggle_shutter_auto(self.measured_shutter())
         elif action == "iso_auto":

@@ -57,8 +57,8 @@ Comme il n'y a pas de tactile, les commandes doivent couvrir trois choses : **le
 | # | Commande | Composant possible | Rôle principal |
 |---|---|---|---|
 | 1 | **Déclencheur 2 crans** | Interrupteur deux étages type ALPS SPPH4 | Mi-course : mémorisation AE / sortie de menu ou de loupe. Fond : déclenchement. |
-| 2 | **Molette avant** (avec appui) | Encodeur EC11 ou Bourns PEC11R | Vitesse (S/M) ou correction d'exposition (P/A). En menu : changer la valeur. |
-| 3 | **Molette arrière** (avec appui) | Encodeur EC11 ou PEC11R | ISO (A/M). En menu : faire défiler. En lecture : image suivante/précédente. |
+| 2 | **Molette avant** (avec appui) | Encodeur EC11 ou Bourns PEC11R | Vitesse (S/M) ou correction d'exposition (P/A). Appui : vitesse auto ⇄ manuelle. En menu : changer la valeur. |
+| 3 | **Molette arrière** (avec appui) | Encodeur EC11 ou PEC11R | ISO (A/M) ou correction d'exposition (P/S). Appui : ISO auto ⇄ manuel. En menu : faire défiler. En lecture : image suivante/précédente. |
 | 4 | **Joystick 5 directions** | Commutateur de navigation 5 voies (type ALPS SKRH) | Menus : naviguer, valider (appui central). Visée : déplacer la loupe ou le point de mesure spot. |
 | 5 | **Q** (menu rapide) | Bouton tactile | Grille des ~12 réglages les plus utilisés ; on navigue au joystick et on change la valeur à la molette. |
 | 6 | **MENU** | Bouton tactile | Ouvrir le menu complet / revenir en arrière. |

@@ -212,9 +212,8 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 |---|---|---|
 | Espace / Entrée | Déclencheur | Déclencher. Ferme aussi un menu, la loupe ou la revue, et déclenche quand même. |
 | ← / → | Molette avant | En S et M : vitesse plus lente / plus rapide. En P et A : correction d'exposition −⅓ / +⅓ IL. Dans un menu : changer la valeur. |
-| ↓ / ↑ | Molette arrière | ISO ; tournée en P ou S, elle passe l'ISO en manuel en partant de la mesure. Dans un menu : changer de ligne. |
+| ↓ / ↑ | Molette arrière | En A et M : ISO. En P et S : correction d'exposition −⅓ / +⅓ IL. Dans un menu : changer de ligne. |
 | S / I | Appui sur la molette avant / arrière | Vitesse / ISO : basculer automatique ⇄ manuel (le passage en manuel part de la valeur mesurée). |
-| Page↓ / Page↑ | — | Correction d'exposition, dans tous les modes. Seule façon de la régler en S : point ouvert, voir ci-dessous. |
 | Tab | Q | Menu rapide ; Tab le ferme. Depuis le menu complet, passe au menu rapide. |
 | Échap | MENU | Menu complet ; Échap le ferme. Dans la loupe, la quitte d'abord. |
 | D | DISP | Affichage : détaillé → simple → nature. |
@@ -244,9 +243,16 @@ Pendant la revue après la prise, toute touche la ferme ; le déclencheur la fer
   - **Objectif** : en changer oublie l'ouverture indiquée. Les profils sont dans `settings.json` ; par défaut, les deux objectifs officiels Raspberry Pi.
   - **Ouverture** : celle de la bague, écrite dans l'EXIF et affichée dans le bandeau. Sans objectif choisi, il n'y a rien à régler.
 
-**La molette avant suit `hardware.md`** (décidé le 2026-10-11) : elle règle la vitesse quand elle est manuelle (S, M), sinon la correction d'exposition (P, A). Tourner la molette ne change donc plus le mode : c'est l'appui (S au clavier) qui passe la vitesse en manuel, en partant de la mesure. La correction est gardée en S, où elle guide l'ISO automatique.
+**Les molettes** (décidé le 2026-10-11). Chacune règle sa valeur quand elle est manuelle, sinon la correction d'exposition :
 
-**Point ouvert : la correction d'exposition en S.** Aucune molette ne la règle dans ce mode : la molette avant fait la vitesse, et la molette arrière passe l'ISO en manuel. Seul Page↑ / Page↓ la règle, sans équivalent physique. Piste : en S, la molette arrière ferait la correction, l'appui servant toujours à passer l'ISO en manuel.
+| Mode | Molette avant | Molette arrière |
+|---|---|---|
+| P | correction | correction |
+| S | vitesse | correction |
+| A | correction | ISO |
+| M | vitesse | ISO |
+
+C'est le comportement de `hardware.md` pour la molette avant ; la molette arrière le complète en P et S. Tourner une molette ne change jamais le mode : c'est son appui (S, I au clavier) qui passe la valeur en manuel, en partant de la mesure, ou la rend automatique. La correction est gardée quand on passe en manuel, et n'agit pas en M.
 
 **Pourquoi evdev.** Avec les overlays noyau, chaque bouton devient un évènement clavier (`KEY_*`) et chaque molette un évènement relatif (`REL_*`). Ça apporte plusieurs choses :
 
@@ -341,7 +347,7 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 7. 🟨 **Temps d'encodage réels.** Sur une image très bruitée (gain 16, donc difficile à compresser, JPEG de 2,1 Mo) : JPEG ~350 ms, DNG ~180–230 ms. Reste à confirmer sur une vraie scène.
 8. 🟨 **Temps de démarrage** : la visée apparaît 25,4 s après le démarrage du noyau (§8). Le démarrage complet du système prend ~50 s, mais l'appareil est utilisable avant. L'objectif est de moins de 12 s (M2).
 9. ⬜ **Durabilité des photos.** `capture_done` signifie « écrit », pas « sur la carte » : les données peuvent rester ~30 s dans le cache du noyau. Sur batterie, une coupure perdrait les dernières photos. Il faudra un `fsync` par fichier dans le thread d'écriture (coût à mesurer) avant l'usage nomade.
-10. 🟨 **Commande de la correction d'exposition** : la molette avant la règle en P et A. En S, seul Page↑ / Page↓ la règle, sans équivalent physique. À trancher avant le câblage (§5).
+10. ✅ **Commande de la correction d'exposition** : la molette dont la valeur est automatique la règle (§5). Plus de touche dédiée.
 
 ## 11. Décisions (résumé)
 
