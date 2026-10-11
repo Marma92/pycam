@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass
 
 from . import exposure as exp
-from . import lenses
+from . import lenses, meter
 from .engine_client import EngineError, call_blocking
 from .settings import DISPLAY_MODES, PEAKING_COLORS, PEAKING_SENSITIVITIES, REVIEW_SECONDS, save_settings
 from .storage import Storage
@@ -146,6 +146,9 @@ class Camera:
         kind = msg.get("event")
         if kind == "stats":
             self.stats = msg
+            e = self.settings.exposure
+            if e.mode == "P":  # fully automatic: learn the meter constant (saved with the settings)
+                self.settings.meter_k = meter.calibrate(self.settings.meter_k, msg, e.ev)
             self.redraw()
         elif kind == "captured":
             shot = self.last_shot
@@ -414,6 +417,15 @@ class Camera:
             )
         shutter = e.shutter if e.shutter is not None else self.measured_shutter()
         iso = e.iso if e.iso is not None else round(self.measured_iso())
+        # The meter: always in M; in the other modes, only when the automatic exposure
+        # cannot reach its aim (out of range), as a warning.
+        meter_value, meter_warning = None, False
+        stops = meter.offset(s.meter_k, self.stats)
+        if stops is not None:
+            if e.mode == "M":
+                meter_value = meter.to_thirds(stops)
+            elif abs(stops - e.ev) >= 2 / 3:
+                meter_value, meter_warning = meter.to_thirds(stops - e.ev), True
         return HudView(
             display=s.display,
             grid=s.grid and self.loupe == 1,  # the rule of thirds means nothing in the loupe
@@ -423,6 +435,8 @@ class Camera:
             iso=f"ISO {iso}" if iso else "ISO --",
             iso_auto=e.iso is None,
             ev=exp.format_ev(e.ev) if e.mode != "M" else "",
+            meter=meter_value,
+            meter_warning=meter_warning,
             awb=e.awb_label(),
             formats="RAW+JPEG" if "dng" in s.formats else "JPEG",
             lens=lenses.format_lens(self.lens(), s.aperture),

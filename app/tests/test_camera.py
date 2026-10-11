@@ -149,6 +149,22 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.camera.hud.reviewed, [])
         self.assertIsNone(self.camera.review)
 
+    async def test_meter_in_manual_and_warning_out_of_range(self):
+        self.settings.meter_k = 80 * 40000 * 4.0
+        base = {"event": "stats", "lux": 80, "digital_gain": 1.0, "ae_converged": True}
+        self.camera.on_event(dict(base, exposure_us=40000, analogue_gain=4.0))
+        self.assertIsNone(self.camera.view().meter)  # P, on target: nothing to say
+        self.settings.exposure.shutter, self.settings.exposure.iso = 1 / 50, 400  # M
+        self.camera.on_event(dict(base, exposure_us=20000, analogue_gain=4.0))
+        view = self.camera.view()
+        self.assertAlmostEqual(view.meter, -1)
+        self.assertFalse(view.meter_warning)
+        self.settings.exposure.shutter = None  # A: the automatic exposure is stuck 2 stops under
+        self.camera.on_event(dict(base, exposure_us=10000, analogue_gain=4.0))
+        view = self.camera.view()
+        self.assertAlmostEqual(view.meter, -2)
+        self.assertTrue(view.meter_warning)
+
     async def test_lens_and_aperture_go_into_the_exif(self):
         self.camera.on_action("shutter")
         await self.settle()

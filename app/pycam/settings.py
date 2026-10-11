@@ -44,6 +44,7 @@ class Settings:
     lenses: list = field(default_factory=lambda: copy.deepcopy(DEFAULT_LENSES))  # edit to add yours
     lens: int = -1  # index in lenses, -1: none chosen
     aperture: float | None = None  # f-number set on the ring, None: unknown
+    meter_k: float = 13.8e6  # exposure meter constant, learnt in automatic (meter.py)
     dcim: str = "~/DCIM"
     folder_number: int = 100
     next_number: int = 1

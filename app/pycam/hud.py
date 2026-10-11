@@ -146,6 +146,8 @@ class Hud:
 
         text(view.shutter, self.font_bold, AUTO if view.shutter_auto else WHITE)
         text(view.iso, self.font_bold, AUTO if view.iso_auto else WHITE)
+        if view.meter is not None:
+            cx += self._meter(d, cx, top, bar_h, view.meter, view.meter_warning) + gap
         if view.ev:
             text(view.ev, self.font, WHITE)
         text(view.awb, self.font, WHITE)
@@ -155,6 +157,25 @@ class Hud:
 
         shots = str(view.shots)
         d.text((x + w - self.px(24), top + bar_h // 2), shots, font=self.font_bold, fill=WHITE, anchor="rm")
+
+    def _meter(self, d, x, top, bar_h, stops, warning):
+        """The exposure scale, -3 to +3 stops in thirds, with a bar from 0 to the measure.
+        Returns its width."""
+        width = self.px(190)
+        unit = width / 6  # one stop
+        mid_x, mid_y = x + width / 2, top + bar_h / 2
+        colour = AMBER if warning or abs(stops) > 3 else WHITE
+        for third in range(-9, 10):
+            tx = mid_x + third * unit / 3
+            tick = self.px(14) if third == 0 else self.px(9) if third % 3 == 0 else self.px(4)
+            d.line([(tx, mid_y - tick), (tx, mid_y - 1)], fill=WHITE, width=self.px(2))
+        end = mid_x + max(-3.0, min(3.0, stops)) * unit
+        d.rectangle([min(mid_x, end), mid_y + self.px(3), max(mid_x, end) + 1, mid_y + self.px(11)], fill=colour)
+        if abs(stops) > 3:  # beyond the scale: an arrow at its end
+            tip = x + (width + self.px(14) if stops > 0 else -self.px(14))
+            base = x + (width if stops > 0 else 0)
+            d.polygon([(base, mid_y + self.px(1)), (base, mid_y + self.px(13)), (tip, mid_y + self.px(7))], fill=colour)
+        return width
 
     def _status(self, d, view):
         """Top left: what is switched on (ZSL, peaking, zebras) and the photos being written."""

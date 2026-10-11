@@ -15,6 +15,8 @@ class HudView:
     iso: str = "--"
     iso_auto: bool = True
     ev: str = ""  # empty in M, where it does nothing
+    meter: float | None = None  # stops from the neutral exposure, in thirds; None: hidden
+    meter_warning: bool = False  # the automatic exposure cannot reach it (out of range)
     awb: str = "AWB"
     formats: str = "RAW+JPEG"
     lens: str = ""  # "16 mm f/2.8"
