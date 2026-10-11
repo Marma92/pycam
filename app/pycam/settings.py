@@ -17,6 +17,7 @@ DISPLAY_MODES = ("detailed", "simple", "clean")  # visée détaillée, simple, n
 STRATEGIES = ("switch", "zsl")
 PEAKING_COLORS = ("red", "yellow", "green", "blue", "white")
 PEAKING_SENSITIVITIES = ("low", "medium", "high")
+REVIEW_SECONDS = (0, 1, 2, 4)  # 0: no review after the shot
 
 
 def default_path():
@@ -36,6 +37,7 @@ class Settings:
     peaking_color: str = "red"
     peaking_sensitivity: str = "medium"
     zebra: bool = False
+    review_seconds: int = 2
     dcim: str = "~/DCIM"
     folder_number: int = 100
     next_number: int = 1
@@ -78,6 +80,8 @@ def load_settings(path):
         settings.peaking_color = defaults.peaking_color
     if settings.peaking_sensitivity not in PEAKING_SENSITIVITIES:
         settings.peaking_sensitivity = defaults.peaking_sensitivity
+    if settings.review_seconds not in REVIEW_SECONDS:
+        settings.review_seconds = defaults.review_seconds
     if not set(settings.formats) <= {"jpeg", "dng"} or not settings.formats:
         settings.formats = defaults.formats
     return settings

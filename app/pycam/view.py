@@ -23,6 +23,8 @@ class HudView:
     zebra: bool = False
     loupe: float = 1  # 1: off
     loupe_center: tuple = (0.5, 0.5)
+    review: str = ""  # path of the photo being reviewed (decoded by Hud.load_review)
+    review_info: str = ""
     writing: int = 0  # photos waiting to be written
     histogram: tuple = ()
     message: str = ""

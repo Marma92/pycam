@@ -48,6 +48,7 @@ class Hud:
         self.font_bold = ImageFont.truetype(FONT_BOLD, max(12, round(40 * self.s)))
         self.font_message = ImageFont.truetype(FONT_BOLD, max(14, round(52 * self.s)))
         self._backgrounds = {}
+        self._review = (None, None)  # (path, image fitted to the image area)
 
     def close(self):
         self.shm.close()
@@ -55,7 +56,25 @@ class Hud:
     def px(self, value):
         return max(1, round(value * self.s))
 
+    def load_review(self, path):
+        """Decodes a photo for the review, fitted to the image area; returns its luminance
+        histogram (64 classes). Slow (~0.25 s): to run off the event loop."""
+        x, y, w, h = self.rect
+        with Image.open(path) as im:
+            # The JPEG decoder shrinks by 2, 4 or 8 for almost nothing: a 12 MP photo
+            # decodes in ~0.2 s at 1/4 on a Pi 3B, against ~0.75 s at 1/2.
+            im.draft("RGB", (w * 2 // 3, h * 2 // 3))
+            im = im.convert("RGB")
+            scale = min(w / im.width, h / im.height)
+            photo = im.resize((round(im.width * scale), round(im.height * scale)), Image.BILINEAR)
+        levels = photo.convert("L").histogram()
+        self._review = (path, photo)
+        return [sum(levels[i : i + 4]) for i in range(0, 256, 4)]
+
     def draw(self, view):
+        if view.review:
+            self._draw_review(view)
+            return
         img = self._background(view.grid and view.display != "clean").copy()
         d = ImageDraw.Draw(img)
         if view.display != "clean":
@@ -72,6 +91,23 @@ class Hud:
     def draw_default(self):
         """What the engine shows when no application runs: black margins, nothing else."""
         self.shm[:] = self._background(False).tobytes()
+
+    def _draw_review(self, view):
+        """The photo just taken, opaque over the viewfinder, with what it was shot at."""
+        img = self._background(False).copy()
+        path, photo = self._review
+        x, y, w, h = self.rect
+        if path == view.review and photo is not None:
+            img.paste(photo, (x + (w - photo.width) // 2, y + (h - photo.height) // 2))
+        d = ImageDraw.Draw(img)
+        bar_h = self.px(68)
+        d.rectangle([x, y + h - bar_h, x + w, y + h], fill=BAR)
+        d.text((x + self.px(24), y + h - bar_h // 2), view.review_info, font=self.font_bold, fill=WHITE, anchor="lm")
+        if view.display == "detailed":
+            self._histogram(d, view.histogram)
+        if view.message:
+            self._message(d, view.message, view.warning)
+        self.shm[:] = img.tobytes()
 
     def _background(self, grid):
         """Black margins, transparent image, maybe the rule of thirds: drawn once, then copied."""

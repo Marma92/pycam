@@ -4,10 +4,11 @@ import asyncio
 import logging
 import os
 import time
+from dataclasses import dataclass
 
 from . import exposure as exp
 from .engine_client import EngineError, call_blocking
-from .settings import DISPLAY_MODES, PEAKING_COLORS, PEAKING_SENSITIVITIES, save_settings
+from .settings import DISPLAY_MODES, PEAKING_COLORS, PEAKING_SENSITIVITIES, REVIEW_SECONDS, save_settings
 from .storage import Storage
 from .view import HudView
 
@@ -46,6 +47,23 @@ def _next(values, current):
     return values[(values.index(current) + 1) % len(values)]
 
 
+@dataclass
+class Shot:
+    """The last photo taken, followed until it can be reviewed."""
+
+    capture_id: int
+    name: str
+    exposure_us: float = 0
+    iso: float = 0
+
+
+@dataclass
+class Review:
+    path: str
+    info: str
+    histogram: tuple
+
+
 class Camera:
     """hud_factory(info) makes the HUD from the engine's hud_info; None: no HUD (tests)."""
 
@@ -63,8 +81,11 @@ class Camera:
         self.writing = 0
         self.loupe = 1  # not a setting: the camera always starts unmagnified
         self.loupe_center = (0.5, 0.5)
+        self.last_shot = None
+        self.review = None  # photo shown after the shot
         self.slowest_shutter = exp.SHUTTER_SPEEDS[-1]
         self._message = ("", False, 0.0)
+        self._review_handle = None
         self._redraw = asyncio.Event()
         self._capture_lock = asyncio.Lock()
         self._save_handle = None
@@ -113,6 +134,7 @@ class Camera:
         self.redraw()
 
     def on_engine_lost(self):
+        self.end_review()
         self.close_hud()
         self.stats = {}
 
@@ -121,6 +143,16 @@ class Camera:
         if kind == "stats":
             self.stats = msg
             self.redraw()
+        elif kind == "captured":
+            shot = self.last_shot
+            if shot and shot.capture_id == msg.get("capture_id"):
+                shot.exposure_us = msg.get("exposure_us", 0)
+                shot.iso = msg.get("analogue_gain", 0) * msg.get("digital_gain", 1) * 100
+        elif kind == "file_saved":
+            # The JPEG is written first: review it without waiting for the DNG.
+            path, shot = msg.get("path", ""), self.last_shot
+            if path.endswith(".JPG") and shot and shot.capture_id == msg.get("capture_id") and self.settings.review_seconds:
+                self.spawn(self.show_review(shot, path))
         elif kind == "capture_done":
             self.writing = msg.get("write_queue", 0)
             log.info("saved %s", " ".join(os.path.basename(f) for f in msg.get("files", [])))
@@ -178,11 +210,42 @@ class Camera:
         y = min(1 - half, max(half, y + dy * half))
         self.loupe_center = (x, y)
 
+    # --- Review after the shot
+
+    async def show_review(self, shot, path):
+        hud = self.hud
+        if hud is None:
+            return
+        histogram = await asyncio.to_thread(hud.load_review, path)
+        if shot is not self.last_shot or hud is not self.hud:
+            return  # another photo was taken meanwhile, or the screen changed
+        info = shot.name
+        if shot.exposure_us:
+            info += f"   {exp.format_shutter(shot.exposure_us / 1e6)}   ISO {round(shot.iso)}"
+        self.review = Review(path=path, info=info, histogram=tuple(histogram))
+        if self._review_handle:
+            self._review_handle.cancel()
+        self._review_handle = asyncio.get_running_loop().call_later(self.settings.review_seconds, self.end_review)
+        self.redraw()
+
+    def end_review(self):
+        if self._review_handle:
+            self._review_handle.cancel()
+            self._review_handle = None
+        if self.review:
+            self.review = None
+            self.redraw()
+
     # --- Actions (inputs.py)
 
     def on_action(self, action):
         log.debug("action %s", action)
         s, e = self.settings, self.settings.exposure
+        if self.review:
+            # Any key ends the review; the shutter also shoots: never miss a photo.
+            self.end_review()
+            if action != "shutter":
+                return
         if action == "shutter":
             self.spawn(self.capture())
             return
@@ -239,6 +302,9 @@ class Camera:
         elif action == "zebra":
             s.zebra = not s.zebra
             self.show_message("Zébras" if s.zebra else "Zébras coupés")
+        elif action == "review":
+            s.review_seconds = _next(REVIEW_SECONDS, s.review_seconds)
+            self.show_message(f"Revue : {s.review_seconds} s" if s.review_seconds else "Revue coupée")
         else:
             log.warning("unknown action %s", action)
             return
@@ -256,7 +322,7 @@ class Camera:
                 return
             base, folder, number = self.storage.next_photo()
             try:
-                await self.engine.call(
+                reply = await self.engine.call(
                     "capture", path=base, formats=self.settings.formats, quality=self.settings.jpeg_quality
                 )
             except EngineError as e:
@@ -271,6 +337,7 @@ class Camera:
             self.save_now()  # never give the same number twice, even after a crash
             self.writing += 1
             self.loupe = 1  # the engine leaves the loupe to shoot the full frame
+            self.last_shot = Shot(reply.get("capture_id"), os.path.basename(base))
             self.show_message(os.path.basename(base))
 
     async def toggle_strategy(self):
@@ -297,9 +364,17 @@ class Camera:
 
     def view(self):
         s, e = self.settings, self.settings.exposure
+        text, warning, until = self._message
+        message = text if time.monotonic() < until else ""
+        if self.review:
+            # Nothing live in it: it is drawn once, not at every stats event.
+            r = self.review
+            histogram = r.histogram if s.display == "detailed" else ()
+            return HudView(
+                display=s.display, review=r.path, review_info=r.info, histogram=histogram, message=message, warning=warning
+            )
         shutter = e.shutter if e.shutter is not None else self.measured_shutter()
         iso = e.iso if e.iso is not None else round(self.measured_iso())
-        text, warning, until = self._message
         return HudView(
             display=s.display,
             grid=s.grid and self.loupe == 1,  # the rule of thirds means nothing in the loupe
@@ -319,7 +394,7 @@ class Camera:
             loupe_center=self.loupe_center,
             writing=self.writing,
             histogram=tuple(self.stats.get("histogram", ())) if s.display == "detailed" else (),
-            message=text if time.monotonic() < until else "",
+            message=message,
             warning=warning,
         )
 

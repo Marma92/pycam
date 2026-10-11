@@ -35,11 +35,18 @@ class FakeEngine:
 
 
 class FakeHud:
+    def __init__(self):
+        self.reviewed = []
+
     def close(self):
         pass
 
     def draw(self, view):
         pass
+
+    def load_review(self, path):
+        self.reviewed.append(path)
+        return [0] * 64
 
 
 class CameraTest(unittest.IsolatedAsyncioTestCase):
@@ -99,6 +106,48 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.camera.loupe, 1)
         self.assertTrue(self.camera.view().grid)
+
+    async def shoot_and_save(self):
+        """A photo goes through the whole engine cycle: accepted, captured, written."""
+        self.camera.on_action("shutter")
+        await self.settle()
+        capture_id = self.camera.last_shot.capture_id
+        base = self.engine.last("capture")["path"]
+        self.camera.on_event({"event": "captured", "capture_id": capture_id, "exposure_us": 8000, "analogue_gain": 4.0})
+        self.camera.on_event({"event": "file_saved", "capture_id": capture_id, "path": base + ".JPG"})
+        self.camera.on_event({"event": "file_saved", "capture_id": capture_id, "path": base + ".DNG"})
+        self.camera.on_event({"event": "capture_done", "capture_id": capture_id, "files": [base + ".JPG", base + ".DNG"]})
+        for _ in range(3):  # load_review runs in a thread
+            await asyncio.sleep(0.05)
+        return base
+
+    async def test_review_after_the_shot(self):
+        self.camera.hud = FakeHud()
+        base = await self.shoot_and_save()
+        self.assertEqual(self.camera.hud.reviewed, [base + ".JPG"])
+        view = self.camera.view()
+        self.assertEqual(view.review, base + ".JPG")
+        self.assertIn("1/125", view.review_info)
+        self.assertIn("ISO 400", view.review_info)
+
+    async def test_any_key_ends_the_review_but_the_shutter_still_shoots(self):
+        self.camera.hud = FakeHud()
+        await self.shoot_and_save()
+        self.camera.on_action("iso_up")
+        self.assertIsNone(self.camera.review)
+        self.assertIsNone(self.settings.exposure.iso)  # the key only ended the review
+        await self.shoot_and_save()
+        self.camera.on_action("shutter")
+        await self.settle()
+        self.assertIsNone(self.camera.review)
+        self.assertEqual(len([c for c, _ in self.engine.calls if c == "capture"]), 3)
+
+    async def test_no_review_when_switched_off(self):
+        self.camera.hud = FakeHud()
+        self.settings.review_seconds = 0
+        await self.shoot_and_save()
+        self.assertEqual(self.camera.hud.reviewed, [])
+        self.assertIsNone(self.camera.review)
 
     async def test_changing_the_peaking_colour_turns_it_on(self):
         self.camera.on_action("peaking_color")

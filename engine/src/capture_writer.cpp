@@ -124,6 +124,8 @@ json CaptureWriter::Write(CaptureJob &job)
 							{ jpeg_save(mem, job.yuv_info, job.metadata, tmp, job.camera_model, job.options.get()); });
 			timings["jpeg_ms"] = ms_since(t);
 			files.push_back(filename);
+			// The JPEG alone is enough for the review: say so before writing the DNG.
+			on_event_({ { "event", "file_saved" }, { "capture_id", job.id }, { "path", filename } });
 		}
 		if (job.dng)
 		{
@@ -134,6 +136,7 @@ json CaptureWriter::Write(CaptureJob &job)
 							{ dng_save(mem, job.raw_info, job.metadata, tmp, job.camera_model, job.options.get()); });
 			timings["dng_ms"] = ms_since(t);
 			files.push_back(filename);
+			on_event_({ { "event", "file_saved" }, { "capture_id", job.id }, { "path", filename } });
 		}
 		return { { "event", "capture_done" }, { "capture_id", job.id }, { "files", files }, { "timings", timings } };
 	}
