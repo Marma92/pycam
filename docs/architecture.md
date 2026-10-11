@@ -219,6 +219,8 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | N | Objectif suivant parmi les profils, ou « non précisé ». Les profils sont dans `settings.json` : par défaut, les deux objectifs officiels Raspberry Pi. |
 | F | Ouverture réglée sur la bague : non précisée → ouverture max → f/2 → … → f/16. Écrite dans l'EXIF, affichée dans le bandeau. |
 | L | Loupe ×5 → ×10 → coupée. Dans la loupe, les flèches la déplacent au lieu de régler vitesse et ISO (en attendant le joystick). La grille est masquée, et le HUD montre le grossissement et une mini-carte de la zone. |
+| Tab | **Menu rapide** (le bouton Q de l'appareil) : ↑ / ↓ choisissent la ligne, ← / → changent la valeur, Tab ou Échap le ferment, le déclencheur le ferme et déclenche. Il contient les paramètres d'image (netteté, contraste, saturation dont N&B, réduction du bruit, taille et qualité JPEG), le format, la compression du RAW et la revue. Les touches directes restent, en attendant d'y regrouper le reste. |
+| Échap | Fermer le menu, ou quitter la loupe |
 
 **Pourquoi evdev.** Avec les overlays noyau, chaque bouton devient un évènement clavier (`KEY_*`) et chaque molette un évènement relatif (`REL_*`). Ça apporte plusieurs choses :
 

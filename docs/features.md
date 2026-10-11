@@ -49,7 +49,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Loupe de mise au point | ×5 / ×10 (le protocole accepte 1 à 16), déplaçable ; vrais pixels grâce au passage en pleine résolution (14 i/s) ; compatible avec le peaking ; le déclencheur la quitte. | ✅ |
 | Revue après la prise | Affichage 1, 2 ou 4 s, désactivable, avec nom, vitesse, ISO et histogramme de la photo. Visible ~1,5 s après l'appui : l'application décode le JPEG en 1/4 (~0,2 s). Plus rapide plus tard si le moteur fournit l'aperçu à partir du YUV. | ✅ |
 | Profils d'objectifs | Nom, marque, focale, ouverture max (et l'ouverture réglée, si indiquée) écrits dans l'EXIF du JPEG et du DNG ; choix par N et F, affichage dans le bandeau. Pas encore de menu pour créer un profil : on édite `settings.json`. | ✅ |
-| Paramètres d'image | Qualité JPEG, RAW on/off, résolution, netteté, contraste, saturation, débruitage. | ⬜ |
+| Paramètres d'image | Dans le menu rapide :<br>• netteté, contraste et saturation (−2…+2, plus noir et blanc), vus directement dans la visée ;<br>• réduction du bruit (aucune, légère, rapide, haute qualité) ;<br>• taille JPEG L / M / S (12, 6, 3 Mpx ; le DNG reste en pleine résolution) ;<br>• qualité JPEG, RAW on/off, compression du RAW. | ✅ |
 | Réglages persistants | Fichier JSON, écriture atomique ; reprise à l'allumage. | ✅ |
 
 ## M2 — « Autonome » (dépend du matériel, voir `hardware.md`)
@@ -57,7 +57,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Fonctionnalité | Détail | État |
 |---|---|---|
 | Boutons physiques | Déclencheur à deux crans, deux molettes, joystick 5 directions, Q, MENU, LECTURE, DISP, LOUPE, Fn1/Fn2 (voir `hardware.md` §2). | ⬜ |
-| Menu rapide Q | Grille des réglages courants : navigation au joystick, valeur à la molette. | ⬜ |
+| Menu rapide Q | Liste de réglages par-dessus la visée : la molette arrière choisit la ligne, la molette avant change la valeur, le déclencheur ferme et déclenche. Au clavier : Tab, flèches, Échap. Fait en avance avec M1 ; à enrichir (peaking, AWB…). | 🟨 |
 | Menus | Navigation complète aux boutons et molettes, sans tactile ni clavier. | ⬜ |
 | Lecture / galerie | Défilement, loupe, histogramme, suppression. | ⬜ |
 | Batterie | Niveau affiché, extinction propre sur batterie faible. | ⬜ |
