@@ -152,7 +152,7 @@ L'ouverture est réglée sur l'objectif, donc les modes « classiques » se trad
   - Le HUD montre une icône dans le bandeau (anneau, point, grille) et, en spot, un cercle au centre de la visée. Sa taille est approximative : la zone exacte dépend du découpage de l'ISP.
   - Le mode n'agit que sur l'exposition automatique (P, S, A). En M, le posemètre mesure toujours toute l'image (voir §2.3).
 - **Rendu** : débruitage, netteté, contraste, saturation.
-- **Profils d'image** : plus tard, via des fichiers de tuning alternatifs.
+- **Presets et simulations de pellicules** : base fixe (tuning tiré du tuning scientific), puis une LUT 3D, du grain et du vignettage appliqués avant l'encodage JPEG. Orientations décidées, pas encore implémentées : voir `presets.md`.
 
 ## 4. Affichage
 
