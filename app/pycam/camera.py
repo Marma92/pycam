@@ -1,0 +1,286 @@
+"""The camera: settings, actions and HUD, driving the engine (docs/architecture.md §5)."""
+
+import asyncio
+import logging
+import os
+import time
+
+from . import exposure as exp
+from .engine_client import EngineError, call_blocking
+from .settings import DISPLAY_MODES, save_settings
+from .storage import Storage
+from .view import HudView
+
+log = logging.getLogger(__name__)
+
+HUD_MIN_INTERVAL = 0.2  # at most 5 HUD renders per second
+MESSAGE_SECONDS = 1.5
+SAVE_DELAY = 1.0  # settings are written once the dials stop turning
+
+EXPOSURE_ACTIONS = {
+    "shutter_faster",
+    "shutter_slower",
+    "iso_up",
+    "iso_down",
+    "ev_up",
+    "ev_down",
+    "shutter_auto",
+    "iso_auto",
+    "awb",
+}
+
+
+class Camera:
+    """hud_factory(info) makes the HUD from the engine's hud_info; None: no HUD (tests)."""
+
+    def __init__(self, settings, settings_path, engine, hud_factory=None):
+        self.settings = settings
+        self.settings_path = settings_path
+        self.storage = Storage(settings)
+        self.engine = engine
+        engine.on_event = self.on_event
+        engine.on_connect = self.sync_engine
+        engine.on_disconnect = self.on_engine_lost
+        self.hud_factory = hud_factory
+        self.hud = None
+        self.stats = {}
+        self.writing = 0
+        self.slowest_shutter = exp.SHUTTER_SPEEDS[-1]
+        self._message = ("", False, 0.0)
+        self._redraw = asyncio.Event()
+        self._capture_lock = asyncio.Lock()
+        self._save_handle = None
+        self._tasks = set()
+
+    async def run(self, inputs):
+        await asyncio.gather(self.engine.run(), inputs.run(), self.hud_loop())
+
+    def shutdown(self):
+        """Settings saved, and the engine's default HUD back on the screen."""
+        self.save_now()
+        if self.hud:
+            try:
+                self.hud.draw_default()
+                call_blocking(self.engine.path, "hud_commit")
+            except (OSError, ValueError, EngineError) as e:
+                log.debug("cannot restore the default HUD: %s", e)
+            self.close_hud()
+
+    # --- Engine
+
+    async def sync_engine(self):
+        """After each (re)connection: push the whole state, then set the HUD up."""
+        controls = (await self.engine.call("list_controls"))["controls"]
+        exposure_max = controls.get("ExposureTime", {}).get("max")
+        if isinstance(exposure_max, (int, float)) and exposure_max > 0:
+            self.slowest_shutter = exposure_max / 1e6
+        await self.engine.call("configure", strategy=self.settings.strategy)
+        await self.apply_exposure()
+        if self.hud_factory:
+            try:
+                info = (await self.engine.call("hud_info"))["display"]
+            except EngineError as e:
+                log.warning("no HUD: %s", e)
+            else:
+                self.close_hud()
+                self.hud = self.hud_factory(info)
+        self.redraw()
+
+    def on_engine_lost(self):
+        self.close_hud()
+        self.stats = {}
+
+    def on_event(self, msg):
+        kind = msg.get("event")
+        if kind == "stats":
+            self.stats = msg
+            self.redraw()
+        elif kind == "capture_done":
+            self.writing = msg.get("write_queue", 0)
+            log.info("saved %s", " ".join(os.path.basename(f) for f in msg.get("files", [])))
+            self.redraw()
+        elif kind == "capture_error":
+            self.writing = max(0, self.writing - 1)
+            log.error("capture %s failed: %s", msg.get("capture_id"), msg.get("error"))
+            self.show_message("Erreur d'enregistrement", warning=True)
+        elif kind == "error":
+            log.error("engine: %s", msg.get("error"))
+
+    async def apply_exposure(self):
+        try:
+            await self.engine.call("set_controls", controls=self.settings.exposure.controls())
+        except ConnectionError:
+            pass  # pushed again on reconnection
+        except EngineError as e:
+            log.error("exposure refused: %s", e)
+
+    # --- Actions (inputs.py)
+
+    def on_action(self, action):
+        log.debug("action %s", action)
+        s, e = self.settings, self.settings.exposure
+        if action == "shutter":
+            self.spawn(self.capture())
+            return
+        if action == "strategy":
+            self.spawn(self.toggle_strategy())
+            return
+        if action == "shutter_faster":
+            e.step_shutter(-1, self.measured_shutter(), self.slowest_shutter)
+        elif action == "shutter_slower":
+            e.step_shutter(+1, self.measured_shutter(), self.slowest_shutter)
+        elif action == "iso_up":
+            e.step_iso(+1, self.measured_iso())
+        elif action == "iso_down":
+            e.step_iso(-1, self.measured_iso())
+        elif action == "ev_up":
+            e.step_ev(+1)
+        elif action == "ev_down":
+            e.step_ev(-1)
+        elif action == "shutter_auto":
+            e.toggle_shutter_auto(self.measured_shutter())
+        elif action == "iso_auto":
+            e.toggle_iso_auto(self.measured_iso())
+        elif action == "awb":
+            e.next_awb()
+            self.show_message(f"Balance des blancs : {exp.AWB_LABELS[e.awb]}")
+        elif action == "disp":
+            s.display = DISPLAY_MODES[(DISPLAY_MODES.index(s.display) + 1) % len(DISPLAY_MODES)]
+        elif action == "grid":
+            s.grid = not s.grid
+        elif action == "raw":
+            s.formats = ["jpeg"] if "dng" in s.formats else ["jpeg", "dng"]
+            self.show_message("RAW + JPEG" if "dng" in s.formats else "JPEG seul")
+        else:
+            log.warning("unknown action %s", action)
+            return
+        if action in EXPOSURE_ACTIONS:
+            self.spawn(self.apply_exposure())
+        self.save_soon()
+        self.redraw()
+
+    async def capture(self):
+        async with self._capture_lock:  # two quick presses must not get the same name
+            if not self.engine.connected:
+                self.show_message("Moteur indisponible", warning=True)
+                return
+            base, folder, number = self.storage.next_photo()
+            try:
+                await self.engine.call(
+                    "capture", path=base, formats=self.settings.formats, quality=self.settings.jpeg_quality
+                )
+            except EngineError as e:
+                if e.code != "busy":
+                    log.error("capture refused: %s", e)
+                self.show_message("Occupé…" if e.code == "busy" else "Déclenchement refusé", warning=True)
+                return
+            except ConnectionError:
+                self.show_message("Moteur indisponible", warning=True)
+                return
+            self.storage.commit(folder, number)
+            self.save_now()  # never give the same number twice, even after a crash
+            self.writing += 1
+            self.show_message(os.path.basename(base))
+
+    async def toggle_strategy(self):
+        new = "zsl" if self.settings.strategy == "switch" else "switch"
+        try:
+            await self.engine.call("configure", strategy=new)
+        except (EngineError, ConnectionError) as e:
+            log.warning("cannot change the capture strategy: %s", e)
+            self.show_message("Impossible pour l'instant", warning=True)
+            return
+        self.settings.strategy = new
+        self.save_soon()
+        self.show_message("Réactivité (ZSL)" if new == "zsl" else "Fluidité (bascule)")
+
+    # --- Measures
+
+    def measured_shutter(self):
+        return self.stats.get("exposure_us", 0) / 1e6
+
+    def measured_iso(self):
+        return self.stats.get("analogue_gain", 0) * self.stats.get("digital_gain", 1) * 100
+
+    # --- HUD
+
+    def view(self):
+        s, e = self.settings, self.settings.exposure
+        shutter = e.shutter if e.shutter is not None else self.measured_shutter()
+        iso = e.iso if e.iso is not None else round(self.measured_iso())
+        text, warning, until = self._message
+        return HudView(
+            display=s.display,
+            grid=s.grid,
+            mode=e.mode,
+            shutter=exp.format_shutter(shutter),
+            shutter_auto=e.shutter is None,
+            iso=f"ISO {iso}" if iso else "ISO --",
+            iso_auto=e.iso is None,
+            ev=exp.format_ev(e.ev) if e.mode != "M" else "",
+            awb=exp.AWB_LABELS[e.awb],
+            formats="RAW+JPEG" if "dng" in s.formats else "JPEG",
+            shots=self.storage.shots_remaining(s.formats),
+            zsl=s.strategy == "zsl",
+            writing=self.writing,
+            histogram=tuple(self.stats.get("histogram", ())) if s.display == "detailed" else (),
+            message=text if time.monotonic() < until else "",
+            warning=warning,
+        )
+
+    def redraw(self):
+        self._redraw.set()
+
+    def show_message(self, text, warning=False):
+        self._message = (text, warning, time.monotonic() + MESSAGE_SECONDS)
+        asyncio.get_running_loop().call_later(MESSAGE_SECONDS + 0.05, self.redraw)
+        self.redraw()
+
+    async def hud_loop(self):
+        hud, shown = None, None
+        while True:
+            await self._redraw.wait()
+            self._redraw.clear()
+            if self.hud is not hud:  # new HUD after a reconnection: draw everything again
+                hud, shown = self.hud, None
+            if hud is not None:
+                view = self.view()
+                if view != shown:
+                    try:
+                        await asyncio.to_thread(hud.draw, view)  # ~0.1 s at 1080p: off the event loop
+                        await self.engine.call("hud_commit")
+                        shown = view
+                    except (EngineError, ConnectionError, ValueError) as e:  # ValueError: HUD closed meanwhile
+                        log.debug("HUD not shown: %s", e)
+            await asyncio.sleep(HUD_MIN_INTERVAL)
+
+    def close_hud(self):
+        if self.hud:
+            self.hud.close()
+            self.hud = None
+
+    # --- Plumbing
+
+    def spawn(self, coro):
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._task_done)
+
+    def _task_done(self, task):
+        self._tasks.discard(task)
+        if not task.cancelled() and task.exception():
+            log.error("task failed", exc_info=task.exception())
+
+    def save_soon(self):
+        if self._save_handle:
+            self._save_handle.cancel()
+        self._save_handle = asyncio.get_running_loop().call_later(SAVE_DELAY, self.save_now)
+
+    def save_now(self):
+        if self._save_handle:
+            self._save_handle.cancel()
+            self._save_handle = None
+        try:
+            save_settings(self.settings, self.settings_path)
+        except OSError as e:
+            log.error("cannot save the settings: %s", e)
