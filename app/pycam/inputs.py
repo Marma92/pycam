@@ -20,10 +20,10 @@ KEYMAP = {
     ecodes.KEY_SPACE: "shutter",
     ecodes.KEY_ENTER: "shutter",
     ecodes.KEY_KPENTER: "shutter",
-    ecodes.KEY_RIGHT: "shutter_faster",  # front dial
-    ecodes.KEY_LEFT: "shutter_slower",
-    ecodes.KEY_UP: "iso_up",  # rear dial
-    ecodes.KEY_DOWN: "iso_down",
+    ecodes.KEY_RIGHT: "front_dial_plus",  # front dial
+    ecodes.KEY_LEFT: "front_dial_minus",
+    ecodes.KEY_UP: "rear_dial_plus",  # rear dial
+    ecodes.KEY_DOWN: "rear_dial_minus",
     ecodes.KEY_S: "shutter_auto",  # front dial press: automatic speed, or manual from the measure
     ecodes.KEY_I: "iso_auto",  # rear dial press
     ecodes.KEY_PAGEUP: "ev_up",
@@ -38,7 +38,7 @@ KEYMAP = {
     ecodes.KEY_2: "fn2",
 }
 # Actions that repeat while the key is held, like turning a dial.
-REPEATABLE = {"shutter_faster", "shutter_slower", "iso_up", "iso_down", "ev_up", "ev_down"}
+REPEATABLE = {"front_dial_plus", "front_dial_minus", "rear_dial_plus", "rear_dial_minus", "ev_up", "ev_down"}
 
 RESCAN_SECONDS = 2
 

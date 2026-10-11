@@ -21,10 +21,10 @@ MESSAGE_SECONDS = 1.5
 SAVE_DELAY = 1.0  # settings are written once the dials stop turning
 
 EXPOSURE_ACTIONS = {
-    "shutter_faster",
-    "shutter_slower",
-    "iso_up",
-    "iso_down",
+    "front_dial_plus",
+    "front_dial_minus",
+    "rear_dial_plus",
+    "rear_dial_minus",
     "ev_up",
     "ev_down",
     "shutter_auto",
@@ -35,10 +35,10 @@ FOCUS_AID_ACTIONS = {"peaking", "zebra"}
 LOUPE_LEVELS = (1, 5, 10)
 # In the loupe, the dials move it (until the camera has a joystick): action -> (dx, dy).
 LOUPE_MOVES = {
-    "shutter_faster": (1, 0),
-    "shutter_slower": (-1, 0),
-    "iso_up": (0, -1),
-    "iso_down": (0, 1),
+    "front_dial_plus": (1, 0),
+    "front_dial_minus": (-1, 0),
+    "rear_dial_plus": (0, -1),
+    "rear_dial_minus": (0, 1),
 }
 
 
@@ -303,13 +303,17 @@ class Camera:
             self.spawn(self.apply_loupe())
             self.redraw()
             return
-        if action == "shutter_faster":
-            e.step_shutter(-1, self.measured_shutter(), self.slowest_shutter)
-        elif action == "shutter_slower":
-            e.step_shutter(+1, self.measured_shutter(), self.slowest_shutter)
-        elif action == "iso_up":
+        if action in ("front_dial_plus", "front_dial_minus"):
+            # The speed when it is manual (S, M), else the exposure compensation (P, A), as
+            # in docs/hardware.md §2. Pressing the dial switches the speed to manual.
+            step = +1 if action == "front_dial_plus" else -1
+            if e.shutter is None:
+                e.step_ev(step)
+            else:
+                e.step_shutter(-step, self.measured_shutter(), self.slowest_shutter)  # plus: faster
+        elif action == "rear_dial_plus":
             e.step_iso(+1, self.measured_iso())
-        elif action == "iso_down":
+        elif action == "rear_dial_minus":
             e.step_iso(-1, self.measured_iso())
         elif action == "ev_up":
             e.step_ev(+1)
@@ -356,10 +360,10 @@ class Camera:
         elif action == "shutter":
             self.menu = None
             return False  # and shoot
-        elif action in ("iso_up", "iso_down"):  # rear dial: choose a line
-            self.menu.move(-1 if action == "iso_up" else +1)
-        elif action in ("shutter_faster", "shutter_slower"):  # front dial: change the value
-            self.change_setting(+1 if action == "shutter_faster" else -1)
+        elif action in ("rear_dial_plus", "rear_dial_minus"):  # rear dial: choose a line
+            self.menu.move(-1 if action == "rear_dial_plus" else +1)
+        elif action in ("front_dial_plus", "front_dial_minus"):  # front dial: change the value
+            self.change_setting(+1 if action == "front_dial_plus" else -1)
         # Any other key does nothing while a menu is open.
         self.redraw()
         return True

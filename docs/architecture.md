@@ -195,7 +195,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 |---|---|---|
 | `engine_client` | Client du socket du moteur : commandes et flux d'évènements, reconnexion automatique. | ✅ |
 | `camera` | Le contrôleur : actions, état, rendu du HUD (5 Hz max, seulement si la vue change). Il renvoie tout l'état au moteur à chaque (re)connexion. | ✅ |
-| `exposure` | Modes P/S/A/M, pas de 1/3 IL, tables de vitesses et d'ISO. Une molette tournée en auto part de la valeur mesurée. | ✅ |
+| `exposure` | Modes P/S/A/M, pas de 1/3 IL, tables de vitesses et d'ISO. Un passage en manuel part de la valeur mesurée. | ✅ |
 | `inputs` | Lecture **evdev** de tout ce qui a des touches utiles ; les périphériques sont « grabbés » et ceux branchés à chaud sont détectés. | ✅ |
 | `menu` | Menus Q (12 réglages de prise de vue) et MENU (tous les réglages, par section, avec défilement). | ✅ |
 | `hud` / `view` | `view` décrit ce qu'il faut montrer (une valeur comparable) ; `hud` le dessine avec Pillow. | ✅ |
@@ -211,10 +211,10 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | Touche | Commande de l'appareil | Action |
 |---|---|---|
 | Espace / Entrée | Déclencheur | Déclencher. Ferme aussi un menu, la loupe ou la revue, et déclenche quand même. |
-| ← / → | Molette avant | Vitesse plus lente / plus rapide. Dans un menu : changer la valeur. |
-| ↓ / ↑ | Molette arrière | ISO. Dans un menu : changer de ligne. |
+| ← / → | Molette avant | En S et M : vitesse plus lente / plus rapide. En P et A : correction d'exposition −⅓ / +⅓ IL. Dans un menu : changer la valeur. |
+| ↓ / ↑ | Molette arrière | ISO ; tournée en P ou S, elle passe l'ISO en manuel en partant de la mesure. Dans un menu : changer de ligne. |
 | S / I | Appui sur la molette avant / arrière | Vitesse / ISO : basculer automatique ⇄ manuel (le passage en manuel part de la valeur mesurée). |
-| Page↓ / Page↑ | — | Correction d'exposition. Pas encore de commande physique : point ouvert, voir ci-dessous. |
+| Page↓ / Page↑ | — | Correction d'exposition, dans tous les modes. Seule façon de la régler en S : point ouvert, voir ci-dessous. |
 | Tab | Q | Menu rapide ; Tab le ferme. Depuis le menu complet, passe au menu rapide. |
 | Échap | MENU | Menu complet ; Échap le ferme. Dans la loupe, la quitte d'abord. |
 | D | DISP | Affichage : détaillé → simple → nature. |
@@ -244,7 +244,9 @@ Pendant la revue après la prise, toute touche la ferme ; le déclencheur la fer
   - **Objectif** : en changer oublie l'ouverture indiquée. Les profils sont dans `settings.json` ; par défaut, les deux objectifs officiels Raspberry Pi.
   - **Ouverture** : celle de la bague, écrite dans l'EXIF et affichée dans le bandeau. Sans objectif choisi, il n'y a rien à régler.
 
-**Point ouvert : la correction d'exposition.** Elle n'a pas de commande physique dans `hardware.md`, où la molette avant fait la vitesse en S/M et la correction en P/A. Aujourd'hui, la molette avant fait toujours la vitesse, et le premier cran en automatique passe en manuel en partant de la mesure. Il faudra choisir avant de câbler : soit adopter le comportement de `hardware.md`, soit ajouter une molette ou une bague de correction.
+**La molette avant suit `hardware.md`** (décidé le 2026-10-11) : elle règle la vitesse quand elle est manuelle (S, M), sinon la correction d'exposition (P, A). Tourner la molette ne change donc plus le mode : c'est l'appui (S au clavier) qui passe la vitesse en manuel, en partant de la mesure. La correction est gardée en S, où elle guide l'ISO automatique.
+
+**Point ouvert : la correction d'exposition en S.** Aucune molette ne la règle dans ce mode : la molette avant fait la vitesse, et la molette arrière passe l'ISO en manuel. Seul Page↑ / Page↓ la règle, sans équivalent physique. Piste : en S, la molette arrière ferait la correction, l'appui servant toujours à passer l'ISO en manuel.
 
 **Pourquoi evdev.** Avec les overlays noyau, chaque bouton devient un évènement clavier (`KEY_*`) et chaque molette un évènement relatif (`REL_*`). Ça apporte plusieurs choses :
 
@@ -339,7 +341,7 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 7. 🟨 **Temps d'encodage réels.** Sur une image très bruitée (gain 16, donc difficile à compresser, JPEG de 2,1 Mo) : JPEG ~350 ms, DNG ~180–230 ms. Reste à confirmer sur une vraie scène.
 8. 🟨 **Temps de démarrage** : la visée apparaît 25,4 s après le démarrage du noyau (§8). Le démarrage complet du système prend ~50 s, mais l'appareil est utilisable avant. L'objectif est de moins de 12 s (M2).
 9. ⬜ **Durabilité des photos.** `capture_done` signifie « écrit », pas « sur la carte » : les données peuvent rester ~30 s dans le cache du noyau. Sur batterie, une coupure perdrait les dernières photos. Il faudra un `fsync` par fichier dans le thread d'écriture (coût à mesurer) avant l'usage nomade.
-10. ⬜ **Commande de la correction d'exposition** : aujourd'hui Page↑ / Page↓, sans équivalent dans `hardware.md`. À trancher avant le câblage (§5).
+10. 🟨 **Commande de la correction d'exposition** : la molette avant la règle en P et A. En S, seul Page↑ / Page↓ la règle, sans équivalent physique. À trancher avant le câblage (§5).
 
 ## 11. Décisions (résumé)
 
