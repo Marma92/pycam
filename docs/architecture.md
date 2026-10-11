@@ -129,17 +129,34 @@ L'ouverture est réglée sur l'objectif, donc les modes « classiques » se trad
 
 Le moteur est **maître DRM/KMS**. Il n'y a pas de bureau graphique : on utilise Pi OS Lite, ou on démarre en console. Le compositeur matériel du VC4 (HVS) superpose plusieurs plans avec transparence et mise à l'échelle, sans travail CPU :
 
-| z | Plan | Format | Contenu | Producteur |
+| Plan (du bas vers le haut) | Format | Contenu | Producteur | État |
 |---|---|---|---|---|
-| 0 | vidéo | YUV420 | visée en direct | ISP → moteur (zéro copie, dmabuf) |
-| 1 | analyse | ARGB8888 à la taille `lores` | peaking, zébras | moteur, à chaque trame |
-| 2 | HUD | ARGB8888 à la taille de l'écran | réglages, histogramme, grille, niveau, menus | application Python → `/dev/shm/pycam-hud` |
+| vidéo | YUV420, mis à l'échelle par le HVS | visée en direct | tampons caméra → moteur, zéro copie (dmabuf) | ✅ |
+| HUD | RGBA (`ABGR8888`), plein écran, sans mise à l'échelle | marges noires, réglages, histogramme, grille, niveau, menus | application Python → `/dev/shm/pycam-hud` → `hud_commit` | ✅ |
+| analyse | ARGB, taille `lores` | peaking, zébras | moteur, à chaque trame | ⬜ (voir risque ci-dessous) |
 
-- **Rendu du HUD.** L'application dessine avec Pillow, **seulement quand quelque chose change**. Elle publie un numéro de version, et le moteur copie le tampon dans le plan HUD au prochain vblank. Une navigation dans un menu coûte un rendu, pas trente par seconde.
-- **Pourquoi l'histogramme est dans le HUD Python.** Il change à 5 Hz, ce que Pillow tient sur un petit écran. S'il le faut, il pourra passer dans le plan 1, côté moteur.
+- ✅ **Implémenté le 2026-10-11** (`engine/src/display.cpp`). Ce qu'on a appris sur le VC4 :
+  - le pilote expose 16 plans overlay pour le CRTC HDMI, au-dessus du plan primaire de la console ;
+  - leur ordre est **fixe** (`zpos` immuable, croissant avec l'identifiant du plan), donc le moteur prend les deux plus bas, libres ;
+  - tous acceptent YUV420 et `ABGR8888` : les octets R, G, B, A sont exactement le `"RGBA"` de Pillow, sans conversion ;
+  - le mode de mélange `Coverage` donne l'alpha non prémultiplié de Pillow.
+- ⚠️ **Mémoire de lignes du HVS.** Un troisième plan *mis à l'échelle* (un fond noir agrandi en 1080p) a fait échouer le HUD avec `ENOSPC`. D'où :
+  - les marges noires sont dessinées **dans le HUD**, qui n'est pas mis à l'échelle ;
+  - le futur plan d'analyse (peaking) risque le même problème. Plusieurs parades sont possibles : le dessiner à la taille de l'écran (sans mise à l'échelle), ou le composer dans le HUD côté moteur. Un écran 800×480 consommera aussi bien moins de mémoire de lignes que le 1080p actuel.
+- **Mesures, en 1080p :**
+  - visée 22–30 i/s avec 0 à 1 image perdue sur 768 ; ZSL à 11,7 i/s, pas plus lente ;
+  - moteur à ~10 % de CPU visée comprise, ~18 % avec un HUD rafraîchi à 5 Hz (copie de 8 Mo à chaque `hud_commit`) ;
+  - pendant une bascule, la dernière image reste à l'écran.
+- **Rendu du HUD.**
+  - L'application dessine avec Pillow puis envoie `hud_commit` ; le moteur copie l'image dans un tampon libre (double tampon) et la pose au vblank suivant.
+  - L'application doit dessiner **seulement quand quelque chose change** : une navigation dans un menu coûte un rendu, pas trente par seconde.
+  - Coût mesuré (`tools/hud_demo.py`, grille + bandeau + histogramme) : 90–120 ms par rendu en 1080p. Sur un écran 800×480, 5 fois moins de pixels.
+- **Pourquoi l'histogramme est dans le HUD Python.** Il change à 5 Hz, ce que Pillow tient. S'il le faut, il pourra passer côté moteur.
 - **Écran retenu : HDMI, sans tactile** (`hardware.md` §1). Le HDMI passe par le même compositeur HVS, et le pilote expose aussi un connecteur *writeback* (`card0-Writeback-1`) : il permettra de faire des **captures d'écran du rendu composé** à distance pour les tests.
-- **Le bureau doit s'effacer.** Aujourd'hui, `lightdm` + `labwc` occupent la sortie HDMI et l'essentiel de la CMA : 43 Mo libres sur 256 avec le bureau. Pour que le moteur soit maître DRM, le Pi doit démarrer en console (`multi-user.target`). Le bureau reste lançable à la demande pour le développement.
-- **Vérification nécessaire.** Il faut confirmer que `vc4-kms-v3d` expose au moins 2 plans overlay sur le CRTC HDMI. On le vérifiera au premier prototype d'affichage, une fois le bureau arrêté.
+- ✅ **Le bureau s'est effacé** (2026-10-11). Le Pi démarre en console (`raspi-config` B1, `multi-user.target`, sans connexion automatique).
+  - CMA libre : 43 Mo → **246 Mo** sur 256.
+  - RAM disponible : 613 → **720 Mo**.
+  - La console (fbcon) occupe le plan primaire HDMI ; le moteur pose ses plans par-dessus, comme le fait l'aperçu DRM de rpicam-apps. Quand le moteur s'arrête, ses plans disparaissent et la console revient.
 
 ## 5. L'application `pycam` (Python)
 
@@ -217,12 +234,13 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 ## 10. Points ouverts / risques
 
 1. ✅ **Latence de changement de mode**, mesurée dans le moteur (§2.2) : 0,28 à 0,5 s en bascule selon le débruitage, 0 à 0,25 s en ZSL. On propose les deux modes.
-2. 🟨 **Mémoire CMA** : 256 Mo au total. Avec le bureau actif, il n'en reste que 28 Mo en ZSL, ce qui est juste. Il faut remesurer sans bureau, puis ajuster éventuellement `cma=` dans `config.txt`.
-3. ⬜ **Plans DRM overlay** sur HDMI : à vérifier au premier prototype d'affichage.
+2. ✅ **Mémoire CMA** : sans bureau, 246 Mo sont libres sur 256. C'est assez pour la ZSL (~111 Mo) avec de la marge pour l'affichage.
+3. ✅ **Plans DRM overlay** sur HDMI : visée + HUD fonctionnent (§4). Reste un point ouvert : la mémoire de lignes pour un troisième plan mis à l'échelle (peaking).
 4. ✅ **`librpicam_app`** : `librpicam-app-dev` 1.13.0 est installé, et le moteur compile et tourne.
 5. ✅ **Écran** : HDMI sans tactile.
 6. ✅ **Droits** : `sudo` sans mot de passe pour `ael` pendant le développement.
-7. ⬜ **Temps d'encodage réels** : JPEG et DNG ont été mesurés sur une image noire. Il faut les remesurer sur une vraie scène.
+7. 🟨 **Temps d'encodage réels.** Sur une image très bruitée (gain 16, donc difficile à compresser, JPEG de 2,1 Mo) : JPEG ~350 ms, DNG ~180–230 ms. Reste à confirmer sur une vraie scène.
+8. ⬜ **Temps de démarrage** : 47,8 s aujourd'hui (5,8 s noyau + 42 s espace utilisateur), mesuré par `systemd-analyze`. L'objectif est de moins de 12 s (M2).
 
 ## 11. Décisions (résumé)
 

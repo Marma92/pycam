@@ -22,6 +22,8 @@ Toute commande peut porter un `id`, qui est renvoyé tel quel dans la réponse. 
 | `set_controls` | `controls` : `{nom: valeur}` | — |
 | `capture` | `path` (sans extension), `formats` (`["jpeg","dng"]` par défaut), `quality` (93), `exif` (liste `"EXIF.FocalLength=16/1"`…) | `capture_id` |
 | `configure` | `strategy` : `"switch"` ou `"zsl"` | — |
+| `hud_info` | — | `display` : taille de l'écran, `image_rect` `[x, y, w, h]` (où est l'image), `hud` (chemin de la mémoire partagée, largeur, hauteur, stride, format `"RGBA"`), compteurs d'images affichées et perdues |
+| `hud_commit` | — | — (le contenu de la mémoire partagée a été copié : on peut dessiner le HUD suivant) |
 | `quit` | — | — (le moteur termine les écritures en cours puis s'arrête) |
 
 **Codes d'erreur**
@@ -32,6 +34,14 @@ Toute commande peut porter un `id`, qui est renvoyé tel quel dans la réponse. 
 | `unsupported` | Contrôle non supporté par cette caméra. |
 | `busy` | Capture déjà en cours, ou file d'écriture pleine. |
 | `unknown_command` | Commande inconnue. |
+
+`hud_info` et `hud_commit` répondent `unsupported` si le moteur tourne sans écran (`--no-display`, aucun écran branché, ou bureau graphique actif).
+
+### HUD
+
+Le HUD est une image RGBA de la taille de l'écran, sans alpha prémultiplié, dans `/dev/shm/pycam-hud`. L'application y dessine (avec Pillow, `img.tobytes()` en mode `"RGBA"`), puis envoie `hud_commit`. Le moteur la copie dans un tampon d'affichage et la pose par-dessus la visée au vblank suivant.
+
+Par défaut, et tant que l'application n'a rien dessiné, le HUD est noir opaque autour de l'image (il masque la console) et transparent sur l'image. Un HUD dessiné par l'application doit garder ces marges opaques.
 
 ### Contrôles
 

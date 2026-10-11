@@ -36,6 +36,9 @@ docs/
    ```
    Le protocole est décrit dans `protocol.md`.
 5. On rapatrie les images (`scp`) pour les inspecter.
+6. Pour voir le rendu sur l'écran du Pi :
+   - avec le moteur lancé, `python3 tools/hud_demo.py` dessine un HUD de démonstration (grille, bandeau, histogramme) par-dessus la visée ;
+   - sans le moteur, `sh tools/focus-preview.sh [loupe]` affiche l'aperçu rpicam et la netteté en direct dans le terminal, pratique pour régler la mise au point. À lancer avec `ssh -t` pour que Ctrl-C l'arrête.
 6. On commite quand c'est validé sur le Pi.
 
 ## Dépendances installées sur le Pi (2026-10-11)
@@ -62,6 +65,7 @@ Le script fait l'inventaire de l'OS, de la mémoire et de la CMA, de la caméra,
 | rpicam-apps / librpicam-app1 / librpicam-app-dev | 1.13.0-1 |
 | Picamera2 | 0.3.37-1 (sert seulement aux mesures rapides) |
 | Toolchain | gcc 14.2, meson 1.7.0, ninja 1.12.1, Python 3.13.5 |
+| Démarrage | Console (`multi-user.target`, `raspi-config` B1) depuis le 2026-10-11. Le bureau n'est plus lancé. |
 
 **Les en-têtes de `librpicam-app-dev` diffèrent du dépôt GitHub au même numéro de version.** C'est toujours sur le Pi qu'on vérifie une signature : `/usr/include/rpicam-apps/`.
 

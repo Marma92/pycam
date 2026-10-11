@@ -23,12 +23,12 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Fonctionnalité | Détail | État |
 |---|---|---|
 | Moteur + protocole | `pycam-engine` lié à `librpicam_app`, piloté par socket JSON (`protocol.md`). | ✅ |
-| Visée en direct | Le moteur produit la visée (30 i/s en bascule, 11,7 i/s en ZSL). Reste l'affichage vers l'écran HDMI par plan DRM. | 🟨 |
+| Visée en direct | Sur l'écran HDMI par plan DRM, zéro copie (30 i/s en bascule, 11,7 i/s en ZSL). | ✅ |
 | Déclenchement | DNG + JPEG pleine résolution ; deux stratégies (bascule / ZSL) ; retour immédiat à la visée. | ✅ |
 | File d'écriture | Asynchrone, bornée, écriture atomique (`.part` puis renommage) ; évènement `capture_done`. | ✅ |
 | Réglages de base | Vitesse, ISO, AWB : n'importe quel contrôle libcamera via `set_controls`. Reste à les exposer dans l'application. | 🟨 |
 | Mesures en visée | Histogramme, luminance, lux, température de couleur, netteté ISP (`focus_fom`), à 5 Hz. | ✅ |
-| HUD minimal | Vitesse, ISO, nombre de vues restantes, grille des tiers. On bascule entre visée nature et visée détaillée. | ⬜ |
+| HUD minimal | Vitesse, ISO, nombre de vues restantes, grille des tiers. On bascule entre visée nature et visée détaillée. Le plan HUD et le protocole sont faits, et une démo (`tools/hud_demo.py`) affiche grille, bandeau et histogramme. Reste le HUD de l'application. | 🟨 |
 | Entrées | Clavier USB via evdev, qui simule les futurs boutons. | ⬜ |
 | Service | Démarrage automatique (systemd). | ⬜ |
 | Mesures | Latence de déclenchement, fps de visée, temps d'écriture : voir `architecture.md` §2.2. À refaire sur une vraie scène et sans bureau. | 🟨 |
