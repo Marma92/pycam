@@ -56,7 +56,7 @@ capteur ─► ISP (tuning fixe : balance, matrice, courbe Rec.709) ─► YUV �
 **Conséquence : la base doit être la même pour tout l'appareil.** Changer de tuning impose de redémarrer la caméra, ce n'est donc pas possible preset par preset. Je propose un fichier de tuning à nous, versionné dans le dépôt (`engine/tuning/pycam-imx477.json`) :
 
 - partir de `imx477_scientific.json` ;
-- y remettre éventuellement l'ALSC du tuning standard, pour corriger l'ombrage de couleur de l'objectif ;
+- la **correction d'ombrage de l'objectif** (ALSC) est un réglage à part, indépendant du preset (décidé). Il y aura donc deux variantes du tuning, avec et sans l'ALSC du tuning standard. Elles forment la même base : l'ALSC corrige les coins de l'image (vignettage et dérive de couleur), pas la courbe ni les couleurs, donc les presets restent valables. Changer ce réglage redémarre la caméra (quelques secondes, à mesurer). Plus tard : une calibration par objectif, rangée dans son profil ;
 - le moteur le charge avec `--tuning-file` ;
 - toute modification de ce fichier change le numéro de la base. Les presets déclarent la base pour laquelle ils ont été écrits.
 
@@ -154,9 +154,9 @@ Avec plus de dix ans de pratique argentique, des pellicules et des scans à disp
 | Famille | Pellicule de référence | Nom dans l'appareil | Court | Lumière |
 |---|---|---|---|---|
 | Négatif couleur | Kodak Portra 400 | Portrait 400 | P400 | lumière du jour |
-| Inversible | Fujifilm Velvia 50 | Velours 50 (à valider) | V50 | lumière du jour |
-| Cinéma | CineStill 800T | Cinéma 800T (à valider) | C800T | tungstène, 3200 K |
-| Noir et blanc | Kodak Tri-X 400 | Reportage 400 (à valider) | R400 | — |
+| Inversible | Fujifilm Velvia 50 | Velours 50 | V50 | lumière du jour |
+| Cinéma | CineStill 800T | Cinéma 800T | C800T | tungstène, 3200 K |
+| Noir et blanc | Kodak Tri-X 400 | Triple-X 400 | TX400 | — |
 
 Plus tard : Ektar 100, Gold 200, Superia 400, Provia 100F, Kodachrome 64, HP5 Plus.
 
@@ -164,9 +164,9 @@ Plus tard : Ektar 100, Gold 200, Superia 400, Provia 100F, Kodachrome 64, HP5 Pl
 
 Le but : des paires « même scène, même lumière » entre l'appareil et la pellicule, pour mesurer l'écart entre les deux.
 
-- **Matériel** : une mire couleur (ColorChecker Classic, 24 cases ; une charte de gris en plus si possible), un trépied, l'appareil pycam et un boîtier argentique côte à côte.
+- **Matériel** : une mire couleur (voir « Quelle mire ? » ci-dessous), une carte grise, un trépied, l'appareil pycam et un boîtier argentique côte à côte.
 - **Lumière** :
-  - lumière du jour, en plein soleil et à l'ombre, pour Portrait 400, Velours 50 et Reportage 400 ;
+  - lumière du jour, en plein soleil et à l'ombre, pour Portrait 400, Velours 50 et Triple-X 400 ;
   - tungstène (ampoule halogène ou à incandescence) pour Cinéma 800T, plus une scène de nuit avec des sources lumineuses, pour la halation.
 
   Noter la lumière de chaque prise.
@@ -182,6 +182,22 @@ Le but : des paires « même scène, même lumière » entre l'appareil et la pe
 - **Scènes complémentaires**, hors mire : des peaux (essentiel pour Portrait 400), de la végétation, du ciel, une scène très contrastée. Elles servent à vérifier les couleurs que la mire ne couvre pas.
 - **Tes scans existants**, sans prise jumelle, servent de références pour la méthode A et pour valider : répartition des tons, teinte des ombres et des hautes lumières, grain.
 - **Rangement** : un dossier par pellicule, avec les scans, les prises de l'appareil et des notes (lumière, exposition, scanner).
+
+**Quelle mire ?** La méthode B n'a pas besoin des valeurs certifiées d'une mire : on compare ce que l'appareil et la pellicule voient sur les mêmes cases. Il faut surtout :
+- des cases stables et mates ;
+- des pigments proches des objets réels (peaux, feuillages, ciel) ;
+- une échelle de gris.
+
+| Option | Prix indicatif (octobre 2026) | Pour nous |
+|---|---|---|
+| Calibrite ColorChecker Classic Mini (24 cases dont 6 gris) | 55 à 74 $ | Le meilleur compromis : des pigments conçus pour imiter des objets naturels. Petite, donc à cadrer de près. |
+| ColorChecker Classic, grand format | ~99 $ | La même en grand, plus simple à cadrer avec un objectif standard. |
+| Datacolor SpyderCheckr 24 | ~49 € | Une alternative sérieuse, moins chère. |
+| Nuanciers de peinture (magasin de bricolage) | gratuit | Beaucoup de teintes, de vrais pigments, mats. À coller sur un carton : peaux, verts, bleus, gris. Bon point de départ, puis bon complément. |
+| Carte grise 18 % et fourchettes d'exposition | ~10 à 20 € | Suffit pour la courbe de tons, la partie la plus importante. Rien pour les couleurs. |
+| Mire imprimée en jet d'encre, ou affichée sur un écran | — | À éviter. Leurs spectres sont trop différents de ceux des objets réels (métamérisme) : la pellicule et le capteur ne les verraient pas comme ils voient le monde, et la LUT apprendrait de travers. |
+
+Recommandation : commencer gratuitement avec des nuanciers et une carte grise, le temps de valider la chaîne. Acheter une ColorChecker Classic Mini ou une SpyderCheckr 24 quand on attaque la méthode B pour de bon.
 
 **Une astuce de latitude.** La base est en 8 bits et coupe net les hautes lumières. Pour une épaule « film », un preset peut demander une sous-exposition de ⅓ à 1 IL, que sa courbe compense, comme les modes DR200/DR400 de Fujifilm. Les ombres sont alors un peu plus bruitées, mais le grain le masque.
 
@@ -212,16 +228,17 @@ La LUT complète ne tient pas à 30 i/s sur le CPU (§2). Je propose :
 - **Menu rapide** : une ligne « Simulation », la liste des presets installés.
 - **Menu complet** : une section « Simulation » avec l'intensité, le grain (selon le preset, coupé, faible ou fort) et le filtre noir et blanc. L'option « garder la base » va dans la section « Prise de vue ».
 - **Bandeau** : le nom court du preset (`P400`).
+- **Correction de l'ombrage** (section Objectif) : marche / arrêt, indépendante du preset. La changer redémarre la caméra.
 - **Moteur** : une commande `look`. Le moteur reçoit la LUT compilée (un fichier dans `/run/pycam`), le grain et le vignettage, et les applique dans le fil d'écriture sur 3 fils avant l'encodage JPEG.
 - **Rafale** : chaque photo coûte 0,6 à 0,7 s d'écriture en plus, et la file d'attente s'allonge d'autant.
 
 ## 10. Décisions (2026-10-11)
 
-1. ✅ **Tout l'appareil passe sur une base fixe**, y compris sans preset : un tuning à nous, tiré du tuning scientific. Reste à trancher : remettre ou non l'ALSC.
+1. ✅ **Tout l'appareil passe sur une base fixe**, y compris sans preset : un tuning à nous, tiré du tuning scientific. La correction d'ombrage de l'objectif est un réglage séparé du preset, dans un premier temps (§3).
 2. ✅ **Aperçu approché en visée, résultat exact à la revue.** Le GPU, plus tard si besoin.
 3. ✅ **Garder la base : oui, mais en option**, coupée par défaut. Par défaut, le preset est un parti pris définitif. L'option se trouve dans le menu, section « Prise de vue ».
-4. ✅ **Méthodes A et B dès le départ**, grâce aux pellicules et aux scans disponibles (protocole au §6). Une mire ColorChecker sera utile si elle manque.
-5. ✅ **Premier jet** : Portra 400, Velvia 50, CineStill 800T, Tri-X 400 (§6).
+4. ✅ **Méthodes A et B dès le départ**, grâce aux pellicules et aux scans disponibles (protocole au §6). Pas de mire pour l'instant : les options sont au §6.
+5. ✅ **Premier jet** : Portra 400, Velvia 50, CineStill 800T, Tri-X 400, sous les noms Portrait 400, Velours 50, Cinéma 800T et Triple-X 400 (§6).
 6. ✅ **Projet public à terme** : des noms à nous, qui évoquent sans reprendre les marques (Portrait 400 pour la Portra 400). Pas de LUT tierce sans licence compatible.
 
 ## 11. Étapes proposées

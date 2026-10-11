@@ -74,7 +74,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Modes de déclenchement | Rafale, retardateur 2 s / 10 s, intervallomètre (timelapse), bracketing AEB 3/5 vues. | ⬜ |
 | Pose longue / pose B | Jusqu'à la limite du capteur (à mesurer), avec compte à rebours. | ⬜ |
 | ZSL | Déclenchement instantané, en option (compromis avec la fluidité de visée). | ⬜ |
-| Simulations de pellicules | Presets ouverts (recette TOML, LUT `.cube` ou Hald), compilés en une LUT 3D avec grain et vignettage, appliqués au JPEG ; DNG neutre. Premier jet : Portrait 400, Velours 50, Cinéma 800T, Reportage 400. Conception : `presets.md`. | ⬜ |
+| Simulations de pellicules | Presets ouverts (recette TOML, LUT `.cube` ou Hald), compilés en une LUT 3D avec grain et vignettage, appliqués au JPEG ; DNG neutre. Premier jet : Portrait 400, Velours 50, Cinéma 800T, Triple-X 400. Conception : `presets.md`. | ⬜ |
 | DNG compressé | LJ92 sans perte, au format Adobe (2 composantes, prédicteur 1) : 12,1 Mo au lieu de 24,8 ; relu au bit près par LibRaw et rendu par darktable. Activé par défaut, ligne « RAW compressé » du menu. Fait en avance avec M1. | ✅ |
 | Vidéo | H.264 1080p30 matériel, avec les réglages manuels. | ⬜ |
 | Point d'accès Wi-Fi | Pour le terrain, sans box. | ⬜ |
