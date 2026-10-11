@@ -10,6 +10,7 @@ import logging
 import os
 from dataclasses import dataclass, field, fields
 
+from . import picture
 from .exposure import Exposure
 from .lenses import DEFAULT_LENSES, clean_lens
 
@@ -33,6 +34,11 @@ class Settings:
     formats: list = field(default_factory=lambda: ["jpeg", "dng"])
     dng_compression: bool = True  # lossless: 12 MB instead of 25, ~1.5 s more of background writing
     jpeg_quality: int = 93
+    jpeg_size: str = "L"  # picture.JPEG_SIZES
+    sharpness: int = 0  # picture.py: levels -2..+2
+    contrast: int = 0
+    saturation: int = 0  # -3: black and white
+    denoise: str = "hq"  # picture.DENOISE
     strategy: str = "switch"
     display: str = "detailed"
     grid: bool = True
@@ -98,6 +104,16 @@ def load_settings(path):
         settings.peaking_sensitivity = defaults.peaking_sensitivity
     if settings.review_seconds not in REVIEW_SECONDS:
         settings.review_seconds = defaults.review_seconds
+    for name, allowed in (
+        ("jpeg_quality", picture.JPEG_QUALITIES),
+        ("jpeg_size", picture.JPEG_SIZES),
+        ("sharpness", picture.SHARPNESS),
+        ("contrast", picture.CONTRAST),
+        ("saturation", picture.SATURATION),
+        ("denoise", picture.DENOISE),
+    ):
+        if getattr(settings, name) not in allowed:
+            setattr(settings, name, getattr(defaults, name))
     if not set(settings.formats) <= {"jpeg", "dng"} or not settings.formats:
         settings.formats = defaults.formats
     if not 0 <= settings.lens < len(settings.lenses):

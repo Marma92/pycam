@@ -84,6 +84,8 @@ class Hud:
             self._histogram(d, view.histogram)
         if view.loupe > 1:  # whatever the display: you must know the image is magnified
             self._loupe(d, view)
+        if view.menu:
+            self._menu(d, view.menu, view.menu_index)
         if view.message:
             self._message(d, view.message, view.warning)
         self.shm[:] = img.tobytes()
@@ -229,6 +231,30 @@ class Hud:
         ly = my + min(max(cy * mh - lh / 2, 0), mh - lh)
         d.rectangle([lx, ly, lx + lw, ly + lh], fill=AMBER)
         d.text((mx - self.px(16), my + mh / 2), f"×{view.loupe:g}", font=self.font_bold, fill=AMBER, anchor="rm")
+
+    def _menu(self, d, rows, index):
+        """The quick menu, over the left part of the image; the chosen line in amber."""
+        x, y, w, h = self.rect
+        row_h = self.px(58)
+        width = self.px(720)
+        px, py = x + self.px(40), y + self.px(40)
+        title_h = self.px(64)
+        height = title_h + row_h * len(rows) + self.px(16)
+        d.rounded_rectangle([px, py, px + width, py + height], radius=self.px(14), fill=(0, 0, 0, 190))
+        d.text((px + self.px(24), py + title_h // 2), "Réglages rapides", font=self.font_bold, fill=WHITE, anchor="lm")
+        for i, (label, value) in enumerate(rows):
+            ry = py + title_h + i * row_h
+            chosen = i == index
+            if chosen:
+                d.rounded_rectangle(
+                    [px + self.px(10), ry + self.px(4), px + width - self.px(10), ry + row_h - self.px(4)],
+                    radius=self.px(8),
+                    fill=(255, 190, 60, 70),
+                )
+            colour = AMBER if chosen else WHITE
+            d.text((px + self.px(28), ry + row_h // 2), label, font=self.font, fill=colour, anchor="lm")
+            shown = f"◀  {value}  ▶" if chosen else value
+            d.text((px + width - self.px(28), ry + row_h // 2), shown, font=self.font, fill=colour, anchor="rm")
 
     def _message(self, d, message, warning):
         x, y, w, h = self.rect

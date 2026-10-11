@@ -90,15 +90,24 @@ class SettingsTest(unittest.TestCase):
         os.makedirs(os.path.dirname(self.path))
         with open(self.path, "w") as f:
             json.dump(
-                {"display": "sparkles", "grid": "yes", "formats": ["gif"], "jpeg_quality": 80, "peaking_color": "pink"},
+                {
+                    "display": "sparkles",
+                    "grid": "yes",
+                    "formats": ["gif"],
+                    "jpeg_quality": 85,
+                    "peaking_color": "pink",
+                    "sharpness": 7,
+                    "jpeg_size": "XXL",
+                },
                 f,
             )
         loaded = load_settings(self.path)
         self.assertEqual(loaded.display, "detailed")
         self.assertEqual(loaded.peaking_color, "red")
+        self.assertEqual((loaded.sharpness, loaded.jpeg_size), (0, "L"))
         self.assertTrue(loaded.grid)
         self.assertEqual(loaded.formats, ["jpeg", "dng"])
-        self.assertEqual(loaded.jpeg_quality, 80)
+        self.assertEqual(loaded.jpeg_quality, 85)
 
 
 if __name__ == "__main__":

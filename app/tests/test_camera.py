@@ -67,9 +67,41 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
     async def test_sync_pushes_the_whole_state(self):
         await self.camera.sync_engine()
         names = [name for name, _ in self.engine.calls]
-        self.assertEqual(names, ["list_controls", "configure", "set_controls", "focus_aids", "loupe"])
+        self.assertEqual(names, ["list_controls", "configure", "set_controls", "set_controls", "focus_aids", "loupe"])
         self.assertEqual(self.engine.last("loupe")["zoom"], 1)
+        configure = self.engine.last("configure")
+        self.assertEqual((configure["still_denoise"], configure["still_size"]), ("cdn_hq", None))
+        self.assertEqual(self.engine.last("set_controls")["controls"]["Contrast"], 1.0)
         self.assertEqual(self.camera.slowest_shutter, 10)
+
+    async def test_quick_menu(self):
+        self.camera.on_action("menu")
+        self.assertTrue(self.camera.view().menu)
+        self.camera.on_action("shutter_faster")  # line 1, sharpness: +1
+        await self.settle()
+        self.assertEqual(self.engine.last("set_controls")["controls"]["Sharpness"], 1.5)
+        self.camera.on_action("iso_down")  # contrast
+        self.camera.on_action("iso_down")  # saturation
+        for _ in range(5):
+            self.camera.on_action("shutter_slower")  # down to black and white, and stays there
+        await self.settle()
+        self.assertEqual(self.engine.last("set_controls")["controls"]["Saturation"], 0.0)
+        self.assertEqual(self.camera.view().menu[2], ("Saturation", "N&B"))
+        self.camera.on_action("iso_down")  # denoise: an engine setting
+        self.camera.on_action("shutter_slower")
+        await self.settle()
+        self.assertEqual(self.engine.last("configure")["still_denoise"], "cdn_fast")
+        self.camera.on_action("iso_up")  # the arrows stay in the menu: exposure untouched
+        self.assertIsNone(self.settings.exposure.iso)
+        self.camera.on_action("menu")  # closes
+        self.assertEqual(self.camera.view().menu, ())
+
+    async def test_shutter_closes_the_menu_and_shoots(self):
+        self.camera.on_action("menu")
+        self.camera.on_action("shutter")
+        await self.settle()
+        self.assertIsNone(self.camera.menu)
+        self.assertEqual(len([c for c, _ in self.engine.calls if c == "capture"]), 1)
 
     async def test_focus_aids(self):
         self.camera.on_action("peaking")

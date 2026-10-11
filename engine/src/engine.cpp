@@ -64,7 +64,7 @@ std::string control_name(unsigned int id)
 
 } // namespace
 
-Engine::Engine(EngineConfig cfg) : cfg_(std::move(cfg)), zsl_(cfg_.zsl)
+Engine::Engine(EngineConfig cfg) : cfg_(std::move(cfg)), zsl_(cfg_.zsl), still_denoise_(cfg_.still_denoise)
 {
 	if (cfg_.verbose < 2)
 		setenv("LIBCAMERA_LOG_LEVELS", "*:ERROR", 0);
@@ -271,7 +271,10 @@ void Engine::Start(Phase phase)
 	else if (zsl_)
 	{
 		options->Set().buffer_count = cfg_.zsl_buffers;
-		options->Set().denoise = cfg_.zsl_denoise;
+		// cdn_hq would divide the ZSL frame rate by 3: the fast one instead.
+		options->Set().denoise = still_denoise_ == "cdn_hq" ? cfg_.zsl_denoise : still_denoise_;
+		options->Set().width = still_size_ ? (*still_size_)[0] : 0; // 0: full sensor
+		options->Set().height = still_size_ ? (*still_size_)[1] : 0;
 		app_.ConfigureZsl(RPiCamApp::FLAG_STILL_RAW);
 		options->Set().denoise = "auto";
 		frame_limits = { kViewfinderMinFrameUs, std::max(kZslMaxFrameUs, manual_exposure) };
@@ -279,7 +282,9 @@ void Engine::Start(Phase phase)
 	else if (phase == Phase::Still)
 	{
 		options->Set().buffer_count = 1;
-		options->Set().denoise = cfg_.still_denoise;
+		options->Set().denoise = still_denoise_;
+		options->Set().width = still_size_ ? (*still_size_)[0] : 0; // 0: full sensor
+		options->Set().height = still_size_ ? (*still_size_)[1] : 0;
 		app_.ConfigureStill(RPiCamApp::FLAG_STILL_RAW);
 		options->Set().denoise = "auto";
 		// No frame limits: rpicam lets a still exposure last as long as needed.
@@ -478,19 +483,7 @@ void Engine::HandleCommand(int client, json const &command, Clock::time_point re
 		else if (name == "capture")
 			reply.update(Capture(command, received));
 		else if (name == "configure")
-		{
-			std::string strategy = command.at("strategy").get<std::string>();
-			if (strategy != "zsl" && strategy != "switch")
-				throw CommandError("bad_request", "strategy must be \"zsl\" or \"switch\"");
-			if (pending_ || phase_ == Phase::Still)
-				throw CommandError("busy", "a capture is in progress");
-			bool zsl = strategy == "zsl";
-			if (zsl != zsl_)
-			{
-				zsl_ = zsl;
-				next_phase_ = Phase::Viewfinder;
-			}
-		}
+			Configure(command);
 		else if (name == "focus_aids")
 			focus_aids_.Configure(command);
 		else if (name == "loupe")
@@ -578,6 +571,50 @@ json Engine::Capture(json const &command, Clock::time_point received)
 	return { { "capture_id", id } };
 }
 
+void Engine::Configure(json const &command)
+{
+	// Each key is optional. Stills only use these settings when they are taken (switch
+	// strategy); in ZSL the still stream runs all the time, so a change restarts it.
+	if (pending_ || phase_ == Phase::Still)
+		throw CommandError("busy", "a capture is in progress");
+	bool restart = false;
+	if (command.contains("strategy"))
+	{
+		std::string strategy = command["strategy"].get<std::string>();
+		if (strategy != "zsl" && strategy != "switch")
+			throw CommandError("bad_request", "strategy must be \"zsl\" or \"switch\"");
+		bool zsl = strategy == "zsl";
+		restart |= zsl != zsl_;
+		zsl_ = zsl;
+	}
+	if (command.contains("still_denoise"))
+	{
+		std::string denoise = command["still_denoise"].get<std::string>();
+		if (denoise != "off" && denoise != "cdn_off" && denoise != "cdn_fast" && denoise != "cdn_hq")
+			throw CommandError("bad_request", "still_denoise: off, cdn_off, cdn_fast or cdn_hq");
+		restart |= zsl_ && denoise != still_denoise_;
+		still_denoise_ = denoise;
+	}
+	if (command.contains("still_size"))
+	{
+		json const &size = command["still_size"];
+		std::optional<std::array<unsigned, 2>> still_size;
+		if (!size.is_null())
+		{
+			if (!size.is_array() || size.size() != 2)
+				throw CommandError("bad_request", "still_size: [width, height], or null for the full sensor");
+			unsigned w = size[0].get<unsigned>(), h = size[1].get<unsigned>();
+			if (w < 64 || h < 64 || w > 4056 || h > 3040 || w % 2 || h % 2)
+				throw CommandError("bad_request", "still_size: even, from 64x64 to 4056x3040");
+			still_size = std::array<unsigned, 2> { w, h };
+		}
+		restart |= zsl_ && still_size != still_size_;
+		still_size_ = still_size;
+	}
+	if (restart)
+		next_phase_ = Phase::Viewfinder;
+}
+
 void Engine::Loupe(json const &command)
 {
 	float zoom = command.value("zoom", loupe_zoom_);
@@ -646,6 +683,8 @@ json Engine::State() const
 		{ "display", display_ ? display_->Info() : json(nullptr) },
 		{ "focus_aids", focus_aids_.State() },
 		{ "loupe", LoupeState() },
+		{ "still_denoise", still_denoise_ },
+		{ "still_size", still_size_ ? json(*still_size_) : json(nullptr) },
 	};
 }
 

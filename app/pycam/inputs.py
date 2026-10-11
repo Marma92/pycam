@@ -46,6 +46,8 @@ KEYMAP = {
     ecodes.KEY_T: "review",  # review time after the shot: off, 1, 2, 4 s
     ecodes.KEY_N: "lens",  # next lens profile
     ecodes.KEY_F: "aperture",  # aperture set on the ring, for the EXIF
+    ecodes.KEY_TAB: "menu",  # quick menu (the Q button)
+    ecodes.KEY_ESC: "back",  # closes the menu, leaves the loupe
 }
 # Actions that repeat while the key is held, like turning a dial.
 REPEATABLE = {"shutter_faster", "shutter_slower", "iso_up", "iso_down", "ev_up", "ev_down", "kelvin_up", "kelvin_down"}

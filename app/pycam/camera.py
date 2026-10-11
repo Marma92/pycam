@@ -7,8 +7,9 @@ import time
 from dataclasses import dataclass
 
 from . import exposure as exp
-from . import lenses, meter
+from . import lenses, meter, picture
 from .engine_client import EngineError, call_blocking
+from .menu import QuickMenu
 from .settings import DISPLAY_MODES, PEAKING_COLORS, PEAKING_SENSITIVITIES, REVIEW_SECONDS, save_settings
 from .storage import Storage
 from .view import HudView
@@ -87,6 +88,7 @@ class Camera:
         self.loupe_center = (0.5, 0.5)
         self.last_shot = None
         self.review = None  # photo shown after the shot
+        self.menu = None  # QuickMenu while open
         self.slowest_shutter = exp.SHUTTER_SPEEDS[-1]
         self._message = ("", False, 0.0)
         self._review_handle = None
@@ -117,8 +119,9 @@ class Camera:
         exposure_max = controls.get("ExposureTime", {}).get("max")
         if isinstance(exposure_max, (int, float)) and exposure_max > 0:
             self.slowest_shutter = exposure_max / 1e6
-        await self.engine.call("configure", strategy=self.settings.strategy)
+        await self.engine.call("configure", strategy=self.settings.strategy, **picture.engine_config(self.settings))
         await self.apply_exposure()
+        await self.apply_picture()
         await self.apply_focus_aids()
         self.loupe = 1
         await self.apply_loupe()
@@ -184,6 +187,24 @@ class Camera:
             pass  # pushed again on reconnection
         except EngineError as e:
             log.error("exposure refused: %s", e)
+
+    async def apply_picture(self):
+        try:
+            await self.engine.call("set_controls", controls=picture.controls(self.settings))
+        except ConnectionError:
+            pass  # pushed again on reconnection
+        except EngineError as e:
+            log.error("picture settings refused: %s", e)
+
+    async def apply_still_config(self):
+        try:
+            await self.engine.call("configure", **picture.engine_config(self.settings))
+        except ConnectionError:
+            pass
+        except EngineError as e:
+            # Busy (a photo being taken): pushed again with the next change or reconnection.
+            log.warning("still settings refused: %s", e)
+            self.show_message("Réglage appliqué après la prise en cours", warning=True)
 
     async def apply_focus_aids(self):
         s = self.settings
@@ -253,6 +274,17 @@ class Camera:
             self.end_review()
             if action != "shutter":
                 return
+        if self.menu and self.on_menu_action(action):
+            return
+        if action == "menu":
+            self.menu = QuickMenu(s)
+            self.redraw()
+            return
+        if action == "back":
+            if self.loupe > 1:
+                self.loupe = 1
+                self.spawn(self.apply_loupe())
+            return
         if action == "shutter":
             self.spawn(self.capture())
             return
@@ -346,6 +378,26 @@ class Camera:
             self.spawn(self.apply_focus_aids())
         self.save_soon()
         self.redraw()
+
+    def on_menu_action(self, action):
+        """While the quick menu is open: the dials move in it. Returns True if handled."""
+        if action in ("menu", "back"):
+            self.menu = None
+        elif action == "shutter":
+            self.menu = None
+            return False  # and shoot
+        elif action in ("iso_up", "iso_down"):  # rear dial: choose a line
+            self.menu.move(-1 if action == "iso_up" else +1)
+        elif action in ("shutter_faster", "shutter_slower"):  # front dial: change the value
+            item = self.menu.change(+1 if action == "shutter_faster" else -1)
+            if item.push == "picture":
+                self.spawn(self.apply_picture())
+            elif item.push == "config":
+                self.spawn(self.apply_still_config())
+            self.save_soon()
+        # Any other key does nothing while the menu is open.
+        self.redraw()
+        return True
 
     async def capture(self):
         async with self._capture_lock:  # two quick presses must not get the same name
@@ -446,6 +498,8 @@ class Camera:
             zebra=s.zebra,
             loupe=self.loupe,
             loupe_center=self.loupe_center,
+            menu=self.menu.rows() if self.menu else (),
+            menu_index=self.menu.index if self.menu else 0,
             writing=self.writing,
             histogram=tuple(self.stats.get("histogram", ())) if s.display == "detailed" else (),
             message=message,

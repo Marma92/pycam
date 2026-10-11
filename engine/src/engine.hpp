@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -94,6 +95,7 @@ private:
 	void DrainCommands();
 	void HandleCommand(int client, json const &command, Clock::time_point received);
 	json Capture(json const &command, Clock::time_point received);
+	void Configure(json const &command);
 	void Loupe(json const &command);
 	libcamera::ControlList LoupeCrop() const;
 	json LoupeState() const;
@@ -118,6 +120,8 @@ private:
 
 	libcamera::ControlList user_controls_; // everything set by the app, re-applied after each reconfiguration
 	bool zsl_;
+	std::string still_denoise_; // denoise of the photos: off, cdn_off, cdn_fast, cdn_hq
+	std::optional<std::array<unsigned, 2>> still_size_; // JPEG size; none: the full sensor
 	Phase phase_ = Phase::Viewfinder;
 	std::optional<Phase> next_phase_; // reconfiguration to do once the current frame is released
 	std::optional<PendingCapture> pending_;
