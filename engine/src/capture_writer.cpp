@@ -1,7 +1,13 @@
 #include "capture_writer.hpp"
 
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
+#include <stdexcept>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "image/image.hpp"
 
@@ -27,7 +33,22 @@ double ms_since(std::chrono::steady_clock::time_point t)
 	return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
 }
 
-// Write to "<name>.part" then rename, so that nobody ever sees a half-written file.
+// Waits until `path` (a file or a folder) is on the card, not only in the kernel's cache:
+// on battery, a power cut would otherwise lose the last ~30 s of photos.
+void sync_path(std::string const &path)
+{
+	int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		throw std::runtime_error("cannot open " + path + " to sync it: " + std::strerror(errno));
+	int const ret = ::fsync(fd);
+	int const err = errno;
+	::close(fd);
+	if (ret)
+		throw std::runtime_error("cannot sync " + path + ": " + std::strerror(err));
+}
+
+// Write to "<name>.part", put it on the card, then rename (and put the rename on the card
+// too): nobody ever sees a half-written file, and "capture_done" means "on the card".
 template <typename SaveFn>
 void save_atomically(std::string const &filename, SaveFn save)
 {
@@ -35,7 +56,10 @@ void save_atomically(std::string const &filename, SaveFn save)
 	try
 	{
 		save(tmp);
+		sync_path(tmp);
 		fs::rename(tmp, filename);
+		fs::path const parent = fs::path(filename).parent_path();
+		sync_path(parent.empty() ? "." : parent.string());
 	}
 	catch (...)
 	{

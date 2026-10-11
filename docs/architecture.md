@@ -347,7 +347,7 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 6. ✅ **Droits** : `sudo` sans mot de passe pour `ael` pendant le développement.
 7. 🟨 **Temps d'encodage réels.** Sur une image très bruitée (gain 16, donc difficile à compresser, JPEG de 2,1 Mo) : JPEG ~350 ms, DNG ~180–230 ms. Reste à confirmer sur une vraie scène.
 8. 🟨 **Temps de démarrage** : la visée apparaît 25,4 s après le démarrage du noyau (§8). Le démarrage complet du système prend ~50 s, mais l'appareil est utilisable avant. L'objectif est de moins de 12 s (M2).
-9. ⬜ **Durabilité des photos.** `capture_done` signifie « écrit », pas « sur la carte » : les données peuvent rester ~30 s dans le cache du noyau. Sur batterie, une coupure perdrait les dernières photos. Il faudra un `fsync` par fichier dans le thread d'écriture (coût à mesurer) avant l'usage nomade.
+9. ✅ **Durabilité des photos** (2026-10-12). Chaque fichier est écrit en `.part`, forcé sur la carte (`fsync`), renommé, puis le dossier est forcé à son tour : `capture_done` signifie « sur la carte », et une coupure de courant ne laisse jamais de fichier tronqué sous son vrai nom. Coût mesuré sur la carte SD du Pi : JPEG 0,67 s au lieu de 0,4, DNG compressé 2,8 s au lieu de 1,8. La revue n'attend pas : elle part du JPEG, écrit en premier. Une photo RAW + JPEG occupe le fil d'écriture ~4 s avec le look, ce qui limite surtout les rafales.
 10. ✅ **Commande de la correction d'exposition** : la molette dont la valeur est automatique la règle (§5). Plus de touche dédiée.
 
 ## 11. Décisions (résumé)

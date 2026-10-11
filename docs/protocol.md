@@ -100,7 +100,7 @@ Les noms sont ceux de libcamera, et `list_controls` donne la liste exacte.
 
 Le déclencheur peut être relâché, et une nouvelle prise acceptée, dès `captured`. `capture_done` arrive plus tard.
 
-Les fichiers sont d'abord écrits en `.part`, puis renommés : un fichier `.JPG` ou `.DNG` visible est toujours complet.
+Les fichiers sont d'abord écrits en `.part`, forcés sur la carte (`fsync`), puis renommés : un fichier `.JPG` ou `.DNG` visible est toujours complet, même après une coupure de courant, et `capture_done` signifie « sur la carte », pas seulement « dans le cache du noyau ».
 
 ## Exemple
 
