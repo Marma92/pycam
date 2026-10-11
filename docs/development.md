@@ -28,6 +28,18 @@ sudo sh tools/install-services.sh --remove    # tout retirer
 - **Arrêter / relancer à la main** : `sudo systemctl stop pycam pycam-engine` et `start`. Pour lancer le moteur à la main (avec des options de test), il faut d'abord arrêter les services.
 - **Robustesse** : le moteur redémarre seul s'il plante, l'application se reconnecte seule au moteur, et les deux réessaient indéfiniment au démarrage (la caméra peut apparaître après eux).
 
+## Ajouter un objectif
+
+En attendant les menus, les profils d'objectifs se modifient dans `~/.config/pycam/settings.json`, **l'application arrêtée**. Sinon, elle réécrit le fichier avec ce qu'elle a en mémoire.
+
+```bash
+sudo systemctl stop pycam
+nano ~/.config/pycam/settings.json      # liste "lenses"
+sudo systemctl start pycam
+```
+
+Un profil se présente ainsi : `{"name": "Fujinon 25 mm", "make": "Fujifilm", "focal_length": 25, "max_aperture": 1.4, "min_aperture": 22}`. `make` et `min_aperture` (16 par défaut) sont facultatifs, et un profil invalide est ignoré, avec un avertissement dans le journal.
+
 ## Boucle de travail
 
 1. On édite sur le poste Windows, dans ce dépôt.

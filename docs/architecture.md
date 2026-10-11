@@ -201,6 +201,8 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | C / V | Peaking : couleur suivante / sensibilité suivante (ce qui l'active au passage) |
 | E | Zébras marche / arrêt |
 | T | Durée de la revue après la prise : coupée, 1, 2 ou 4 s. Pendant la revue, toute touche la ferme ; le déclencheur la ferme *et* déclenche. |
+| N | Objectif suivant parmi les profils, ou « non précisé ». Les profils sont dans `settings.json` : par défaut, les deux objectifs officiels Raspberry Pi. |
+| F | Ouverture réglée sur la bague : non précisée → ouverture max → f/2 → … → f/16. Écrite dans l'EXIF, affichée dans le bandeau. |
 | L | Loupe ×5 → ×10 → coupée. Dans la loupe, les flèches la déplacent au lieu de régler vitesse et ISO (en attendant le joystick). La grille est masquée, et le HUD montre le grossissement et une mini-carte de la zone. |
 
 **Pourquoi evdev.** Avec les overlays noyau, chaque bouton devient un évènement clavier (`KEY_*`) et chaque molette un évènement relatif (`REL_*`). Ça apporte plusieurs choses :
@@ -233,8 +235,10 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 ## 7. Stockage et formats
 
 - **Arborescence** : `~/DCIM/100PYCAM/PYC_0001.JPG` et `.DNG`. Le numéro est persistant et le dossier change tous les 9999 fichiers. Si on ajoute une clé USB plus tard, elle se monte au même endroit.
-- **JPEG.** Qualité réglable. EXIF complet : vitesse, ISO, date venant de la RTC, orientation venant de l'IMU, et profil d'objectif saisi par l'utilisateur (focale, ouverture max, nom). L'ouverture réelle n'est pas connue de l'appareil ; elle peut être saisie rapidement si on veut.
-- **DNG.** RAW 12 bits avec la matrice couleur IMX477, lisible par Lightroom, darktable et RawTherapee. On utilise d'abord l'écrivain de rpicam-apps. Plus tard, une compression LJ92 sans perte comme dans CinePI (`lj92.h`) pour diviser la taille par ~2.
+- **JPEG.** Qualité réglable. L'EXIF contient la vitesse, l'ISO et la date (venant de la RTC plus tard), puis l'orientation de l'IMU plus tard.
+  - ✅ **Profil d'objectif** (2026-10-11, `app/pycam/lenses.py`). L'application passe des balises EXIF au moteur avec la commande `capture`, et rpicam-apps les écrit via libexif : `LensModel`, `LensMake`, `FocalLength`, `FocalLengthIn35mmFilm` (facteur de recadrage IMX477 ≈ 5,5 : un 16 mm équivaut à un 88 mm), `MaxApertureValue`, `LensSpecification`. Vérifié en relisant le fichier.
+  - L'ouverture réglée sur la bague n'est pas connue de l'appareil. L'utilisateur l'indique (touche F) et elle est écrite en `FNumber` ; sinon, elle est omise plutôt qu'inventée.
+- **DNG.** RAW 12 bits avec la matrice couleur IMX477, lisible par Lightroom, darktable et RawTherapee. On utilise pour l'instant l'écrivain de rpicam-apps, qui **n'accepte pas de balises en plus** : le DNG ne porte donc pas encore le profil d'objectif. Il faudra notre propre écrivain DNG, en partant de celui de rpicam-apps (licence BSD-2). Ce même écrivain permettra la compression LJ92 sans perte, comme dans CinePI (`lj92.h`), pour diviser la taille par ~2.
 
 ## 8. Système
 
