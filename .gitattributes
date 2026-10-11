@@ -1,1 +1,2 @@
-*.sh text eol=lf
+# Everything runs on the Pi (Linux): keep LF line endings in the working copy too.
+* text=auto eol=lf
