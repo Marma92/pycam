@@ -69,7 +69,7 @@ rpicam-apps installe sa bibliothèque cœur (`librpicam_app.so`, pkg-config `rpi
 | Situation | Mode capteur | Flux libcamera | Usage |
 |---|---|---|---|
 | Visée | 2028×1520, binning, ~30 i/s | `main` YUV420 à la taille de l'écran<br>`lores` YUV420 ~320×240 | `main` va à l'écran par le plan vidéo DRM (aucun travail CPU).<br>`lores` sert à l'analyse. |
-| Loupe ×5 / ×10 | 4056×3040, 10 i/s, avec `ScalerCrop` | `main` + `lores` | Mise au point fine sur de vrais pixels, pas sur une image binnée. |
+| Loupe ×5 / ×10 ✅ | 4056×3040 en **10 bits** (le mode pleine résolution le plus rapide : **14 i/s** mesurés), recadré par `ScalerCrop` | `main` + `lores` | Mise au point fine sur de vrais pixels : à ×5, la zone de 811×608 pixels du capteur s'affiche presque 1:1 en 1024×768. C'est une visée ordinaire même en ZSL, car le recadrage s'appliquerait aussi au flux photo. Le déclencheur fait sortir de la loupe : la photo est toujours en plein cadre (0,63 s de délai en bascule, 0,41 s en ZSL). Déplacer la zone ne demande pas de reconfiguration. |
 | Déclenchement | 4056×3040 | `raw` + `main` YUV pleine résolution | DNG à partir du `raw`, JPEG à partir du `main`. |
 | ZSL (option) | 4056×3040 en continu | `raw` + `still` YUV + `viewfinder` | Déclenchement quasi instantané, mais visée à ~12 i/s et ~111 Mo de CMA (3 jeux de tampons). C'est un réglage « réactivité ou fluidité ». |
 
@@ -200,6 +200,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | P | Peaking marche / arrêt |
 | C / V | Peaking : couleur suivante / sensibilité suivante (ce qui l'active au passage) |
 | E | Zébras marche / arrêt |
+| L | Loupe ×5 → ×10 → coupée. Dans la loupe, les flèches la déplacent au lieu de régler vitesse et ISO (en attendant le joystick). La grille est masquée, et le HUD montre le grossissement et une mini-carte de la zone. |
 
 **Pourquoi evdev.** Avec les overlays noyau, chaque bouton devient un évènement clavier (`KEY_*`) et chaque molette un évènement relatif (`REL_*`). Ça apporte plusieurs choses :
 

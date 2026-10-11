@@ -23,6 +23,7 @@ Toute commande peut porter un `id`, qui est renvoyé tel quel dans la réponse. 
 | `capture` | `path` (sans extension), `formats` (`["jpeg","dng"]` par défaut), `quality` (93), `exif` (liste `"EXIF.FocalLength=16/1"`…) | `capture_id` |
 | `configure` | `strategy` : `"switch"` ou `"zsl"` | — |
 | `focus_aids` | `peaking` (bool), `peaking_color` (`red`, `yellow`, `green`, `blue`, `white` ou `[r, g, b]`), `peaking_sensitivity` (`low`, `medium`, `high`), `zebra` (bool), `zebra_level` (0–1, défaut 0,95) ; les clés absentes gardent leur valeur | — |
+| `loupe` | `zoom` (1 = coupée, jusqu'à 16), `center` `[x, y]` (fractions de l'image, défaut le centre) ; les clés absentes gardent leur valeur | `loupe` : `{zoom, center}`. Entrer ou sortir de la loupe reconfigure la caméra (le capteur passe en pleine résolution) ; déplacer la zone ou changer de grossissement, non. |
 | `snapshot` | `path` | — : la prochaine image de visée affichée, aides comprises mais sans le HUD, sera écrite en JPEG ; évènement `snapshot_done` ou `snapshot_error`. Sert au débogage à distance. |
 | `hud_info` | — | `display` : taille de l'écran, `image_rect` `[x, y, w, h]` (où est l'image), `hud` (chemin de la mémoire partagée, largeur, hauteur, stride, format `"RGBA"`), compteurs d'images affichées et perdues |
 | `hud_commit` | — | — (le contenu de la mémoire partagée a été copié : on peut dessiner le HUD suivant) |
@@ -66,6 +67,7 @@ Les noms sont ceux de libcamera, et `list_controls` donne la liste exacte.
 | `capture_done` | Les fichiers sont écrits | `capture_id`, `files`, `timings` (`jpeg_ms`, `dng_ms`), `write_queue` |
 | `capture_error` | Échec d'une capture ou de son écriture | `capture_id`, `error`, `files` déjà écrits |
 | `snapshot_done` / `snapshot_error` | Après `snapshot` | `path` (et `error`) |
+| `loupe` | Le moteur quitte la loupe de lui-même (un déclenchement : la photo est toujours en plein cadre) | `loupe` : `{zoom, center}` |
 | `error` | Incident caméra | `error` |
 
 Le déclencheur peut être relâché, et une nouvelle prise acceptée, dès `captured`. `capture_done` arrive plus tard.

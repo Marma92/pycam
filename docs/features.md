@@ -46,7 +46,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Histogramme | Luminance et RVB dans le HUD. La luminance est faite, le RVB reste à faire. | 🟨 |
 | Peaking | Couleur (5) et sensibilité (3) réglables ; seuil adaptatif ; ~6 ms par image. | ✅ |
 | Zébras | Seuil réglable dans le protocole (95 % par défaut) ; pas encore dans l'application. | ✅ |
-| Loupe de mise au point | ×2,5 / ×5 / ×10 ; vrais pixels grâce au passage en pleine résolution. | ⬜ |
+| Loupe de mise au point | ×5 / ×10 (le protocole accepte 1 à 16), déplaçable ; vrais pixels grâce au passage en pleine résolution (14 i/s) ; compatible avec le peaking ; le déclencheur la quitte. | ✅ |
 | Revue après la prise | Affichage N secondes, désactivable. | ⬜ |
 | Profils d'objectifs | Nom, focale, ouverture max, écrits dans l'EXIF. | ⬜ |
 | Paramètres d'image | Qualité JPEG, RAW on/off, résolution, netteté, contraste, saturation, débruitage. | ⬜ |
