@@ -56,7 +56,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 
 | Fonctionnalité | Détail | État |
 |---|---|---|
-| Boutons physiques | Déclencheur à deux crans, deux molettes, joystick 5 directions, Q, MENU, LECTURE, DISP, LOUPE, Fn1/Fn2 (voir `hardware.md` §2). Fn1 et Fn2 sont attribuables dans le menu ; ils sont déjà simulés au clavier (1 et 2). | ⬜ |
+| Boutons physiques | Déclencheur à deux crans, deux molettes, joystick 5 directions, Q, MENU, LECTURE, DISP, LOUPE, Fn1/Fn2 (voir `hardware.md` §2). Liste d'achats chiffrée et câblage prêts (`hardware.md`) : chaque bouton produit la touche que l'application connaît, et elle lit déjà les molettes (`rotary-encoder`). Reste à acheter et câbler. | 🟨 |
 | Menu rapide Q | Les 12 réglages de prise de vue, par-dessus la visée : simulation, mesure, balance des blancs et température, peaking, netteté, contraste, saturation, réduction du bruit, format, déclenchement, ouverture. La molette arrière choisit la ligne, la molette avant change la valeur, le déclencheur ferme et déclenche. Au clavier : Tab. Fait en avance avec M1. | ✅ |
 | Menus | MENU : tous les réglages par section (exposition, mise au point, image, fichiers, prise de vue, objectif, affichage, boutons), avec défilement. Le clavier ne garde plus qu'une touche par commande de l'appareil (`architecture.md` §5) ; reste à brancher les vrais boutons (M2). Au clavier : Échap. | 🟨 |
 | Lecture / galerie | Bouton LECTURE (touche P) : défilement à la molette arrière (de 10 en 10 à l'avant), loupe 100 % / 200 % déplaçable, infos tirées de l'EXIF (vitesse, ISO, ouverture, preset), histogramme, suppression en deux appuis de la prise entière. Le déclencheur ramène à la visée et déclenche. | ✅ |
@@ -73,7 +73,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 |---|---|---|
 | Modes de déclenchement | Rafale, retardateur 2 s / 10 s, intervallomètre (timelapse), bracketing AEB 3/5 vues. | ⬜ |
 | Pose longue / pose B | Jusqu'à la limite du capteur (à mesurer), avec compte à rebours. | ⬜ |
-| ZSL | Déclenchement instantané, en option (compromis avec la fluidité de visée). | ⬜ |
+| ZSL | Déclenchement instantané, en option (compromis avec la fluidité de visée) : ligne « Déclenchement » de MENU, ou Fn. Fait en avance avec M0. | ✅ |
 | Simulations de pellicules | Presets ouverts (recette TOML, LUT `.cube` ou Hald), compilés en une LUT 3D avec grain et vignettage, appliqués au JPEG ; DNG neutre. Fait : base fixe, correction d'ombrage à part, moteur (LUT, grain, vignettage, « garder la base »), presets Standard et Base, menus, EXIF, aperçu en visée et histogramme corrigé, outil `tools/pycam_preset.py`, premières versions des pellicules (Portrait 400, Velours 50, Cinéma 800T, Cinéma 800T +2, Triple-X 400). Halation des CineStill et balance « Pellicule » (tungstène, lumière du jour). Reste : les affiner sur de vraies photos, halation en visée, méthode B. Conception : `presets.md`. | 🟨 |
 | DNG compressé | LJ92 sans perte, au format Adobe (2 composantes, prédicteur 1) : 12,1 Mo au lieu de 24,8 ; relu au bit près par LibRaw et rendu par darktable. Activé par défaut, ligne « RAW compressé » du menu. Fait en avance avec M1. | ✅ |
 | Vidéo | H.264 1080p30 matériel, avec les réglages manuels. | ⬜ |

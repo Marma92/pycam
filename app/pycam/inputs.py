@@ -34,6 +34,13 @@ KEYMAP = {
     ecodes.KEY_1: "fn1",  # what they do is chosen in the menu
     ecodes.KEY_2: "fn2",
 }
+# The camera's dials (docs/hardware.md, "Câblage"): the kernel's rotary-encoder driver, one
+# relative axis each; one step per detent. Only devices named "rotary...": a mouse moves
+# the same axes and must not turn the dials.
+DIALS = {
+    ecodes.REL_X: ("front_dial_plus", "front_dial_minus"),
+    ecodes.REL_Y: ("rear_dial_plus", "rear_dial_minus"),
+}
 # Actions that repeat while the key is held, like turning a dial.
 REPEATABLE = {"front_dial_plus", "front_dial_minus", "rear_dial_plus", "rear_dial_minus"}
 
@@ -60,8 +67,10 @@ class Inputs:
             device = evdev.InputDevice(path)
         except OSError:
             return
-        keys = device.capabilities().get(ecodes.EV_KEY, [])
-        if not any(code in KEYMAP for code in keys):
+        capabilities = device.capabilities()
+        keys = capabilities.get(ecodes.EV_KEY, [])
+        dial = "rotary" in device.name.lower() and any(axis in DIALS for axis in capabilities.get(ecodes.EV_REL, []))
+        if not dial and not any(code in KEYMAP for code in keys):
             device.close()
             self._devices[path] = None
             return
@@ -72,13 +81,24 @@ class Inputs:
         log.info("input: %s (%s)", device.name, path)
         self._devices[path] = asyncio.create_task(self._read(path, device))
 
+    @staticmethod
+    def _actions(event, dial):
+        """The actions an input event stands for: a key pressed (or repeating), or the
+        detents a dial turned."""
+        if event.type == ecodes.EV_KEY and event.value:  # 0: key released
+            action = KEYMAP.get(event.code)
+            if action and (event.value == 1 or action in REPEATABLE):  # 2: auto-repeat
+                return [action]
+        elif dial and event.type == ecodes.EV_REL and event.code in DIALS:
+            plus, minus = DIALS[event.code]
+            return [plus if event.value > 0 else minus] * min(abs(event.value), 10)
+        return []
+
     async def _read(self, path, device):
         try:
+            dial = "rotary" in device.name.lower()
             async for event in device.async_read_loop():
-                if event.type != ecodes.EV_KEY or event.value == 0:  # 0: key released
-                    continue
-                action = KEYMAP.get(event.code)
-                if action and (event.value == 1 or action in REPEATABLE):  # 2: auto-repeat
+                for action in self._actions(event, dial):
                     try:
                         self.on_action(action)
                     except Exception:
