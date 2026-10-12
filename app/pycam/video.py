@@ -1,16 +1,20 @@
 """The video mode: a camera made for photos, with video as a backup (docs/architecture.md §5).
 
-Few settings: the resolution, the quality (bitrate) and the ISO; the rest is automatic.
-25 frames a second (50 Hz mains light does not flicker at 1/50 s), the exposure automatic
-within a frame, with the compensation on the front dial; the ISO on the rear dial, or
-automatic. The white balance and the metering are the photo's. No look: the video keeps the
+Few settings: the resolution, the frame rate, the quality (bitrate), the speed and the
+ISO; the rest is automatic. 25 frames a second by default (50 Hz mains light does not
+flicker at 1/50 s); 24 for cinema, 30, and 50 in 720p (the encoder of a Pi 3 does not go to
+1080p50). The exposure is automatic within a frame, with the compensation on the front
+dial; or the speed at 180° (half a frame: the motion blur of cinema), the gain following;
+the ISO on the rear dial, or automatic. S locks the exposure as it is (AE-L), for a take. The white balance and the metering are the photo's. No look: the video keeps the
 pycam base (a film simulation at 25 frames a second is beyond a Pi 3). No sound: the Pi has
 no microphone. H.264 in MP4, by the VideoCore's encoder (the engine's Recorder).
 """
 
 from . import exposure as exp
 
-FPS = 25
+FRAME_RATES = (24, 25, 30, 50)
+FPS_LABELS = {24: "24 i/s · cinéma", 25: "25 i/s", 30: "30 i/s · scintille sous 50 Hz", 50: "50 i/s · 720p"}
+SHUTTERS = ("auto", "180")  # automatic, or half a frame
 RESOLUTIONS = {"1080p": (1920, 1080), "720p": (1280, 720)}
 QUALITIES = ("high", "normal", "light")
 QUALITY_LABELS = {"high": "Haute", "normal": "Normale", "light": "Légère"}
@@ -23,25 +27,49 @@ BITRATES = {  # bit/s
     ("720p", "light"): 3_000_000,
 }
 ISO_VALUES = (0,) + exp.ISO_VALUES  # 0: automatic
+MAX_BITRATE = 25_000_000  # the engine's limit
+# Left free on the card: the end of the MP4 (its index) is written when it stops, and a
+# file that cannot be ended is lost whole. Warned a minute before, stopped 10 s before.
+RESERVE_BYTES = 64 * 1024**2
+WARN_SECONDS, STOP_SECONDS = 60, 10
 
 
-def bitrate(settings):
-    return BITRATES[(settings.video_resolution, settings.video_quality)]
+def fps(settings):
+    """The frame rate used: 50 only in 720p."""
+    return 25 if settings.video_fps == 50 and settings.video_resolution != "720p" else settings.video_fps
+
+
+def fps_options(settings):
+    rates = FRAME_RATES if settings.video_resolution == "720p" else FRAME_RATES[:-1]
+    return tuple((f, FPS_LABELS[f]) for f in rates)
+
+
+def bitrate(settings, quality=None):
+    """More frames, more bits: the table is for 25 frames a second."""
+    base = BITRATES[(settings.video_resolution, quality or settings.video_quality)]
+    return min(MAX_BITRATE, round(base * max(fps(settings), 25) / 25))
+
+
+def shutter(settings):
+    """The speed set, in seconds, or None (automatic)."""
+    return 1 / (2 * fps(settings)) if settings.video_shutter == "180" else None
 
 
 def engine_setup(settings):
     """The engine's video_mode command (protocol.md)."""
     width, height = RESOLUTIONS[settings.video_resolution]
-    return {"width": width, "height": height, "fps": FPS, "bitrate": bitrate(settings)}
+    return {"width": width, "height": height, "fps": fps(settings), "bitrate": bitrate(settings)}
 
 
-def controls(settings):
-    """The exposure of the video: automatic speed, the ISO set (or automatic), the
-    photo's compensation, metering and white balance (not the film's: no look here)."""
+def controls(settings, lock=None):
+    """The exposure of the video: the speed automatic or at 180°, the ISO set (or
+    automatic), the photo's compensation, metering and white balance (not the film's: no
+    look here). lock: (seconds, ISO), the exposure locked (AE-L)."""
     e = settings.exposure
+    speed, iso = lock or (shutter(settings), settings.video_iso or None)
     video = exp.Exposure(
-        shutter=None,
-        iso=settings.video_iso or None,
+        shutter=speed,
+        iso=iso,
         ev=e.ev,
         awb="Auto" if e.awb == "Film" else e.awb,
         kelvin=e.kelvin,
@@ -51,13 +79,18 @@ def controls(settings):
     return video.controls()
 
 
+def seconds_left(settings, free_bytes):
+    """Of video that the card can still take, its reserve kept."""
+    return max(0.0, (free_bytes - RESERVE_BYTES) * 8 / bitrate(settings))
+
+
 def minutes_left(settings, free_bytes):
-    return int(free_bytes * 8 / bitrate(settings) / 60)
+    return int(seconds_left(settings, free_bytes) / 60)
 
 
 def label(settings):
-    """"1080p · 25 i/s · Normale" for the HUD."""
-    return f"{settings.video_resolution} {FPS} i/s · {QUALITY_LABELS[settings.video_quality]}"
+    """"1080p25 · Normale" for the HUD (its bar is full in video)."""
+    return f"{settings.video_resolution}{fps(settings)} · {QUALITY_LABELS[settings.video_quality]}"
 
 
 def step_iso(settings, steps, measured_iso):

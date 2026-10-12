@@ -244,7 +244,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | Espace / Entrée | Déclencheur | Déclencher, selon le mode de déclenchement (tenu : la rafale continue). Pendant une séquence, l'arrête. Ferme aussi un menu, la loupe ou la revue, et déclenche quand même. |
 | ← / → | Molette avant | En S et M : vitesse plus lente / plus rapide. En P et A : correction d'exposition −⅓ / +⅓ IL. Dans un menu : changer la valeur. |
 | ↓ / ↑ | Molette arrière | En A et M : ISO. En P et S : correction d'exposition −⅓ / +⅓ IL. Dans un menu : changer de ligne. |
-| S / I | Appui sur la molette avant / arrière | Vitesse / ISO : basculer automatique ⇄ manuel (le passage en manuel part de la valeur mesurée). |
+| S / I | Appui sur la molette avant / arrière | Vitesse / ISO : basculer automatique ⇄ manuel (le passage en manuel part de la valeur mesurée). En vidéo, S verrouille l'exposition (AE-L). |
 | Tab | Q | Menu rapide ; Tab le ferme. Depuis le menu complet, passe au menu rapide. |
 | Échap | MENU | Menu complet ; Échap le ferme. Dans la loupe, la quitte d'abord. |
 | D | DISP | Affichage : détaillé → simple → nature. |
@@ -259,7 +259,7 @@ Pendant la revue après la prise, toute touche la ferme ; le déclencheur la fer
 
 Les **vidéos** des timelapses y sont aussi, chacune après ses vues. Une vidéo s'affiche d'abord par sa première image (faite une fois par ffmpeg, puis gardée en cache), avec un signe de lecture, sa durée, sa définition, sa cadence et son nombre de vues. LOUPE la lit (par le moteur, sur le plan vidéo), la met en pause, la reprend, et la relit une fois finie ; pendant la lecture, le HUD ne garde qu'une barre de progression, le nom, le temps (« 0:02 / 0:04 ») et le signe de pause. La dernière image reste à la fin. Les molettes, LECTURE, MENU et le déclencheur l'arrêtent ; Q la supprime (ses vues restent).
 
-**MENU en lecture** ouvre le menu de la prise affichée : ce que les applications savent en faire (Partager, pour une photo). La molette arrière choisit, la molette avant ouvre ; MENU revient en arrière puis ferme, Q ferme, LECTURE quitte la lecture, le déclencheur déclenche.
+**MENU en lecture** ouvre le menu de la prise affichée : ce que l'appareil et les applications savent en faire (Partager, pour une photo ; Extraire cette image, pour une vidéo, à l'endroit où elle est en pause). La molette arrière choisit, la molette avant ouvre ; MENU revient en arrière puis ferme, Q ferme, LECTURE quitte la lecture, le déclencheur déclenche.
 
 | Commande | En lecture |
 |---|---|
@@ -268,7 +268,7 @@ Les **vidéos** des timelapses y sont aussi, chacune après ses vues. Une vidéo
 | LOUPE | Ajustée → 100 % (un pixel de la photo par pixel de l'écran) → 200 % → ajustée. Dans la loupe, les molettes déplacent la zone, avec la mini-carte. La photo est décodée en pleine résolution une fois (~1 s), puis seulement recadrée. Sur une vidéo : lecture, pause, reprise. |
 | DISP | Détaillé (infos et histogramme) → simple (infos) → photo seule. |
 | Q | Supprimer : un premier appui demande confirmation, un second dans les 3 s supprime la prise entière (JPEG, DNG, copie de base). Toute autre touche annule. |
-| MENU | Le menu de la prise : Partager (voir « Partage »). |
+| MENU | Le menu de la prise : Partager une photo (voir « Partage »), extraire l'image d'une vidéo en pause. |
 | LECTURE | Revenir à la prise de vue. |
 | Déclencheur | Revenir à la prise de vue *et* déclencher : on ne rate jamais une photo. |
 
@@ -284,7 +284,7 @@ Les **vidéos** des timelapses y sont aussi, chacune après ses vues. Une vidéo
   - Fichiers : format, taille et qualité JPEG, compression du RAW.
   - Prise de vue : mode de déclenchement, intervalle et nombre de vues de l'intervallomètre, vues et écart du bracketing, réactivité (bascule ou ZSL), revue après la prise, garder la base (un JPEG neutre en plus, `PYB_0001.JPG`).
   - Objectif : profil d'objectif, ouverture, correction de l'ombrage (un autre tuning : la caméra est rouverte, ~0,2 s).
-  - Affichage : grille des tiers, histogramme, écran pendant les longues prises.
+  - Affichage : grille des tiers, repères de cadrage, histogramme, écran pendant les longues prises.
   - Boutons : fonctions de Fn1 et Fn2.
 
   Il fait 61 lignes (titres compris) et défile ; une barre à droite montre où l'on est.
@@ -318,12 +318,19 @@ Le déclencheur pressé pendant une séquence l'arrête (sauf la rafale, qu'il p
 
 **L'écran en veille pendant les longues prises** (2026-10-12). Pendant un intervallomètre, un timelapse, une pose B ou une pose longue, l'écran s'éteint après 30 s sans appui (MENU › Affichage › Écran en longue prise : 10 s, 30 s, 1 min, ou jamais). Plus de HUD à dessiner (0,1 s de CPU à chaque rendu), plus de visée à afficher. Un appui le rallume et ne fait que ça : l'appui qui réveille ne déclenche pas, n'arrête rien. Le relâchement du déclencheur compte toujours (il termine une pose B tenue), et le déclencheur de l'interface web agit sans rallumer. L'écran se rallume seul à la fin de la prise. Mesuré pendant un intervallomètre (RAW + JPEG, Cinéma 800T, une vue toutes les 5 s) : le moteur passe de 174 à 129 % d'un cœur, l'application de 33 à 10 %, soit un tiers du CPU en moins, en plus de l'écran.
 
-**Le mode vidéo** (`video.py`, §2.5). On y passe par MENU › Vidéo › Appareil, par une touche Fn (« Photo / Vidéo »), ou la touche V du clavier (un sélecteur sur l'appareil). Peu de réglages : la définition (1080p, 720p), la qualité (débit : 20, 12 ou 6 Mbit/s en 1080p, la moitié en 720p) et l'ISO (automatique, ou de 100 à 1600) ; le reste est automatique. La balance et la mesure sont celles de la photo (« Pellicule » devient automatique : pas de look en vidéo).
+**Le mode vidéo** (`video.py`, §2.5). On y passe par MENU › Vidéo › Appareil, par une touche Fn (« Photo / Vidéo »), ou la touche V du clavier (un sélecteur sur l'appareil). Peu de réglages : la définition (1080p, 720p), la cadence, la qualité (débit : 20, 12 ou 6 Mbit/s en 1080p à 25 i/s, la moitié en 720p, et proportionnellement plus au-delà de 25 i/s, jusqu'à 25 Mbit/s), la vitesse et l'ISO (automatique, ou de 100 à 1600) ; le reste est automatique. La balance et la mesure sont celles de la photo (« Pellicule » devient automatique : pas de look en vidéo).
 
 - Le déclencheur démarre et arrête l'enregistrement : `PYV_0169.MP4`, numéroté comme les photos. Pendant l'enregistrement, « ● REC 0:05 » en rouge ; pas de lecture, ni de retour en photo, et un changement de définition ou de qualité attend la fin.
 - La molette avant règle la correction d'exposition, la molette arrière l'ISO (le premier cran part de l'ISO mesuré), l'appui sur la molette arrière remet l'ISO en automatique.
-- Le menu Q devient « Réglages vidéo » : appareil, définition, qualité, ISO, mesure, balance, température, peaking, zébras.
-- Le bandeau montre « V », la vitesse et l'ISO mesurés, la correction, la balance, « 1080p 25 i/s · Normale » et le temps d'enregistrement restant sur la carte. L'image est en 16:9, avec des bandes noires dans la zone d'image.
+- **Cadence** (2026-10-12) : 25 i/s par défaut (pas de scintillement sous l'éclairage secteur à 50 Hz), 24 i/s (cinéma), 30 i/s (le menu prévient : il scintille sous 50 Hz), et 50 i/s en 720p seulement (l'encodeur du Pi 3 ne va pas jusqu'au 1080p50 ; le passage en 1080p ramène à 25). Mesuré sur 10 s : 24,00, 25,00 et 30,01 i/s en 1080p, 50,00 i/s en 720p, sans image perdue, le moteur à 20–32 % d'un cœur.
+- **Vitesse à 180°** (2026-10-12) : la pose dure une demi-image (1/50 s à 25 i/s, 1/48 à 24, 1/60 à 30, 1/100 à 50), le gain suit la lumière. Le flou de bougé naturel du cinéma, au lieu des poses très courtes qu'impose l'automatisme en plein jour (un mouvement saccadé) ; à 25 et 50 i/s, pas de scintillement sous 50 Hz non plus. En plein soleil, le gain au plus bas ne suffit plus : le posemètre apparaît en orange (surexposition), il faut un filtre ND. Mesuré : 19 999 µs à 25 i/s.
+- **Exposition verrouillée** (AE-L, 2026-10-12) : S (l'appui sur la molette avant) garde la vitesse et le gain du moment, pour qu'une prise ne change pas de luminosité quand la scène change (un panoramique d'une fenêtre vers l'intérieur). « AE-L » remplace la correction dans le bandeau ; la molette arrière éclaircit ou assombrit d'un tiers de diaphragme (en ISO), la molette avant est bloquée ; S ou I rendent l'automatisme, comme un changement de cadence, de vitesse ou de définition, ou le retour en photo. Le posemètre prévient si la scène s'éloigne de plus de ⅔ IL de l'exposition gardée.
+- **Carte pleine** (2026-10-12) : un fichier vidéo n'est fini qu'à l'arrêt (son index, écrit en dernier) ; si la carte se remplit avant, le moteur ne peut ni le finir ni le renommer, et **toute la vidéo est perdue**. L'appareil garde donc 64 Mo libres : à une minute de la limite, « Carte presque pleine », puis « CARTE PLEINE DANS 0:40 » en haut à gauche ; à 10 s, il arrête proprement l'enregistrement (« PYV_0172 · 12:31 · carte pleine »). Il refuse d'en commencer un avec moins de 20 s de place. Le temps restant du bandeau compte cette réserve.
+- **Date de prise** (2026-10-12) : chaque MP4 porte l'heure de son début (`creation_time`, en UTC), les vidéos comme les timelapses (l'heure de leur première vue) : galeries, téléphones et clouds les classent à leur date de prise, pas à celle de leur copie.
+- **Repères de cadrage** (2026-10-12, MENU › Affichage, et Q en vidéo) : 9:16 (stories, reels), 4:5 (portrait Instagram), 1:1, 2.39:1 (cinéma). Le plus grand cadre de ce format, centré dans l'image (16:9 en vidéo, 4:3 en photo), l'extérieur assombri, la grille des tiers dans le cadre. Masqués dans la loupe.
+- **Extraire une image** (2026-10-12) : en lecture, sur une vidéo en pause, MENU › « Extraire cette image (à 0:03.4) » en fait une photo, `PYC_` au numéro suivant (1920 × 1080 pour une vidéo en 1080p), datée dans son EXIF du début de la vidéo plus la position. Elle rejoint la lecture aussitôt, et peut être partagée comme une autre (Partage).
+- Le menu Q devient « Réglages vidéo » : appareil, définition, cadence, qualité, vitesse, ISO, mesure, balance, température, peaking, zébras, repères.
+- Le bandeau montre « V », la vitesse et l'ISO (bleus s'ils sont automatiques), la correction ou « AE-L », la balance, « 1080p25 · Normale » et le temps d'enregistrement restant sur la carte. L'image est en 16:9, avec des bandes noires dans la zone d'image.
 - Les vidéos vont dans la lecture et l'interface web (lecture, téléchargement, suppression), comme les timelapses. Le mode, enregistré dans les réglages, revient au démarrage.
 
 **Les applications** (`apps/`, 2026-10-12). Ce que l'appareil fait en plus des photos, dans MENU › Applications : une ligne par application, avec son état à droite (« À jour », « Envoi 40 % »), qui ouvre son propre menu. Une application est un objet créé avec l'appareil : son nom, son état en une ligne, son menu, une coroutine lancée avec l'appareil (son travail de fond), un réveil quand des fichiers arrivent sur la carte ou qu'un de ses réglages change, et quelques caractères pour le HUD pendant qu'elle travaille (affichés là où s'affiche « VIDÉO 40 % »).

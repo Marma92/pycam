@@ -69,7 +69,7 @@ def _timelapse_count_options(settings):
 
 def _video_quality_options(settings):
     return tuple(
-        (q, f"{video.QUALITY_LABELS[q]} · {video.BITRATES[(settings.video_resolution, q)] // 1_000_000} Mbit/s")
+        (q, f"{video.QUALITY_LABELS[q]} · {video.bitrate(settings, q) // 1_000_000} Mbit/s")
         for q in video.QUALITIES
     )
 
@@ -164,7 +164,10 @@ CAMERA_MODE = Item("Appareil", "mode", ("photo", "video"), ("Photo", "Vidéo"), 
 VIDEO_RESOLUTION = Item(
     "Définition vidéo", "video_resolution", tuple(video.RESOLUTIONS), ("1080p · 1920 × 1080", "720p · 1280 × 720"), "video"
 )
+VIDEO_FPS = Item("Cadence", "video_fps", video.fps_options, push="video")
 VIDEO_QUALITY = Item("Qualité vidéo", "video_quality", _video_quality_options, push="video")
+# 180°: the speed is half a frame (1/50 s at 25 i/s), the gain follows the light.
+VIDEO_SHUTTER = Item("Vitesse vidéo", "video_shutter", video.SHUTTERS, ("Automatique", "180° · flou naturel"), "exposure")
 VIDEO_ISO = Item("ISO vidéo", "video_iso", video.ISO_VALUES, ("Auto",) + tuple(str(i) for i in video.ISO_VALUES[1:]), "exposure")
 REVIEW = Item("Revue après la prise", "review_seconds", (0, 1, 2, 4), ("Coupée", "1 s", "2 s", "4 s"))
 # Applied at the next start of the application (web.py).
@@ -175,6 +178,12 @@ LENS_SHADING = Item("Correction de l'ombrage", "lens_shading", (False, True), ("
 LENS = Item("Objectif", "lens", _lens_options)
 APERTURE = Item("Ouverture", "aperture", _aperture_options)
 GRID = Item("Grille des tiers", "grid", *YES_NO)
+GUIDE = Item(
+    "Repères de cadrage",
+    "guide",
+    ("none", "9:16", "4:5", "1:1", "2.39:1"),
+    ("Aucun", "9:16 · stories, reels", "4:5 · portrait Instagram", "1:1 · carré", "2.39:1 · cinéma"),
+)
 HISTOGRAM = Item("Histogramme", "histogram", ("rgb", "luma"), ("RVB", "Luminance"))
 SCREEN_OFF = Item(
     "Écran en longue prise",
@@ -203,13 +212,16 @@ QUICK = (
 QUICK_VIDEO = (
     CAMERA_MODE,
     VIDEO_RESOLUTION,
+    VIDEO_FPS,
     VIDEO_QUALITY,
+    VIDEO_SHUTTER,
     VIDEO_ISO,
     METERING,
     WHITE_BALANCE,
     KELVIN,
     PEAKING,
     ZEBRA,
+    GUIDE,
 )
 APPLICATIONS = Item("Applications", kind="open", target=lambda camera: camera.apps_menu(), text=lambda camera: "›")
 FULL = (
@@ -259,7 +271,9 @@ FULL = (
     Item("Vidéo"),
     CAMERA_MODE,
     VIDEO_RESOLUTION,
+    VIDEO_FPS,
     VIDEO_QUALITY,
+    VIDEO_SHUTTER,
     VIDEO_ISO,
     Item("Objectif"),
     LENS,
@@ -269,6 +283,7 @@ FULL = (
     WEB,
     Item("Affichage"),
     GRID,
+    GUIDE,
     HISTOGRAM,
     SCREEN_OFF,
     Item("Boutons"),

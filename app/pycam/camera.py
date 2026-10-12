@@ -13,7 +13,7 @@ from . import exposure as exp
 from . import lenses, looks, meter, picture, timelapse, video
 from .engine_client import EngineError, call_blocking
 from .menu import Item, Menu
-from .playback import PIXEL_SCALES, Playback, describe, describe_video, poster
+from .playback import PIXEL_SCALES, Playback, describe, describe_video, extract_frame, list_photos, poster
 from .settings import DISPLAY_MODES, save_settings
 from .storage import Storage
 from .view import HudView
@@ -105,6 +105,8 @@ class Recording:
     start: float  # time.monotonic()
     duration: float = 0  # seconds recorded, from the engine
     bytes: int = 0
+    seconds_left: float | None = None  # on the card, once it runs short (video.WARN_SECONDS)
+    card_full: bool = False  # stopped before the card is full
 
 
 # Drive modes during which the screen may go to sleep (Camera.check_screen).
@@ -154,6 +156,7 @@ class Camera:
         self.task_status = ""  # a long background task, on the HUD ("VIDÉO 40 %")
         self.video = None  # Video, while one is played in playback
         self.recording = None  # Recording, in video mode
+        self.video_lock = None  # (seconds, ISO): the video's exposure locked (AE-L, the S key)
         self._video_setup_deferred = False  # video settings changed while recording
         self.screen_on = True  # off during long captures, to save power (check_screen)
         self._last_input = time.monotonic()
@@ -302,6 +305,7 @@ class Camera:
             if self.recording and self.recording.path == msg.get("path"):
                 self.recording.duration = msg.get("duration", 0)
                 self.recording.bytes = msg.get("bytes", 0)
+                self.check_card_space()
                 self.redraw()
         elif kind == "record_done":
             self._recording_done(msg)
@@ -323,7 +327,7 @@ class Camera:
             return
         try:
             if self.settings.mode == "video":
-                controls = video.controls(self.settings)
+                controls = video.controls(self.settings, self.video_lock)
             else:
                 preset = self.preset()
                 controls = self.settings.exposure.controls(preset.exposure_bias, preset.white_balance)
@@ -633,13 +637,40 @@ class Camera:
         self.spawn(self.load_shown())
         self.redraw()
 
-    def photo_menu(self):
-        """MENU in playback: what the applications can do with the photo shown (share it...)."""
+    def photo_menu(self, position=0.0):
+        """MENU in playback: what can be done with the shot shown: a video's image at
+        `position` extracted as a photo; the applications' (share a photo...)."""
         path = self.playback.current
         items = [item for app in self.apps for item in app.photo_items(self, path)]
+        if self.playback.video:
+            at = f"à {exp.format_duration(int(position))}.{int(position * 10) % 10}"
+            items.insert(0, Item("Extraire cette image", kind="run", target=lambda c: c.extract_frame(path, position), text=lambda c: at))
         if not items:
             items = [Item("Rien à faire de cette prise", kind="info")]
         return Menu(self.settings, items=items, title=os.path.basename(path)[:-4], context=self)
+
+    def extract_frame(self, video_path, position):
+        """The video's image at `position` as a photo (the next number), back in playback."""
+        self.menu, self.menu_stack = None, []
+        self.spawn(self._extract_frame(video_path, position))
+
+    async def _extract_frame(self, video_path, position):
+        base, folder, number = self.storage.next_photo()
+        out = base + ".JPG"
+        self.show_message("Extraction…")
+        if not await asyncio.to_thread(extract_frame, video_path, position, out):
+            self.show_message("Extraction impossible", warning=True)
+            return
+        self.storage.commit(folder, number)
+        self.save_now()
+        log.info("frame of %s at %.1f s: %s", os.path.basename(video_path), position, out)
+        p = self.playback
+        if p:  # in the list, the video still shown
+            current = p.current
+            p.photos = list_photos(self.storage.root, videos=True)
+            p.index = p.photos.index(current) if current in p.photos else len(p.photos) - 1
+        self.show_message(f"{os.path.basename(base)} extraite")
+        self.wake_apps()
 
     def close_playback(self):
         self.stop_video()
@@ -663,8 +694,10 @@ class Camera:
             self.redraw()
             return True
         if action == "menu":
+            v = self.video  # where a video is: its image can be extracted
+            position = max(0.0, v.position - (0.1 if v.ended else 0)) if v and v.path == p.current else 0.0
             self.stop_video()
-            self.menu, self.menu_stack = self.photo_menu(), []
+            self.menu, self.menu_stack = self.photo_menu(position), []
             self.redraw()
             return True
         if action == "q":
@@ -797,6 +830,7 @@ class Camera:
             self.settings.mode = mode
             self.menu = None
             self.loupe = 1
+            self.video_lock = None
             self.spawn(self.apply_mode())
             self.save_soon()
             self.redraw()
@@ -821,7 +855,16 @@ class Camera:
         if action == "shutter":
             self.spawn(self.stop_recording() if self.recording else self.start_recording())
             return True
-        if action in ("front_dial_plus", "front_dial_minus"):
+        if action == "shutter_auto" or (self.video_lock and action == "iso_auto"):
+            self.toggle_video_lock()
+        elif self.video_lock and action in ("front_dial_plus", "front_dial_minus"):
+            self.show_message("Exposition verrouillée : S pour la libérer", warning=True)
+            return True
+        elif self.video_lock and action in ("rear_dial_plus", "rear_dial_minus"):
+            speed, iso = self.video_lock  # the locked exposure, brighter or darker
+            index = exp.nearest_index(exp.ISO_VALUES, iso) + (1 if action == "rear_dial_plus" else -1)
+            self.video_lock = (speed, exp.ISO_VALUES[max(0, min(len(exp.ISO_VALUES) - 1, index))])
+        elif action in ("front_dial_plus", "front_dial_minus"):
             e.step_ev(+1 if action == "front_dial_plus" else -1)
         elif action in ("rear_dial_plus", "rear_dial_minus"):
             video.step_iso(s, +1 if action == "rear_dial_plus" else -1, self.measured_iso())
@@ -830,7 +873,7 @@ class Camera:
                 s.video_iso = 0
             else:
                 video.step_iso(s, 0, self.measured_iso())
-        elif action in ("shutter_auto", "loupe", "strategy", "raw", "drive"):
+        elif action in ("loupe", "strategy", "raw", "drive"):
             self.show_message("Pas en vidéo", warning=True)
             return True
         else:
@@ -840,9 +883,44 @@ class Camera:
         self.redraw()
         return True
 
+    def toggle_video_lock(self):
+        """S in video: the exposure kept as it is now (speed and gain), for a take that
+        must not change in brightness when the scene does; S again, automatic."""
+        if self.video_lock:
+            self.video_lock = None
+            self.show_message("Exposition automatique")
+            return
+        speed = video.shutter(self.settings) or self.measured_shutter()
+        iso = round(self.measured_iso())
+        if not speed or not iso:
+            self.show_message("Pas de mesure", warning=True)
+            return
+        self.video_lock = (speed, iso)
+        self.show_message("Exposition verrouillée")
+
+    def check_card_space(self):
+        """While recording: warned a minute before the card is full, stopped 10 s before,
+        so that the video can still be ended (a video that cannot be is lost whole)."""
+        r = self.recording
+        if not r or r.card_full:
+            return
+        left = video.seconds_left(self.settings, self.storage.free_bytes())
+        if left <= video.STOP_SECONDS:
+            r.card_full = True
+            log.warning("card full: recording %s stopped", os.path.basename(r.path))
+            self.show_message("Carte pleine : enregistrement arrêté", warning=True)
+            self.spawn(self.stop_recording())
+        elif left <= video.WARN_SECONDS:
+            if r.seconds_left is None:
+                self.show_message("Carte presque pleine", warning=True)
+            r.seconds_left = left
+
     async def start_recording(self):
         async with self._capture_lock:
             if self.recording:
+                return
+            if video.seconds_left(self.settings, self.storage.free_bytes()) <= 2 * video.STOP_SECONDS:
+                self.show_message("Carte pleine", warning=True)
                 return
             base, folder, number = self.storage.next_photo()
             path = os.path.join(os.path.dirname(base), f"PYV_{number:04d}.MP4")
@@ -868,13 +946,15 @@ class Camera:
 
     def _recording_done(self, msg):
         name = os.path.basename(msg.get("path", ""))[:-4]
+        card_full = bool(self.recording and self.recording.card_full)
         self.recording = None
         if msg.get("error"):
             log.error("video %s: %s", name, msg["error"])
             self.show_message("Vidéo non enregistrée", warning=True)
         else:
             log.info("video %s: %.1f s, %d frames, %d bytes", name, msg.get("duration", 0), msg.get("frames", 0), msg.get("bytes", 0))
-            self.show_message(f"{name} · {exp.format_duration(msg.get('duration', 0))}")
+            text = f"{name} · {exp.format_duration(msg.get('duration', 0))}"
+            self.show_message(text + " · carte pleine" if card_full else text, warning=card_full)
         if self._video_setup_deferred:
             self._video_setup_deferred = False
             self.spawn(self.apply_mode())
@@ -883,22 +963,40 @@ class Camera:
 
     def _video_view(self, message, warning):
         s, e = self.settings, self.settings.exposure
-        recording = ""
+        recording, task = "", self.task_status or self.apps_hud()
         if self.recording:
-            recording = exp.format_duration(self.recording.duration or time.monotonic() - self.recording.start)
-        iso = s.video_iso or round(self.measured_iso())
+            r = self.recording
+            recording = exp.format_duration(r.duration or time.monotonic() - r.start)
+            if r.seconds_left is not None:  # the card runs short: in sight
+                task = f"CARTE PLEINE DANS {exp.format_duration(max(0, r.seconds_left - video.STOP_SECONDS))}"
+        fixed = video.shutter(s)
+        if self.video_lock:
+            speed, iso = self.video_lock
+        else:
+            speed, iso = fixed or self.measured_shutter(), s.video_iso or round(self.measured_iso())
+        # The meter, as a warning only: the exposure cannot reach the right one (at 180° in
+        # full sun: an ND filter is wanted), or, locked, the scene has gone away from it.
+        meter_value, meter_warning = None, False
+        stops = meter.offset(s.meter_k, self.stats)
+        if stops is not None:
+            stops -= 0 if self.video_lock else e.ev
+            if abs(stops) >= 2 / 3:
+                meter_value, meter_warning = meter.to_thirds(stops), True
         return HudView(
             display=s.display,
             grid=s.grid,
+            guide="" if s.guide == "none" else s.guide,
             video_mode=True,
             recording=recording,
             mode="V",
             metering=e.metering,
-            shutter=exp.format_shutter(self.measured_shutter()),
-            shutter_auto=True,
+            shutter=exp.format_shutter(speed),
+            shutter_auto=not (fixed or self.video_lock),
             iso=f"ISO {iso}" if iso else "ISO --",
-            iso_auto=not s.video_iso,
-            ev=exp.format_ev(e.ev),
+            iso_auto=not (s.video_iso or self.video_lock),
+            ev="AE-L" if self.video_lock else exp.format_ev(e.ev),
+            meter=meter_value,
+            meter_warning=meter_warning,
             awb=e.awb_label(),
             formats=video.label(s),
             shots=f"{video.minutes_left(s, self.storage.free_bytes())} min",
@@ -908,7 +1006,7 @@ class Camera:
             menu_title=self.menu.title if self.menu else "",
             menu_index=self.menu.index if self.menu else 0,
             writing=self.writing,
-            task=self.task_status or self.apps_hud(),
+            task=task,
             **self._histograms(self.stats.get("histogram", ()), self.stats.get("histogram_rgb", ()), live=False),
             message=message,
             warning=warning,
@@ -978,6 +1076,10 @@ class Camera:
                 s.aperture = None  # it belonged to the previous lens
             if item.attr == "drive":
                 self.drive.stop()  # the sequence of the previous mode
+            if item.attr in ("video_fps", "video_shutter", "video_resolution"):
+                self.video_lock = None  # another speed, or another frame
+            if item.attr == "video_resolution" and s.video_fps == 50 and s.video_resolution != "720p":
+                s.video_fps = 25  # 50 frames a second: 720p only
         if item.attr == "preset":
             self.spawn(self.apply_exposure())  # its exposure shift
         if item.attr == "lens_shading":
@@ -1288,6 +1390,7 @@ class Camera:
         return HudView(
             display=s.display,
             grid=s.grid and self.loupe == 1,  # the rule of thirds means nothing in the loupe
+            guide="" if s.guide == "none" or self.loupe > 1 else s.guide,
             mode=e.mode,
             metering=e.metering,
             shutter="B" if e.bulb else exp.format_shutter(shutter),
