@@ -69,6 +69,7 @@ class Settings:
     video_quality: str = "normal"  # video.QUALITIES
     video_iso: int = 0  # video.ISO_VALUES, 0: automatic
     video_fps: int = 25  # video.FRAME_RATES (50: 720p only)
+    video_slowmo: bool = False  # 50 frames a second played at 25 (720p)
     video_shutter: str = "auto"  # video.SHUTTERS: automatic, or 180° (half a frame)
     screen_off: int = 30  # SCREEN_OFF: seconds without a press before the screen sleeps in a long capture, 0: never
     display: str = "detailed"
@@ -95,6 +96,16 @@ class Settings:
     dcim: str = "~/DCIM"
     folder_number: int = 100
     next_number: int = 1
+
+    @property
+    def video_rate(self):
+        """The frame rate, or "slow" (slow motion): the menu's Cadence line."""
+        return "slow" if self.video_slowmo and self.video_fps == 50 else self.video_fps
+
+    @video_rate.setter
+    def video_rate(self, value):
+        self.video_slowmo = value == "slow"
+        self.video_fps = 50 if self.video_slowmo else value
 
     @property
     def peaking_mode(self):
@@ -197,6 +208,8 @@ def load_settings(path):
             setattr(settings, name, getattr(defaults, name))
     if settings.video_fps == 50 and settings.video_resolution != "720p":
         settings.video_fps = defaults.video_fps
+    if settings.video_fps != 50:
+        settings.video_slowmo = False
     if not set(settings.formats) <= {"jpeg", "dng"} or not settings.formats:
         settings.formats = defaults.formats
     if not 0 <= settings.lens < len(settings.lenses):

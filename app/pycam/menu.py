@@ -164,7 +164,7 @@ CAMERA_MODE = Item("Appareil", "mode", ("photo", "video"), ("Photo", "Vidéo"), 
 VIDEO_RESOLUTION = Item(
     "Définition vidéo", "video_resolution", tuple(video.RESOLUTIONS), ("1080p · 1920 × 1080", "720p · 1280 × 720"), "video"
 )
-VIDEO_FPS = Item("Cadence", "video_fps", video.fps_options, push="video")
+VIDEO_FPS = Item("Cadence", "video_rate", video.fps_options, push="video")  # the slow motion too
 VIDEO_QUALITY = Item("Qualité vidéo", "video_quality", _video_quality_options, push="video")
 # 180°: the speed is half a frame (1/50 s at 25 i/s), the gain follows the light.
 VIDEO_SHUTTER = Item("Vitesse vidéo", "video_shutter", video.SHUTTERS, ("Automatique", "180° · flou naturel"), "exposure")

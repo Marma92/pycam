@@ -34,13 +34,17 @@ class Recorder
 public:
 	using EventFn = std::function<void(nlohmann::json)>;
 
-	// path: the final file (".MP4"). Throws std::runtime_error if it cannot start.
-	Recorder(std::string path, StreamInfo const &info, unsigned fps, unsigned bitrate, EventFn on_event);
+	// path: the final file (".MP4"). slowdown: the file plays that many times slower than
+	// it was filmed (2: 50 frames a second played at 25, a slow motion). Throws
+	// std::runtime_error if it cannot start.
+	Recorder(std::string path, StreamInfo const &info, unsigned fps, unsigned bitrate, EventFn on_event,
+			 unsigned slowdown = 1);
 	~Recorder();
 
 	// A camera frame of the video stream (camera loop thread).
 	void Encode(CompletedRequestPtr const &request, libcamera::Stream *stream, RPiCamApp &app);
-	// Ends the file: {"path", "duration", "frames", "bytes"}, or "error".
+	// Ends the file: {"path", "duration" (filmed), "video_duration" (played), "frames",
+	// "bytes"}, or "error".
 	nlohmann::json Stop();
 	nlohmann::json State() const;
 
@@ -52,6 +56,7 @@ private:
 	std::string path_, part_;
 	StreamInfo info_;
 	unsigned fps_;
+	unsigned slowdown_;
 	EventFn on_event_;
 	VideoOptions options_;
 	std::unique_ptr<Encoder> encoder_;

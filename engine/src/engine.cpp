@@ -1084,11 +1084,14 @@ void Engine::VideoMode(json const &command)
 	setup.height = command.value("height", setup.height);
 	setup.fps = command.value("fps", setup.fps);
 	setup.bitrate = command.value("bitrate", setup.bitrate);
+	setup.slowdown = command.value("slowdown", setup.slowdown);
 	if (setup.width > 2028 || setup.height > 1080 || setup.width < 320 || setup.height < 180 || setup.width % 2 ||
 		setup.height % 2)
 		throw CommandError("bad_request", "video size: even, up to 2028x1080");
 	if (setup.fps < 1 || setup.fps > 50)
 		throw CommandError("bad_request", "video fps: 1 to 50");
+	if (setup.slowdown < 1 || setup.slowdown > 4)
+		throw CommandError("bad_request", "video slowdown: 1 to 4");
 	if (setup.bitrate < 500'000 || setup.bitrate > 25'000'000)
 		throw CommandError("bad_request", "video bitrate: 0.5 to 25 Mbit/s");
 	if (recorder_)
@@ -1096,7 +1099,10 @@ void Engine::VideoMode(json const &command)
 	bool const changed = !video_ || !(*video_ == setup);
 	video_ = setup;
 	loupe_zoom_ = 1;
-	if (changed || phase_ != Phase::Video)
+	// restart: the camera starts again even with the same settings. The ISP's contrast and
+	// saturation reach the small stream (the screen's) only when it starts (measured
+	// 2026-10-13: changed while running, they reach the recording, not the screen).
+	if (changed || phase_ != Phase::Video || command.value("restart", false))
 		next_phase_ = Phase::Video;
 }
 
@@ -1125,7 +1131,7 @@ json Engine::RecordStart(json const &command)
 	try
 	{
 		recorder_ = std::make_unique<Recorder>(path, info, video_->fps, video_->bitrate,
-											   [this](json event) { ipc_.Broadcast(event); });
+											   [this](json event) { ipc_.Broadcast(event); }, video_->slowdown);
 	}
 	catch (std::exception const &e)
 	{
@@ -1279,7 +1285,8 @@ json Engine::State() const
 		{ "strategy", zsl_ ? "zsl" : "switch" },
 		{ "phase", phase_ == Phase::Still ? "still" : phase_ == Phase::Video ? "video" : "viewfinder" },
 		{ "video_mode", video_ ? json { { "width", video_->width }, { "height", video_->height },
-										{ "fps", video_->fps }, { "bitrate", video_->bitrate } }
+										{ "fps", video_->fps }, { "bitrate", video_->bitrate },
+										{ "slowdown", video_->slowdown } }
 							   : json(nullptr) },
 		{ "recording", recorder_ ? recorder_->State() : json(nullptr) },
 		{ "viewfinder_exposure", viewfinder_exposure_.empty() ? json(nullptr) : json(viewfinder_exposure_) },
