@@ -13,7 +13,7 @@ from . import exposure as exp
 from . import lenses, looks, meter, picture, timelapse
 from .engine_client import EngineError, call_blocking
 from .menu import Menu
-from .playback import PIXEL_SCALES, Playback, describe
+from .playback import PIXEL_SCALES, Playback, describe, describe_video, poster
 from .settings import DISPLAY_MODES, save_settings
 from .storage import Storage
 from .view import HudView
@@ -80,6 +80,22 @@ class Review:
     histogram: tuple
     histogram_rgb: tuple
     size: tuple | None = None  # of the photo, in pixels (playback: for the loupe)
+    image: str = ""  # what the HUD shows, if not `path`: a video's first frame
+
+
+@dataclass
+class Video:
+    """The video being played in playback (by the engine, on the video plane)."""
+
+    path: str
+    duration: float = 0
+    position: float = 0
+    paused: bool = False
+    ended: bool = False
+
+
+# Drive modes during which the screen may go to sleep (Camera.check_screen).
+LONG_CAPTURES = ("interval", "timelapse", "bulb")
 
 
 class Camera:
@@ -121,13 +137,16 @@ class Camera:
         self.exposing = None  # Exposing, during a long exposure or a bulb
         self.last_capture_path = ""  # without extension
         self.task_status = ""  # a long background task, on the HUD ("VIDÉO 40 %")
+        self.video = None  # Video, while one is played in playback
+        self.screen_on = True  # off during long captures, to save power (check_screen)
+        self._last_input = time.monotonic()
         self._exposure_deferred = False  # an exposure change waits for the end of the exposure
         self._save_handle = None
         self._tasks = set()
         self._snapshots = {}  # path -> future, until the engine has written it
 
     async def run(self, inputs):
-        await asyncio.gather(self.engine.run(), inputs.run(), self.hud_loop())
+        await asyncio.gather(self.engine.run(), inputs.run(), self.hud_loop(), self.screen_loop())
 
     def shutdown(self):
         """Settings saved, and the engine's default HUD back on the screen."""
@@ -235,6 +254,22 @@ class Camera:
                 future.set_result(kind == "snapshot_done")
         elif kind == "tuning":
             log.info("ISP tuning %s (camera reopened in %.0f ms)", msg.get("tuning"), msg.get("reopen_ms", 0))
+        elif kind == "video_progress":
+            if self.video:
+                self.video.position = msg.get("position", 0)
+                self.video.duration = msg.get("duration") or self.video.duration
+                self.redraw()
+        elif kind == "video_ended":
+            if self.video:
+                self.video.position = msg.get("position", self.video.position)
+                if msg.get("reason") == "end":
+                    self.video.ended = True
+                elif msg.get("reason") == "error":
+                    log.error("video: %s", msg.get("error"))
+                    self.video = None
+                    self.spawn(self._video_call("video_stop"))
+                    self.show_message("Lecture impossible", warning=True)
+                self.redraw()
         elif kind == "display_ready":
             log.info("the engine got the screen")
             self.spawn(self.setup_hud())
@@ -390,6 +425,13 @@ class Camera:
     def on_action(self, action):
         log.debug("action %s", action)
         s, e = self.settings, self.settings.exposure
+        # The screen asleep (a long capture): a press only wakes it. The release of the
+        # shutter still counts (it ends a bulb), and the web interface acts without waking it.
+        if action not in ("shutter_release", "remote_shutter"):
+            self._last_input = time.monotonic()
+            if not self.screen_on:
+                self.set_screen(True)
+                return
         if action == "shutter_release":  # nothing else: it ends no review, closes no menu
             self.drive.release()
             return
@@ -526,6 +568,7 @@ class Camera:
         self.redraw()
 
     def close_playback(self):
+        self.stop_video()
         self.playback = self._shown = None
         self.redraw()
 
@@ -542,7 +585,9 @@ class Camera:
             self.delete_shown()
             return True
         self._delete_armed_until = 0.0
-        if action == "loupe":
+        if p.video and action == "loupe":  # play, pause, play again
+            self.toggle_video()
+        elif action == "loupe":
             p.cycle_zoom()
         elif action == "disp":
             s = self.settings
@@ -552,6 +597,7 @@ class Camera:
             p.pan(*LOUPE_MOVES[action], self.playback_zoom())
         elif action in PLAYBACK_STEPS:
             if p.step(PLAYBACK_STEPS[action]):
+                self.stop_video()
                 self.spawn(self.load_shown())
         self.redraw()
         return True
@@ -566,6 +612,7 @@ class Camera:
             self.show_message(f"Supprimer {name} ? Q pour confirmer", warning=True)
             return
         self._delete_armed_until = 0.0
+        self.stop_video()
         try:
             removed = p.delete_current()
         except OSError as e:
@@ -581,21 +628,93 @@ class Camera:
         self.spawn(self.load_shown())
 
     async def load_shown(self):
-        """Decodes the photo shown in playback, off the event loop (~0.3 s)."""
+        """Decodes the photo shown in playback, off the event loop (~0.3 s); for a video, its
+        first frame (made once with ffmpeg, then cached) and what it is."""
         p, hud = self.playback, self.hud
         path = p.current if p else None
         if not path:
             return
 
         def load():
-            info, size = describe(path)
-            luma, rgb = hud.load_review(path) if hud else ((), ())
-            return Review(path, info, tuple(luma), tuple(tuple(c) for c in rgb), size)
+            if p.video:
+                info, size, _ = describe_video(path)
+                image = poster(path) or ""
+            else:
+                (info, size), image = describe(path), path
+            luma, rgb = hud.load_review(image) if hud and image else ((), ())
+            return Review(path, info, tuple(luma), tuple(tuple(c) for c in rgb), size, image)
 
         shown = await asyncio.to_thread(load)
         if self.playback is p and p.current == path:  # not moved on meanwhile
             self._shown = shown
             self.redraw()
+
+    # --- Videos in playback (the engine plays them: video_player.cpp)
+
+    def toggle_video(self):
+        v = self.video
+        if v is None or v.ended:
+            self.video = Video(self.playback.current)
+            self.spawn(self._play_video(self.video))
+        else:
+            v.paused = not v.paused
+            self.spawn(self._video_call("video_pause", paused=v.paused))
+        self.redraw()
+
+    async def _play_video(self, video):
+        try:
+            reply = await self.engine.call("video_play", path=video.path)
+            video.duration = reply.get("video", {}).get("duration", 0)
+        except (EngineError, ConnectionError, TimeoutError) as e:
+            log.error("cannot play %s: %s", video.path, e)
+            if self.video is video:
+                self.video = None
+                self.show_message("Lecture impossible", warning=True)
+        self.redraw()
+
+    def stop_video(self):
+        if self.video:
+            self.video = None
+            self.spawn(self._video_call("video_stop"))
+
+    async def _video_call(self, command, **params):
+        try:
+            await self.engine.call(command, **params)
+        except (EngineError, ConnectionError, TimeoutError) as e:
+            log.warning("%s: %s", command, e)
+
+    # --- The screen asleep during long captures
+
+    @property
+    def long_capture(self):
+        """A capture that lasts (an interval, a timelapse, a bulb, a long exposure): no
+        need for the screen meanwhile."""
+        return (self.drive.active and self.drive.running in LONG_CAPTURES) or self.exposing is not None
+
+    def check_screen(self, now=None):
+        """Off after `screen_off` seconds without a press during a long capture; on again
+        when it is over."""
+        now = time.monotonic() if now is None else now
+        delay = self.settings.screen_off
+        if self.screen_on and delay and self.long_capture and now - self._last_input >= delay:
+            self.set_screen(False)
+        elif not self.screen_on and not self.long_capture:
+            self.set_screen(True)
+
+    def set_screen(self, on):
+        if on == self.screen_on:
+            return
+        self.screen_on = on
+        log.info("screen %s", "on" if on else "off (long capture)")
+        self.spawn(self._video_call("display_power", on=on))
+        if on:
+            self._last_input = time.monotonic()
+            self.redraw()
+
+    async def screen_loop(self):
+        while True:
+            await asyncio.sleep(1.0)
+            self.check_screen()
 
     def playback_zoom(self):
         """The playback loupe's magnification against the fitted photo."""
@@ -845,8 +964,31 @@ class Camera:
         message = text if time.monotonic() < until else ""
         if self.playback:
             p, shown = self.playback, self._shown
+            if self.video and self.video.path == p.current:
+                v = self.video
+                return HudView(
+                    display=s.display,
+                    review_info=os.path.basename(v.path)[:-4],  # the name: the bar has the time
+                    playback=p.position,
+                    video_playing=True,
+                    video_paused=v.paused or v.ended,
+                    video_time=f"{exp.format_duration(v.position)} / {exp.format_duration(math.ceil(v.duration))}",
+                    video_progress=min(1.0, v.position / v.duration) if v.duration else 0.0,
+                    message=message,
+                    warning=warning,
+                )
             if not shown or shown.path != p.current:  # being decoded
                 return HudView(display=s.display, review=p.current, playback=p.position, message=message, warning=warning)
+            if p.video:  # its first frame, until LOUPE plays it
+                return HudView(
+                    display=s.display,
+                    review=shown.image,
+                    review_info=shown.info,
+                    playback=p.position,
+                    video_hint="LOUPE : lire",
+                    message=message,
+                    warning=warning,
+                )
             return HudView(
                 display=s.display,
                 review=shown.path,
@@ -966,6 +1108,9 @@ class Camera:
             self._redraw.clear()
             if self.hud is not hud:  # new HUD after a reconnection: draw everything again
                 hud, shown = self.hud, None
+            if not self.screen_on:  # asleep: nothing to draw (~0.1 s of CPU saved each time)
+                shown = None
+                continue
             if hud is not None:
                 view = self.view()
                 if view != shown:
@@ -973,7 +1118,7 @@ class Camera:
                         await asyncio.to_thread(hud.draw, view)  # ~0.1 s at 1080p: off the event loop
                         await self.engine.call("hud_commit")
                         shown = view
-                    except (EngineError, ConnectionError, ValueError) as e:  # ValueError: HUD closed meanwhile
+                    except (EngineError, ConnectionError, TimeoutError, ValueError) as e:  # ValueError: HUD closed meanwhile
                         log.debug("HUD not shown: %s", e)
             await asyncio.sleep(HUD_MIN_INTERVAL)
 

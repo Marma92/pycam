@@ -134,6 +134,7 @@ async function refreshState() {
                    ["Format", s.formats], ["Vues restantes", s.shots]];
     if (s.writing) parts.push(["Écriture", s.writing]);
     if (s.task) parts.push(["", s.task]);
+    if (!s.screen) parts.push(["", "écran en veille"]);
     if (s.drive) parts.unshift(["", s.countdown ? `${s.drive} · ${s.countdown}` : s.drive]);
     if (s.exposure_timer) parts.unshift([s.exposure_label, s.exposure_timer]);
     const bulb = s.exposure_label === "POSE B";

@@ -256,6 +256,7 @@ int Engine::Run()
 	}
 
 	std::cerr << "pycam-engine: stopping\n";
+	player_.reset(); // its frames are on the display
 	display_.reset(); // planes off, frames given back before the camera stops (see ReleaseFrames)
 	app_.StopCamera();
 	app_.Teardown();
@@ -787,6 +788,30 @@ void Engine::HandleCommand(int client, json const &command, Clock::time_point re
 			std::lock_guard<std::mutex> lock(snapshot_mutex_);
 			snapshot_path_ = path;
 		}
+		else if (name == "video_play" || name == "video_pause" || name == "video_stop" || name == "display_power")
+		{
+			if (!display_)
+				throw CommandError("unsupported", "no display");
+			if (name == "display_power")
+				display_->SetPower(command.at("on").get<bool>());
+			else if (name == "video_play")
+			{
+				if (!player_)
+					player_ = std::make_unique<VideoPlayer>(*display_, [this](json event) { ipc_.Broadcast(event); });
+				try
+				{
+					reply["video"] = player_->Play(command.at("path").get<std::string>());
+				}
+				catch (std::runtime_error const &e)
+				{
+					throw CommandError("bad_request", e.what());
+				}
+			}
+			else if (player_ && name == "video_pause")
+				player_->Pause(command.value("paused", true));
+			else if (player_)
+				player_->Stop();
+		}
 		else if (name == "hud_info" || name == "hud_commit")
 		{
 			if (!display_)
@@ -1076,6 +1101,7 @@ json Engine::State() const
 		{ "still_size", still_size_ ? json(*still_size_) : json(nullptr) },
 		{ "tuning", tuning_.empty() ? json(nullptr) : json(tuning_) },
 		{ "look", LookState() },
+		{ "video", player_ ? player_->State() : json(nullptr) },
 	};
 }
 

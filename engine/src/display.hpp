@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -49,6 +50,27 @@ public:
 	// Returns once the copy is done: the application may draw the next HUD.
 	void CommitHud();
 
+	// A decoded video frame (video_player.hpp): a DRM PRIME buffer of the decoder, kept
+	// alive by `owner` as long as it is on the screen.
+	struct ExternalFrame
+	{
+		std::shared_ptr<void> owner;
+		int fd = -1; // one dmabuf holds the planes
+		uint64_t modifier = 0;
+		uint32_t format = 0, width = 0, height = 0;
+		unsigned nb_planes = 0;
+		uint32_t offsets[4] {}, pitches[4] {};
+		bool bt709 = true, full_range = false;
+	};
+	// Video playback: while on, the camera frames are not shown, the external ones are, on
+	// the video plane, scaled to fit the screen. Off: back to the camera's.
+	void SetExternal(bool on);
+	void ShowExternal(std::shared_ptr<const ExternalFrame> frame); // the latest wins
+
+	// The screen's power (DPMS). Off, nothing is drawn: no viewfinder frame (nor its look and
+	// focus aids), the last HUD waits; on, all comes back.
+	void SetPower(bool on);
+
 	// Screen size, where the image is, and how to draw the HUD.
 	nlohmann::json Info() const;
 
@@ -88,10 +110,15 @@ private:
 	void SetPlane(uint32_t plane, uint32_t fb, Rect const &dest, unsigned src_w, unsigned src_h);
 	void Loop();
 	void ShowVideo(Pending &frame);
+	void ShowExternalFrame(std::shared_ptr<const ExternalFrame> const &frame);
+	FrameFb ImportExternal(ExternalFrame const &frame);
+	Rect Fit(unsigned width, unsigned height) const;
+	bool SetConnectorPower(bool on);
 	void FlipHud();
 
 	int fd_ = -1;
 	uint32_t crtc_ = 0;
+	uint32_t connector_ = 0;
 	unsigned crtc_index_ = 0;
 	unsigned screen_w_ = 0, screen_h_ = 0;
 	Rect image_rect_;
@@ -115,6 +142,11 @@ private:
 	bool reset_requested_ = false;
 	bool hud_dirty_ = false;
 	bool stop_ = false;
+	bool external_ = false; // video playback: the camera frames are dropped
+	bool leave_external_ = false;
+	std::shared_ptr<const ExternalFrame> pending_external_;
+	bool power_ = true;
+	std::optional<bool> power_request_;
 	uint64_t frames_shown_ = 0;
 	uint64_t frames_dropped_ = 0;
 	std::thread thread_;
@@ -125,6 +157,10 @@ private:
 	std::vector<FrameFb> retired_fbs_; // from before Reset(), freed once replaced on the screen
 	CompletedRequestPtr on_screen_;
 	bool colour_space_set_ = false;
+	std::map<int, FrameFb> external_fbs_; // decoder dmabuf fd -> DRM framebuffer
+	std::shared_ptr<const ExternalFrame> external_on_screen_;
+	std::shared_ptr<const ExternalFrame> external_retired_; // until a camera frame replaces it
+	bool external_colour_set_ = false;
 };
 
 } // namespace pycam

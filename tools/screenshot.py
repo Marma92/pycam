@@ -10,6 +10,7 @@ import mmap
 import os
 import sys
 import tempfile
+import time
 
 from PIL import Image
 
@@ -42,11 +43,12 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "viewfinder.jpg")
         shot = engine.call({"cmd": "snapshot", "path": path}).get("ok")
+        deadline = time.monotonic() + 3.0
         while shot:
-            msg = engine.read(3.0)
-            if msg is None:
-                # No viewfinder frame (a long exposure: the screen keeps the last one): the
-                # HUD alone, over grey.
+            msg = engine.read(max(0.1, deadline - time.monotonic()))
+            if msg is None or time.monotonic() > deadline:
+                # No viewfinder frame (a long exposure: the screen keeps the last one; a
+                # video: on the video plane, out of reach): the HUD alone, over grey.
                 print("pas d'image de visée : le HUD seul", file=sys.stderr)
                 screen.paste((60, 60, 60, 255), (x, y, x + w, y + h))
                 shot = False

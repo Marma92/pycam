@@ -140,6 +140,12 @@ LENS = Item("Objectif", "lens", _lens_options)
 APERTURE = Item("Ouverture", "aperture", _aperture_options)
 GRID = Item("Grille des tiers", "grid", *YES_NO)
 HISTOGRAM = Item("Histogramme", "histogram", ("rgb", "luma"), ("RVB", "Luminance"))
+SCREEN_OFF = Item(
+    "Écran en longue prise",
+    "screen_off",
+    (10, 30, 60, 0),
+    ("Éteint après 10 s", "Éteint après 30 s", "Éteint après 1 min", "Toujours allumé"),
+)
 FN1 = Item("Bouton Fn1", "fn1", FN_ACTIONS, tuple(FN_LABELS[a] for a in FN_ACTIONS))
 FN2 = Item("Bouton Fn2", "fn2", FN_ACTIONS, tuple(FN_LABELS[a] for a in FN_ACTIONS))
 
@@ -205,6 +211,7 @@ FULL = (
     Item("Affichage"),
     GRID,
     HISTOGRAM,
+    SCREEN_OFF,
     Item("Boutons"),
     FN1,
     FN2,

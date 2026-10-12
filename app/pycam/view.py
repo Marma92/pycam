@@ -32,6 +32,11 @@ class HudView:
     review: str = ""  # path of the photo being reviewed (decoded by Hud.load_review)
     review_info: str = ""
     playback: str = ""  # in playback, where we are: "12/57"
+    video_hint: str = ""  # on a video's first frame: how to play it
+    video_playing: bool = False  # a video on the video plane: the HUD only overlays it
+    video_paused: bool = False
+    video_time: str = ""  # "0:02 / 0:04"
+    video_progress: float = 0.0  # 0..1
     menu: tuple = ()  # menu lines (label, value shown; None for a section title); empty: closed
     menu_index: int = 0
     menu_title: str = ""

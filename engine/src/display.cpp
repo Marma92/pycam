@@ -122,9 +122,15 @@ void Display::Cleanup()
 			drmModeSetPlane(fd_, plane, crtc_, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 	pending_.reset();
 	on_screen_.reset();
+	pending_external_.reset();
+	external_on_screen_.reset();
+	external_retired_.reset();
 	for (auto const &[dmabuf, frame] : frame_fbs_)
 		DestroyFrameFb(frame);
 	frame_fbs_.clear();
+	for (auto const &[fd, frame] : external_fbs_)
+		DestroyFrameFb(frame);
+	external_fbs_.clear();
 	for (auto const &frame : retired_fbs_)
 		DestroyFrameFb(frame);
 	retired_fbs_.clear();
@@ -164,6 +170,7 @@ void Display::FindOutput()
 				if (crtc && crtc->mode_valid)
 				{
 					crtc_ = crtc->crtc_id;
+					connector_ = connector->connector_id;
 					screen_w_ = crtc->width;
 					screen_h_ = crtc->height;
 					for (int j = 0; j < res->count_crtcs; j++)
@@ -356,6 +363,8 @@ void Display::ShowFrame(CompletedRequestPtr const &request, libcamera::Stream *s
 {
 	{
 		std::lock_guard<std::mutex> lock(mutex_);
+		if (external_ || !power_)
+			return; // a video is shown, or the screen is off: the frame goes straight back
 		if (pending_)
 			frames_dropped_++;
 		pending_ = Pending { request, stream, info };
@@ -369,6 +378,135 @@ void Display::Reset()
 	reset_requested_ = true;
 	cond_.notify_one();
 	reset_done_.wait(lock, [this] { return !reset_requested_; });
+}
+
+void Display::SetExternal(bool on)
+{
+	{
+		std::lock_guard<std::mutex> lock(mutex_);
+		if (on == external_)
+			return;
+		external_ = on;
+		if (on)
+			pending_.reset(); // a camera frame waiting: not over the video
+		else
+		{
+			pending_external_.reset();
+			leave_external_ = true;
+		}
+	}
+	cond_.notify_one();
+}
+
+void Display::ShowExternal(std::shared_ptr<const ExternalFrame> frame)
+{
+	{
+		std::lock_guard<std::mutex> lock(mutex_);
+		if (!external_)
+			return;
+		if (pending_external_)
+			frames_dropped_++;
+		pending_external_ = std::move(frame);
+	}
+	cond_.notify_one();
+}
+
+void Display::SetPower(bool on)
+{
+	{
+		std::lock_guard<std::mutex> lock(mutex_);
+		power_request_ = on;
+		if (!on)
+			pending_.reset();
+	}
+	cond_.notify_one();
+}
+
+bool Display::SetConnectorPower(bool on)
+{
+	drmModeObjectProperties *props = drmModeObjectGetProperties(fd_, connector_, DRM_MODE_OBJECT_CONNECTOR);
+	if (!props)
+		return false;
+	bool done = false;
+	for (uint32_t i = 0; i < props->count_props && !done; i++)
+	{
+		drmModePropertyRes *prop = drmModeGetProperty(fd_, props->props[i]);
+		if (prop && !std::strcmp(prop->name, "DPMS"))
+			done = !drmModeConnectorSetProperty(fd_, connector_, prop->prop_id, on ? DRM_MODE_DPMS_ON : DRM_MODE_DPMS_OFF);
+		drmModeFreeProperty(prop);
+	}
+	drmModeFreeObjectProperties(props);
+	return done;
+}
+
+Display::Rect Display::Fit(unsigned width, unsigned height) const
+{
+	// Inside the image area, as the photos: a YUV plane needs line buffer memory in the
+	// HVS, as wide as its source or, scaled down, as its destination, and each SetPlane
+	// reserves the new before freeing the old. 1920 wide, the two did not fit: every frame
+	// after the first failed (ENOSPC). 1440 wide (the image area on a 1080p screen), they do.
+	Rect const &area = image_rect_;
+	Rect rect;
+	if (uint64_t(width) * area.h > uint64_t(area.w) * height)
+	{
+		rect.w = area.w;
+		rect.h = (uint64_t(area.w) * height / width) & ~1u;
+	}
+	else
+	{
+		rect.h = area.h;
+		rect.w = (uint64_t(area.h) * width / height) & ~1u;
+	}
+	rect.x = area.x + (area.w - rect.w) / 2;
+	rect.y = area.y + (area.h - rect.h) / 2;
+	return rect;
+}
+
+Display::FrameFb Display::ImportExternal(ExternalFrame const &frame)
+{
+	FrameFb fb;
+	if (drmPrimeFDToHandle(fd_, frame.fd, &fb.handle))
+		throw drm_error("drmPrimeFDToHandle (video)");
+	uint32_t handles[4] {}, pitches[4] {}, offsets[4] {};
+	uint64_t modifiers[4] {};
+	for (unsigned p = 0; p < frame.nb_planes && p < 4; p++)
+	{
+		handles[p] = fb.handle;
+		pitches[p] = frame.pitches[p];
+		offsets[p] = frame.offsets[p];
+		modifiers[p] = frame.modifier;
+	}
+	int ret = frame.modifier ? drmModeAddFB2WithModifiers(fd_, frame.width, frame.height, frame.format, handles, pitches,
+														  offsets, modifiers, &fb.fb, DRM_MODE_FB_MODIFIERS)
+							 : drmModeAddFB2(fd_, frame.width, frame.height, frame.format, handles, pitches, offsets,
+											 &fb.fb, 0);
+	if (ret)
+	{
+		std::runtime_error error = drm_error("drmModeAddFB2 (video)");
+		DestroyFrameFb(fb);
+		throw error;
+	}
+	return fb;
+}
+
+void Display::ShowExternalFrame(std::shared_ptr<const ExternalFrame> const &frame)
+{
+	auto it = external_fbs_.find(frame->fd);
+	if (it == external_fbs_.end())
+		it = external_fbs_.emplace(frame->fd, ImportExternal(*frame)).first;
+	if (!external_colour_set_)
+	{
+		SetEnumProperty(video_plane_, "COLOR_ENCODING", frame->bt709 ? "709" : "601");
+		SetEnumProperty(video_plane_, "COLOR_RANGE", frame->full_range ? "full" : "limited");
+		external_colour_set_ = true;
+		colour_space_set_ = false; // the camera's, set again after the video
+	}
+	SetPlane(video_plane_, it->second.fb, Fit(frame->width, frame->height), frame->width, frame->height);
+	external_on_screen_ = frame; // the previous one goes back to the decoder
+	on_screen_.reset(); // the camera frame under the video, if any
+	for (auto const &old : retired_fbs_)
+		DestroyFrameFb(old);
+	retired_fbs_.clear();
 }
 
 void Display::CommitHud()
@@ -414,6 +552,8 @@ json Display::Info() const
 			{ "format", "RGBA" } } },
 		{ "frames_shown", frames_shown_ },
 		{ "frames_dropped", frames_dropped_ },
+		{ "power", power_ },
+		{ "video", external_ },
 	};
 }
 
@@ -422,9 +562,61 @@ void Display::Loop()
 	std::unique_lock<std::mutex> lock(mutex_);
 	for (;;)
 	{
-		cond_.wait(lock, [this] { return stop_ || reset_requested_ || pending_ || hud_dirty_; });
+		cond_.wait(lock,
+				   [this]
+				   {
+					   // Screen off: nothing to show, so nothing to wake up for (a HUD committed
+					   // meanwhile would otherwise spin this loop with the lock held).
+					   return stop_ || reset_requested_ || power_request_ || leave_external_ ||
+							  (power_ && (pending_ || hud_dirty_ || pending_external_));
+				   });
 		if (stop_)
 			return;
+
+		if (power_request_)
+		{
+			bool const on = *power_request_;
+			power_request_.reset();
+			lock.unlock();
+			bool const done = SetConnectorPower(on);
+			if (!done)
+				std::cerr << "pycam-engine: display: cannot turn the screen " << (on ? "on" : "off") << "\n";
+			lock.lock();
+			power_ = on;
+			if (on && hud_pending_ >= 0)
+				hud_dirty_ = true; // the HUD drawn meanwhile
+			continue;
+		}
+
+		if (leave_external_)
+		{
+			// The decoder's frames are forgotten once a camera frame is on the screen.
+			leave_external_ = false;
+			for (auto const &[fd, fb] : external_fbs_)
+				retired_fbs_.push_back(fb);
+			external_fbs_.clear();
+			external_retired_ = std::move(external_on_screen_);
+			external_colour_set_ = false;
+			colour_space_set_ = false;
+		}
+
+		if (pending_external_ && power_)
+		{
+			std::shared_ptr<const ExternalFrame> frame = std::move(pending_external_);
+			pending_external_.reset();
+			lock.unlock();
+			try
+			{
+				ShowExternalFrame(frame);
+			}
+			catch (std::exception const &e)
+			{
+				std::cerr << "pycam-engine: display: video: " << e.what() << "\n";
+			}
+			frame.reset();
+			lock.lock();
+			frames_shown_++;
+		}
 
 		if (reset_requested_)
 		{
@@ -466,7 +658,7 @@ void Display::Loop()
 			frames_shown_++;
 		}
 
-		if (hud_dirty_)
+		if (hud_dirty_ && power_)
 		{
 			hud_dirty_ = false;
 			lock.unlock();
@@ -518,6 +710,7 @@ void Display::ShowVideo(Pending &frame)
 	for (auto const &old : retired_fbs_)
 		DestroyFrameFb(old);
 	retired_fbs_.clear();
+	external_retired_.reset(); // a video's last frame, now replaced
 }
 
 } // namespace pycam

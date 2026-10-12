@@ -173,7 +173,7 @@ Le moteur est **maître DRM/KMS**. Il n'y a pas de bureau graphique : on utilise
 
 | Plan (du bas vers le haut) | Format | Contenu | Producteur | État |
 |---|---|---|---|---|
-| vidéo | YUV420, mis à l'échelle par le HVS | visée en direct | tampons caméra → moteur, zéro copie (dmabuf) | ✅ |
+| vidéo | YUV420, mis à l'échelle par le HVS | visée en direct, ou une vidéo en lecture | tampons caméra, ou du décodeur H.264 → moteur, zéro copie (dmabuf) | ✅ |
 | HUD | RGBA (`ABGR8888`), plein écran, sans mise à l'échelle | marges noires, réglages, histogramme, grille, niveau, menus | application Python → `/dev/shm/pycam-hud` → `hud_commit` | ✅ |
 | ~~analyse~~ | — | peaking, zébras | dessinés dans l'image de visée (§2.3) | abandonné |
 
@@ -193,6 +193,11 @@ Le moteur est **maître DRM/KMS**. Il n'y a pas de bureau graphique : on utilise
   - L'application dessine avec Pillow puis envoie `hud_commit` ; le moteur copie l'image dans un tampon libre (double tampon) et la pose au vblank suivant.
   - L'application doit dessiner **seulement quand quelque chose change** : une navigation dans un menu coûte un rendu, pas trente par seconde.
   - Coût mesuré (`tools/hud_demo.py`, grille + bandeau + histogramme) : 90–120 ms par rendu en 1080p. Sur un écran 800×480, 5 fois moins de pixels.
+- ✅ **Lecture des vidéos** (2026-10-12, `video_player.cpp`). libavformat lit le MP4, le décodeur H.264 du VideoCore (`h264_v4l2m2m`, via libavcodec) rend des tampons **DRM PRIME** (YUV420 linéaire, un seul dmabuf), que l'affichage pose tels quels sur le plan vidéo à la place des images de la caméra, qui continue de tourner. Zéro copie : 25 i/s, le moteur reste à ~24 % d'un cœur (28 % en visée). En passant par une copie (ffmpeg vers un tube), on plafonnait à 20 i/s. Trois leçons :
+  - **Tout ce que fait libav, sur un seul fil.** Rendre les images au décodeur depuis le fil d'affichage, pendant que le fil du lecteur décodait, l'a bloqué (« V4L2 capture poll unexpected timeout ») ; l'arrêt attendait alors ce fil, et tout le moteur se figeait. L'affichage dépose désormais les images finies dans une file que le fil du lecteur vide, et l'arrêt n'attend pas plus de 3 s.
+  - **La mémoire de lignes, encore.** Un plan YUV en réserve autant que sa largeur (de source, ou de destination s'il est réduit), et chaque `SetPlane` réserve la nouvelle avant de rendre l'ancienne. En 1920 px de large, les deux ne tenaient pas : toutes les images après la première échouaient (`ENOSPC`). La vidéo est donc montrée dans la zone d'image (1440 px de large en 1080p), comme les photos.
+  - 6 lectures d'affilée, avec pauses, arrêts et relectures : aucune erreur, aucune image perdue.
+- ✅ **Écran en veille** (2026-10-12). La commande `display_power` éteint l'écran (DPMS) : rien n'est plus affiché, ni la visée (ni son look, ni les aides), ni le HUD. Attention au piège trouvé en le testant : écran éteint, un HUD reçu restait « à afficher », la boucle d'affichage tournait à vide en gardant son verrou, et le fil de la caméra s'y bloquait. Elle n'attend plus rien d'affichable tant que l'écran est éteint.
 - **Pourquoi l'histogramme est dans le HUD Python.** Il change à 5 Hz, ce que Pillow tient. S'il le faut, il pourra passer côté moteur.
 - **Écran retenu : HDMI, sans tactile** (`hardware.md` §1). Le HDMI passe par le même compositeur HVS, et le pilote expose aussi un connecteur *writeback* (`card0-Writeback-1`) : il permettra de faire des **captures d'écran du rendu composé** à distance pour les tests.
 - ✅ **Le bureau s'est effacé** (2026-10-11). Le Pi démarre en console (`raspi-config` B1, `multi-user.target`, sans connexion automatique).
@@ -239,11 +244,13 @@ Pendant la revue après la prise, toute touche la ferme ; le déclencheur la fer
 
 **La lecture** (`playback.py`, bouton LECTURE). Elle s'ouvre sur la dernière photo et montre, par-dessus la visée, la photo, ce qu'elle a été prise (nom, vitesse, ISO, ouverture, preset, lus dans l'EXIF), sa place dans la carte (« 12/57 ») et son histogramme en affichage détaillé.
 
+Les **vidéos** des timelapses y sont aussi, chacune après ses vues. Une vidéo s'affiche d'abord par sa première image (faite une fois par ffmpeg, puis gardée en cache), avec un signe de lecture, sa durée, sa définition, sa cadence et son nombre de vues. LOUPE la lit (par le moteur, sur le plan vidéo), la met en pause, la reprend, et la relit une fois finie ; pendant la lecture, le HUD ne garde qu'une barre de progression, le nom, le temps (« 0:02 / 0:04 ») et le signe de pause. La dernière image reste à la fin. Les molettes, LECTURE, MENU et le déclencheur l'arrêtent ; Q la supprime (ses vues restent).
+
 | Commande | En lecture |
 |---|---|
 | Molette arrière | Photo précédente / suivante. |
 | Molette avant | 10 photos en arrière / en avant. |
-| LOUPE | Ajustée → 100 % (un pixel de la photo par pixel de l'écran) → 200 % → ajustée. Dans la loupe, les molettes déplacent la zone, avec la mini-carte. La photo est décodée en pleine résolution une fois (~1 s), puis seulement recadrée. |
+| LOUPE | Ajustée → 100 % (un pixel de la photo par pixel de l'écran) → 200 % → ajustée. Dans la loupe, les molettes déplacent la zone, avec la mini-carte. La photo est décodée en pleine résolution une fois (~1 s), puis seulement recadrée. Sur une vidéo : lecture, pause, reprise. |
 | DISP | Détaillé (infos et histogramme) → simple (infos) → photo seule. |
 | Q | Supprimer : un premier appui demande confirmation, un second dans les 3 s supprime la prise entière (JPEG, DNG, copie de base). Toute autre touche annule. |
 | LECTURE, MENU | Revenir à la prise de vue. |
@@ -260,7 +267,7 @@ Pendant la revue après la prise, toute touche la ferme ; le déclencheur la fer
   - Fichiers : format, taille et qualité JPEG, compression du RAW.
   - Prise de vue : mode de déclenchement, intervalle et nombre de vues de l'intervallomètre, vues et écart du bracketing, réactivité (bascule ou ZSL), revue après la prise, garder la base (un JPEG neutre en plus, `PYB_0001.JPG`).
   - Objectif : profil d'objectif, ouverture, correction de l'ombrage (un autre tuning : la caméra est rouverte, ~0,2 s).
-  - Affichage : grille des tiers, histogramme.
+  - Affichage : grille des tiers, histogramme, écran pendant les longues prises.
   - Boutons : fonctions de Fn1 et Fn2.
 
   Il fait 42 lignes (titres compris) et défile ; une barre à droite montre où l'on est.
@@ -289,7 +296,9 @@ Le déclencheur pressé pendant une séquence l'arrête (sauf la rafale, qu'il p
 - **Les vues** vont dans un dossier à elles (`101PYCAM`…), et les photos suivantes dans le dossier d'après. Par défaut, ce sont des JPEG de 3 Mpx (assez pour du 1080p, deux fois plus rapides à écrire, look compris), le temps du timelapse ; au choix, des photos complètes (les réglages de Fichiers, un JPEG au moins pour la vidéo). Le preset s'applique comme à toute photo.
 - **La vidéo** (`PYT_0056.MP4` pour une première vue `PYC_0056.JPG`, à côté des vues) est faite par ffmpeg, en arrière-plan, quand la prise s'arrête (fin, ou déclencheur) : recadrage 16:9 (1920 × 1080) ou 4:3 (1440 × 1080), lissage du scintillement (le filtre `deflicker` ramène la luminosité de chaque vue à la moyenne de ses 9 voisines : les sauts de l'exposition automatique disparaissent), H.264 par l'**encodeur matériel** du VideoCore (`h264_v4l2m2m`, 20 Mbit/s), libx264 s'il échoue. Elle est écrite en `.part`, puis renommée. Sa progression s'affiche en haut à gauche (« VIDÉO 40 % ») et dans l'interface web, qui la liste, la lit et la télécharge.
 - **Mesuré** (2026-10-12, 100 vues à 1 s, mode P, Cinéma 800T) : une vue toutes les 1,00 s en moyenne (0,86 à 1,19 s), vidéo prête 14 s après la dernière vue (~7 vues/s), 6,3 Mo pour 4 s de 1080p. Sur des vues au scintillement simulé de ±15 %, le lissage divise l'écart-type de la luminance par 3,4 ; sur le vrai timelapse, il reste de 0,28 niveau sur 255. L'assemblage ne bloque jamais l'application plus de 32 ms.
-- La lecture sur l'appareil montre les vues, pas encore la vidéo.
+- La lecture sur l'appareil montre les vues et la vidéo, qu'elle lit (voir « La lecture »).
+
+**L'écran en veille pendant les longues prises** (2026-10-12). Pendant un intervallomètre, un timelapse, une pose B ou une pose longue, l'écran s'éteint après 30 s sans appui (MENU › Affichage › Écran en longue prise : 10 s, 30 s, 1 min, ou jamais). Plus de HUD à dessiner (0,1 s de CPU à chaque rendu), plus de visée à afficher. Un appui le rallume et ne fait que ça : l'appui qui réveille ne déclenche pas, n'arrête rien. Le relâchement du déclencheur compte toujours (il termine une pose B tenue), et le déclencheur de l'interface web agit sans rallumer. L'écran se rallume seul à la fin de la prise. Mesuré pendant un intervallomètre (RAW + JPEG, Cinéma 800T, une vue toutes les 5 s) : le moteur passe de 174 à 129 % d'un cœur, l'application de 33 à 10 %, soit un tiers du CPU en moins, en plus de l'écran.
 
 **Les poses longues** (2026-10-12, §2.4). En M, la molette avant va jusqu'à 10'40" (la limite du capteur, 674 s), puis **B**.
 

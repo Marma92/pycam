@@ -126,6 +126,7 @@ class WebServer:
                 "writing": view.writing,
                 "drive": view.drive,
                 "task": view.task,
+                "screen": self.camera.screen_on,
                 "drive_running": view.drive_running,
                 "countdown": view.countdown,
                 "exposure_timer": view.exposure_timer,

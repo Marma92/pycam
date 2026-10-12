@@ -29,6 +29,10 @@ Toute commande peut porter un `id`, qui est renvoyé tel quel dans la réponse. 
 | `look` | Tout le look d'un coup, les clés absentes étant coupées :<br>• `name` : pour l'état et les journaux ;<br>• `lut` : chemin d'un fichier LUT (voir plus bas), ou `null` ;<br>• `vignette` : assombrissement des coins, 0–1 ;<br>• `grain` : 0–1 ; `grain_size`, en pixels de l'image pleine résolution (0,5–8, 1 par défaut ; réduit d'autant pour un JPEG plus petit) ; `grain_colour` (0–1 : grain dans la chrominance, 0 pour le noir et blanc) ; `grain_shadows` (0 : surtout dans les tons moyens, 1 : dans les ombres) ; `grain_clumps` (0–1 : part des amas, 2,5 fois plus gros) ;<br>• `halation` : 0–1 ; `halation_radius` (étalement, en pixels de l'image pleine résolution, 24 par défaut) ; `halation_threshold` (niveau de la base, 0–1, à partir duquel la lumière s'étale ; 0,8 par défaut) ; `halation_colour` (`[r, g, b]`, 0–1) ;<br>• `preview` : l'aperçu en visée, ou `null` (voir plus bas). | `look` : l'état. Les photos déjà prises gardent le look du moment où elles ont été prises. |
 | `snapshot` | `path` | — : la prochaine image de visée affichée, aides comprises mais sans le HUD, sera écrite en JPEG ; évènement `snapshot_done` ou `snapshot_error`. Sert au débogage à distance. |
 | `hud_info` | — | `display` : taille de l'écran, `image_rect` `[x, y, w, h]` (où est l'image), `hud` (chemin de la mémoire partagée, largeur, hauteur, stride, format `"RGBA"`), compteurs d'images affichées et perdues |
+| `video_play` | `path` (un MP4 H.264) | `video` : `duration` (s), `width`, `height`, `fps`. La vidéo remplace la visée à l'écran (la caméra continue), dans la zone d'image ; elle s'arrête d'elle-même à la fin en laissant sa dernière image. Erreur `bad_request` si elle ne peut pas être lue. |
+| `video_pause` | `paused` (bool, `true` par défaut) | — |
+| `video_stop` | — | — : retour à la visée |
+| `display_power` | `on` (bool) | — : l'écran éteint (DPMS) n'affiche plus rien, ni la visée ni le HUD, jusqu'à `on: true` |
 | `hud_commit` | — | — (le contenu de la mémoire partagée a été copié : on peut dessiner le HUD suivant) |
 | `quit` | — | — (le moteur termine les écritures en cours puis s'arrête) |
 
@@ -105,6 +109,8 @@ Avec `stack`, la prise additionne les images RAW successives en mode photo, chac
 | `capture_error` | Échec d'une capture ou de son écriture | `capture_id`, `error`, `files` déjà écrits |
 | `snapshot_done` / `snapshot_error` | Après `snapshot` | `path` (et `error`) |
 | `loupe` | Le moteur quitte la loupe de lui-même (un déclenchement : la photo est toujours en plein cadre) | `loupe` : `{zoom, center}` |
+| `video_progress` | Pendant une lecture, ~2 fois/s | `position`, `duration` (s) |
+| `video_ended` | Fin d'une lecture | `reason` (`end`, `stopped`, `error`), `position`, `error` |
 | `tuning` | La caméra a été rouverte avec un autre fichier de tuning | `tuning` (nom ou `null`), `reopen_ms` |
 | `error` | Incident caméra | `error` |
 
