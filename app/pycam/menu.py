@@ -130,6 +130,15 @@ TL_FPS = Item("Cadence vidéo", "timelapse_fps", drive.TL_FPS, tuple(f"{f} i/s" 
 TL_ASPECT = Item("Format vidéo", "timelapse_aspect", drive.TL_ASPECTS, ("16:9 · 1920 × 1080", "4:3 · 1440 × 1080"))
 TL_DEFLICKER = Item("Lissage du scintillement", "timelapse_deflicker", (True, False), ("Oui", "Non"))
 TL_PHOTOS = Item("Vues", "timelapse_photos", drive.TL_PHOTOS, ("Pour la vidéo · JPEG 3 Mpx", "Photos complètes"))
+STACK_MODE = Item(
+    "Type d'empilement",
+    "stack_mode",
+    drive.STACK_MODES,
+    ("Moyenne · moins de bruit, pose simulée", "Maximum · traînées de lumière"),
+)
+STACK_COUNT = Item(
+    "Vues empilées", "stack_frames", drive.STACK_COUNTS, tuple(str(n) if n else "Jusqu'à l'arrêt" for n in drive.STACK_COUNTS)
+)
 REVIEW = Item("Revue après la prise", "review_seconds", (0, 1, 2, 4), ("Coupée", "1 s", "2 s", "4 s"))
 # Applied at the next start of the application (web.py).
 WEB = Item("Interface web", "web", (True, False), ("Oui · au prochain démarrage", "Non · au prochain démarrage"))
@@ -202,6 +211,9 @@ FULL = (
     TL_ASPECT,
     TL_DEFLICKER,
     TL_PHOTOS,
+    Item("Empilement"),
+    STACK_MODE,
+    STACK_COUNT,
     Item("Objectif"),
     LENS,
     APERTURE,

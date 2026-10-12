@@ -69,8 +69,11 @@ class Exposing:
 
     capture_id: int
     start: float  # time.monotonic()
-    duration: float | None  # seconds; None: a bulb, as long as the shutter is held
+    duration: float | None  # seconds; None: a bulb or a stack, as long as needed
     seconds: float = 0  # bulb: exposed so far, from its frames
+    label: str = "POSE B"
+    total: int | None = None  # a stack: its frames (0: until stopped); None: a bulb
+    frames: int = 0
 
 
 @dataclass
@@ -95,7 +98,7 @@ class Video:
 
 
 # Drive modes during which the screen may go to sleep (Camera.check_screen).
-LONG_CAPTURES = ("interval", "timelapse", "bulb")
+LONG_CAPTURES = ("interval", "timelapse", "bulb", "stack")
 
 
 class Camera:
@@ -214,11 +217,17 @@ class Camera:
             if msg.get("stack") or msg.get("exposure_us", 0) >= LONG_EXPOSURE * 1e6:
                 duration = None if msg.get("stack") else msg["exposure_us"] / 1e6
                 self.exposing = Exposing(msg.get("capture_id"), time.monotonic(), duration)
+                if msg.get("stack") and self.drive.running == "stack":
+                    s = self.settings
+                    self.exposing.label = "EMPILEMENT · " + drives.STACK_LABELS[s.stack_mode].upper()
+                    self.exposing.total = s.stack_frames
                 self.spawn(self._exposure_ticker())
                 self.redraw()
         elif kind == "stack_frame":
             if self.exposing and self.exposing.capture_id == msg.get("capture_id"):
                 self.exposing.seconds = msg.get("exposure_us", 0) / 1e6
+                self.exposing.frames = msg.get("frames", 0)
+                self.redraw()
         elif kind == "file_saved":
             # The JPEG is written first: review it without waiting for the DNG. Not during a
             # burst or a bracketing: the last photo is reviewed once it is over.
@@ -1031,8 +1040,10 @@ class Camera:
         timer, timer_label = "", ""
         if self.exposing:
             x = self.exposing
-            if x.duration is None:  # the bulb counts up, from its frames once they come
-                timer, timer_label = exp.format_duration(max(x.seconds, time.monotonic() - x.start)), "POSE B"
+            if x.total is not None:  # a stack counts its frames
+                timer, timer_label = f"{x.frames}/{x.total}" if x.total else str(x.frames), x.label
+            elif x.duration is None:  # the bulb counts up, from its frames once they come
+                timer, timer_label = exp.format_duration(max(x.seconds, time.monotonic() - x.start)), x.label
             else:
                 left = x.duration - (time.monotonic() - x.start)
                 timer, timer_label = exp.format_duration(math.ceil(max(left, 0))), "POSE"

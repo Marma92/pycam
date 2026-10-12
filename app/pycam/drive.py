@@ -7,6 +7,11 @@
 - interval: one photo every `interval_seconds`, `interval_count` times (0: until stopped);
 - timelapse: the same, into a folder of its own, then a video of them (timelapse.py);
   by default lighter frames (JPEG 3 Mpx, enough for 1080p and quicker to write);
+- stack: `stack_frames` exposures (0: until stopped) combined by the engine into one
+  photo: their mean (less noise, or a long exposure simulated in daylight: silky water)
+  or their maximum (light trails, star trails). The exposure measured and an automatic
+  white balance are held for all of them, as for a bracketing; the shutter ends it,
+  keeping what is stacked;
 - bracket: 3 or 5 photos around the exposure measured, `bracket_step` thirds of a stop
   apart. The exposure is frozen (manual speed and gain) and the speed varies (the gain
   in S, where the speed is the user's): immediate and exact, where moving the
@@ -30,7 +35,7 @@ from . import exposure as exp
 
 log = logging.getLogger(__name__)
 
-MODES = ("single", "burst", "self2", "self10", "interval", "timelapse", "bracket")
+MODES = ("single", "burst", "self2", "self10", "interval", "timelapse", "stack", "bracket")
 LABELS = {
     "single": "Vue par vue",
     "burst": "Rafale",
@@ -38,6 +43,7 @@ LABELS = {
     "self10": "Retardateur 10 s",
     "interval": "Intervallomètre",
     "timelapse": "Timelapse",
+    "stack": "Empilement",
     "bracket": "Bracketing",
 }
 SELF_TIMERS = {"self2": 2, "self10": 10}
@@ -49,6 +55,9 @@ TL_FPS = (24, 25, 30)
 TL_ASPECTS = ("16:9", "4:3")
 TL_PHOTOS = ("video", "full")  # frames for the video only (TL_FRAME_SIZE, JPEG), or full photos
 TL_FRAME_SIZE = [2028, 1520]  # 3 Mpx, the JPEG size S
+STACK_MODES = ("mean", "max")
+STACK_LABELS = {"mean": "Moyenne", "max": "Maximum"}
+STACK_COUNTS = (4, 8, 16, 32, 64, 128, 0)  # 0: until stopped
 BRACKET_SHOTS = (3, 5)
 BRACKET_STEPS = (1, 2, 3)  # thirds of a stop
 BURST_MAX = 20
@@ -77,6 +86,9 @@ def short_label(settings):
         return f"INT {format_interval(settings.interval_seconds)}"
     if mode == "timelapse":
         return f"TL {format_interval(settings.timelapse_interval)}"
+    if mode == "stack":
+        kind = "MOY" if settings.stack_mode == "mean" else "MAX"
+        return f"EMP {kind} {settings.stack_frames or '∞'}"
     if mode == "bracket":
         return f"BKT {settings.bracket_shots} × {format_step(settings.bracket_step)}"
     return ""
@@ -111,7 +123,7 @@ class Drive:
         self.countdown = 0  # seconds left on the self-timer
         self.held = False  # the shutter, for the burst
         self.bulb_toggle = False  # the bulb ends with a second press, not the release
-        self.bulb_stop = None  # asyncio.Event: end the bulb
+        self.stop_event = None  # asyncio.Event: end the bulb, the stack
         self.sleep = asyncio.sleep  # the tests make time pass faster
         self.clock = time.monotonic
 
@@ -137,7 +149,11 @@ class Drive:
         if self.active:
             if self.running == "bulb":
                 if self.bulb_toggle:
-                    self.bulb_stop.set()
+                    self.stop_event.set()
+                return
+            if self.running == "stack":  # enough: keep what is stacked
+                self.stop_event.set()
+                cam.show_message("Empilement arrêté")
                 return
             if self.running == "burst":  # pressed again before its last photo: it goes on
                 self.held = not remote
@@ -153,7 +169,7 @@ class Drive:
             return
         if cam.settings.exposure.bulb:
             self.bulb_toggle = remote or cam.settings.bulb_mode == "toggle"
-            self.bulb_stop = asyncio.Event()
+            self.stop_event = asyncio.Event()
             self.running = "bulb"
             self.task = asyncio.get_running_loop().create_task(self._run(self._bulb()))
             return
@@ -169,6 +185,7 @@ class Drive:
             "self10": self._self_timer,
             "interval": self._interval,
             "timelapse": self._timelapse,
+            "stack": self._stack,
             "bracket": self._bracket,
         }[mode]
         self.task = asyncio.get_running_loop().create_task(self._run(sequence(mode)))
@@ -176,7 +193,7 @@ class Drive:
     def release(self):
         self.held = False
         if self.active and self.running == "bulb" and not self.bulb_toggle:
-            self.bulb_stop.set()
+            self.stop_event.set()
 
     def stop(self):
         if self.active:
@@ -209,22 +226,61 @@ class Drive:
             await self.sleep(0.1)
 
     async def _bulb(self):
+        capture_id = await self.camera.capture(stack={"mode": "add"})
+        if capture_id is not None:
+            await self._until_captured(capture_id, MAX_BULB + 60)
+
+    async def _until_captured(self, capture_id, timeout):
+        """Until the engine ends the stack, or stop_event asks it to (with the frame being
+        exposed)."""
         cam = self.camera
-        capture_id = await cam.capture(stack={"mode": "add"})
-        if capture_id is None:
-            return
-        stopped = asyncio.ensure_future(self.bulb_stop.wait())
-        ended = asyncio.ensure_future(cam.wait_captured(capture_id, timeout=MAX_BULB + 60))
+        stopped = asyncio.ensure_future(self.stop_event.wait())
+        ended = asyncio.ensure_future(cam.wait_captured(capture_id, timeout=timeout))
         try:
             done, _ = await asyncio.wait({stopped, ended}, return_when=asyncio.FIRST_COMPLETED)
             if stopped in done:
                 await cam.stop_capture()
         except asyncio.CancelledError:
-            cam.spawn(cam.stop_capture())  # the mode changed: never leave a bulb open
+            cam.spawn(cam.stop_capture())  # the mode changed: never leave a stack open
             raise
         finally:
             stopped.cancel()
             ended.cancel()
+
+    def _held_white_balance(self):
+        """An automatic white balance, held at what it measures now: the frames of a
+        bracketing or a stack go together. Nothing if the balance is fixed already."""
+        cam = self.camera
+        preset, gains = cam.preset(), cam.stats.get("colour_gains")
+        if cam.settings.exposure.controls(preset.exposure_bias, preset.white_balance).get("AwbEnable") and gains:
+            return {"AwbEnable": False, "ColourGains": list(gains)}
+        return {}
+
+    async def _stack(self, mode):
+        cam, s = self.camera, self.camera.settings
+        controls = self._held_white_balance()
+        if s.exposure.mode != "M":  # in M, set already (and the viewfinder may not run at it)
+            time_us, gain = cam.stats.get("exposure_us") or 0, cam.stats.get("analogue_gain") or 0
+            if time_us <= 0 or gain <= 0:
+                cam.show_message("Pas de mesure d'exposition", warning=True)
+                return
+            controls.update(ExposureTime=round(time_us), ExposureTimeMode="Manual", AnalogueGain=gain, AnalogueGainMode="Manual")
+        self.stop_event = asyncio.Event()
+        self.frozen = bool(controls)
+        try:
+            if controls:
+                await cam.engine.call("set_controls", controls=controls)
+                if "ExposureTime" in controls:
+                    await self._settle(controls["ExposureTime"], controls["AnalogueGain"])
+            capture_id = await cam.capture(stack={"mode": s.stack_mode, "frames": s.stack_frames})
+            if capture_id is None:
+                return
+            frame = max(s.exposure.shutter or 0, cam.measured_shutter()) + 1
+            await self._until_captured(capture_id, (s.stack_frames or 3600) * frame + 60)
+        finally:
+            if self.frozen:
+                self.frozen = False
+                await cam.apply_exposure()  # the user's exposure again
 
     async def _burst(self, mode):
         count = 0
@@ -305,11 +361,7 @@ class Drive:
             return
         offsets = bracket_offsets(s.bracket_shots, s.bracket_step)
         vary = "gain" if s.exposure.mode == "S" else "time"
-        frozen = {"ExposureTimeMode": "Manual", "AnalogueGainMode": "Manual"}
-        preset = cam.preset()
-        gains = cam.stats.get("colour_gains")
-        if s.exposure.controls(preset.exposure_bias, preset.white_balance).get("AwbEnable") and gains:
-            frozen.update(AwbEnable=False, ColourGains=list(gains))
+        frozen = {"ExposureTimeMode": "Manual", "AnalogueGainMode": "Manual", **self._held_white_balance()}
         self.frozen = True
         try:
             for i, stops in enumerate(offsets):

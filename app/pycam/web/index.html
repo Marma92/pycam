@@ -138,7 +138,8 @@ async function refreshState() {
     if (s.drive) parts.unshift(["", s.countdown ? `${s.drive} · ${s.countdown}` : s.drive]);
     if (s.exposure_timer) parts.unshift([s.exposure_label, s.exposure_timer]);
     const bulb = s.exposure_label === "POSE B";
-    $("shutter").textContent = bulb ? "Arrêter la pose" : s.exposure_timer ? "Annuler la pose"
+    const stack = (s.exposure_label || "").startsWith("EMPILEMENT");
+    $("shutter").textContent = bulb ? "Arrêter la pose" : stack ? "Arrêter l'empilement" : s.exposure_timer ? "Annuler la pose"
       : s.drive_running ? "Arrêter la séquence" : s.shutter === "B" ? "Ouvrir (pose B)" : "Déclencher";
     $("status").innerHTML = (s.connected ? "" : "<b>Moteur indisponible</b> ") +
       parts.map(([k, v]) => `<span>${k ? k + " " : ""}<b>${esc(v)}</b></span>`).join("");

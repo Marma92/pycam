@@ -391,6 +391,53 @@ class LongExposureTest(DriveCase):
         self.assertIsNone(self.camera.view().meter)  # B: no duration to meter
 
 
+class StackTest(DriveCase):
+    async def test_mean_holds_the_exposure_measured(self):
+        s = self.settings
+        s.drive, s.stack_mode, s.stack_frames = "stack", "mean", 8
+        self.assertEqual(self.camera.view().drive, "EMP MOY 8")
+        self.camera.on_event({"event": "stats", "exposure_us": 10000, "analogue_gain": 2.0, "colour_gains": [2.1, 1.6]})
+        self.camera.on_action("shutter")
+        await asyncio.sleep(0.01)
+        held = [c["controls"] for name, c in self.engine.calls if name == "set_controls"][-1]
+        self.assertEqual(
+            (held["ExposureTime"], held["AnalogueGain"], held["ColourGains"], held["AwbEnable"]), (10000, 2.0, [2.1, 1.6], False)
+        )
+        self.assertEqual(self.engine.last("capture")["stack"], {"mode": "mean", "frames": 8})
+        view = self.camera.view()
+        self.assertEqual((view.exposure_label, view.exposure_timer), ("EMPILEMENT · MOYENNE", "0/8"))
+        self.camera.on_event({"event": "stack_frame", "capture_id": self.engine.open, "frames": 3, "exposure_us": 30000})
+        self.assertEqual(self.camera.view().exposure_timer, "3/8")
+        self.camera.on_action("front_dial_plus")  # the exposure is held meanwhile
+        self.assertIn("en cours", self.camera.view().message)
+        self.engine.finish(8)  # the engine ends it after its 8 frames
+        await self.finished()
+        self.assertNotIn("capture_stop", [name for name, _ in self.engine.calls])
+        controls = self.engine.last("set_controls")["controls"]
+        self.assertEqual((controls["ExposureTimeMode"], controls["AwbEnable"]), ("Auto", True))  # given back
+
+    async def test_max_until_stopped_in_m(self):
+        s, e = self.settings, self.settings.exposure
+        s.drive, s.stack_mode, s.stack_frames = "stack", "max", 0
+        e.shutter, e.iso, e.awb, e.kelvin = 20, 800, "Kelvin", 4000  # star trails: set already
+        self.camera.on_action("shutter")
+        await asyncio.sleep(0.01)
+        self.assertNotIn("set_controls", [name for name, _ in self.engine.calls])  # nothing to hold
+        self.assertEqual(self.engine.last("capture")["stack"], {"mode": "max", "frames": 0})
+        self.assertEqual(self.camera.view().exposure_label, "EMPILEMENT · MAXIMUM")
+        self.assertTrue(self.camera.long_capture)  # the screen may sleep
+        self.camera.on_action("shutter")  # enough: keeps what is stacked
+        await self.finished()
+        self.assertIn("capture_stop", [name for name, _ in self.engine.calls])
+        self.assertIn("arrêté", self.camera.view().message)
+
+    async def test_needs_a_measure_outside_m(self):
+        self.settings.drive = "stack"
+        self.camera.on_action("shutter")
+        await self.finished()
+        self.assertEqual(self.engine.captures(), [])
+
+
 class HelpersTest(unittest.TestCase):
     def test_bracket_offsets(self):
         self.assertEqual(drive.bracket_offsets(3, 3), [0, -1, 1])

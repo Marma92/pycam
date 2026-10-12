@@ -57,6 +57,8 @@ class Settings:
     timelapse_aspect: str = "16:9"  # drive.TL_ASPECTS
     timelapse_deflicker: bool = True  # smooth the brightness of the frames in the video
     timelapse_photos: str = "video"  # drive.TL_PHOTOS
+    stack_mode: str = "mean"  # drive.STACK_MODES
+    stack_frames: int = 8  # drive.STACK_COUNTS, 0: until stopped
     screen_off: int = 30  # SCREEN_OFF: seconds without a press before the screen sleeps in a long capture, 0: never
     display: str = "detailed"
     grid: bool = True
@@ -167,6 +169,8 @@ def load_settings(path):
         ("timelapse_fps", drive.TL_FPS),
         ("timelapse_aspect", drive.TL_ASPECTS),
         ("timelapse_photos", drive.TL_PHOTOS),
+        ("stack_mode", drive.STACK_MODES),
+        ("stack_frames", drive.STACK_COUNTS),
     ):
         if getattr(settings, name) not in allowed:
             setattr(settings, name, getattr(defaults, name))
