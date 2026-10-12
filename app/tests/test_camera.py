@@ -496,6 +496,55 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.engine.last("configure")["tuning"], "pycam-imx477-alsc")
 
+    def photos(self, *numbers):
+        folder = os.path.join(self.settings.dcim, "100PYCAM")
+        os.makedirs(folder, exist_ok=True)
+        for n in numbers:
+            for ext in (".JPG", ".DNG"):
+                open(os.path.join(folder, f"PYC_{n:04d}{ext}"), "w").close()
+        return folder
+
+    async def test_playback_browses_and_deletes(self):
+        self.camera.hud = FakeHud()
+        self.camera.on_action("play")
+        self.assertIsNone(self.camera.playback)  # nothing to show
+        self.assertIn("Aucune photo", self.camera.view().message)
+        folder = self.photos(1, 2, 3)
+        self.camera.on_action("play")
+        await self.settle()
+        view = self.camera.view()
+        self.assertEqual((os.path.basename(view.review), view.playback), ("PYC_0003.JPG", "3/3"))
+        self.camera.on_action("rear_dial_minus")  # the previous one
+        for _ in range(3):
+            await asyncio.sleep(0.02)
+        self.assertEqual(self.camera.view().playback, "2/3")
+        self.assertEqual(self.camera.view().review_info, "PYC_0002")
+        self.camera.on_action("loupe")
+        self.assertEqual(self.camera.view().loupe_label, "100 %")
+        self.camera.on_action("q")  # asks first
+        self.assertTrue(os.path.exists(os.path.join(folder, "PYC_0002.JPG")))
+        self.assertIn("Q pour confirmer", self.camera.view().message)
+        self.camera.on_action("q")
+        self.assertFalse(os.path.exists(os.path.join(folder, "PYC_0002.JPG")))
+        self.assertFalse(os.path.exists(os.path.join(folder, "PYC_0002.DNG")))
+        self.assertEqual(self.camera.view().playback, "2/2")
+
+    async def test_another_key_cancels_the_delete(self):
+        folder = self.photos(1)
+        self.camera.on_action("play")
+        self.camera.on_action("q")
+        self.camera.on_action("disp")
+        self.camera.on_action("q")  # asks again, does not delete
+        self.assertTrue(os.path.exists(os.path.join(folder, "PYC_0001.JPG")))
+
+    async def test_shutter_leaves_playback_and_shoots(self):
+        self.photos(1)
+        self.camera.on_action("play")
+        self.camera.on_action("shutter")
+        await self.settle()
+        self.assertIsNone(self.camera.playback)
+        self.assertEqual(os.path.basename(self.engine.last("capture")["path"]), "PYC_0002")  # 0001 is taken
+
     async def test_strategy_from_the_menu(self):
         self.engine.refuse["configure"] = "busy"
         self.menu_line("Déclenchement", quick=True)

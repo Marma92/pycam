@@ -59,7 +59,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Boutons physiques | Déclencheur à deux crans, deux molettes, joystick 5 directions, Q, MENU, LECTURE, DISP, LOUPE, Fn1/Fn2 (voir `hardware.md` §2). Fn1 et Fn2 sont attribuables dans le menu ; ils sont déjà simulés au clavier (1 et 2). | ⬜ |
 | Menu rapide Q | Les 12 réglages de prise de vue, par-dessus la visée : simulation, mesure, balance des blancs et température, peaking, netteté, contraste, saturation, réduction du bruit, format, déclenchement, ouverture. La molette arrière choisit la ligne, la molette avant change la valeur, le déclencheur ferme et déclenche. Au clavier : Tab. Fait en avance avec M1. | ✅ |
 | Menus | MENU : tous les réglages par section (exposition, mise au point, image, fichiers, prise de vue, objectif, affichage, boutons), avec défilement. Le clavier ne garde plus qu'une touche par commande de l'appareil (`architecture.md` §5) ; reste à brancher les vrais boutons (M2). Au clavier : Échap. | 🟨 |
-| Lecture / galerie | Défilement, loupe, histogramme, suppression. | ⬜ |
+| Lecture / galerie | Bouton LECTURE (touche P) : défilement à la molette arrière (de 10 en 10 à l'avant), loupe 100 % / 200 % déplaçable, infos tirées de l'EXIF (vitesse, ISO, ouverture, preset), histogramme, suppression en deux appuis de la prise entière. Le déclencheur ramène à la visée et déclenche. | ✅ |
 | Batterie | Niveau affiché, extinction propre sur batterie faible. | ⬜ |
 | Horloge | RTC ; réglage de la date dans les menus. | ⬜ |
 | Niveau électronique | Horizon et inclinaison par l'IMU ; orientation EXIF automatique. | ⬜ |

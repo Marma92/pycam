@@ -59,6 +59,7 @@ class Hud:
         self.font_message = ImageFont.truetype(FONT_BOLD, max(14, round(52 * self.s)))
         self._backgrounds = {}
         self._review = (None, None)  # (path, image fitted to the image area)
+        self._full = (None, None)  # (path, full resolution image), for the playback loupe
 
     def close(self):
         self.shm.close()
@@ -112,21 +113,45 @@ class Hud:
         self.shm[:] = self._background(False).tobytes()
 
     def _draw_review(self, view):
-        """The photo just taken, opaque over the viewfinder, with what it was shot at."""
+        """A photo (just taken, or in playback), opaque over the viewfinder, with what it was
+        shot at. In playback, maybe magnified (view.loupe: against the fitted photo)."""
         img = self._background(False).copy()
         path, photo = self._review
         x, y, w, h = self.rect
+        if path == view.review and view.loupe > 1:
+            photo = self._magnified(path, view.loupe, view.loupe_center)
         if path == view.review and photo is not None:
             img.paste(photo, (x + (w - photo.width) // 2, y + (h - photo.height) // 2))
         d = ImageDraw.Draw(img)
-        bar_h = self.px(68)
-        d.rectangle([x, y + h - bar_h, x + w, y + h], fill=BAR)
-        d.text((x + self.px(24), y + h - bar_h // 2), view.review_info, font=self.font_bold, fill=WHITE, anchor="lm")
+        if view.display != "clean":
+            bar_h = self.px(68)
+            d.rectangle([x, y + h - bar_h, x + w, y + h], fill=BAR)
+            d.text((x + self.px(24), y + h - bar_h // 2), view.review_info, font=self.font_bold, fill=WHITE, anchor="lm")
+            if view.playback:
+                d.text((x + w - self.px(24), y + h - bar_h // 2), view.playback, font=self.font_bold, fill=AMBER, anchor="rm")
         if view.display == "detailed":
             self._histogram(d, view)
+        if view.loupe > 1:
+            self._loupe(d, view)
         if view.message:
             self._message(d, view.message, view.warning)
         self.shm[:] = img.tobytes()
+
+    def _magnified(self, path, zoom, center):
+        """The part of the photo shown at `zoom` times the fitted size, around `center`. The
+        full resolution photo is decoded once (~1 s for 12 MP), then only cropped."""
+        if self._full[0] != path:
+            with Image.open(path) as im:
+                self._full = (path, im.convert("RGB"))
+        full = self._full[1]
+        x, y, w, h = self.rect
+        scale = min(w / full.width, h / full.height) * zoom  # screen pixels per photo pixel
+        cw, ch = min(full.width, w / scale), min(full.height, h / scale)
+        left = min(max(center[0] * full.width - cw / 2, 0), full.width - cw)
+        top = min(max(center[1] * full.height - ch / 2, 0), full.height - ch)
+        crop = full.crop((round(left), round(top), round(left + cw), round(top + ch)))
+        # Beyond 100 %, the pixels as squares: that is what one looks for.
+        return crop.resize((round(cw * scale), round(ch * scale)), Image.NEAREST if scale > 1 else Image.BILINEAR)
 
     def _background(self, grid):
         """Black margins, transparent image, maybe the rule of thirds: drawn once, then copied."""
@@ -291,7 +316,8 @@ class Hud:
         lx = mx + min(max(cx * mw - lw / 2, 0), mw - lw)
         ly = my + min(max(cy * mh - lh / 2, 0), mh - lh)
         d.rectangle([lx, ly, lx + lw, ly + lh], fill=AMBER)
-        d.text((mx - self.px(16), my + mh / 2), f"×{view.loupe:g}", font=self.font_bold, fill=AMBER, anchor="rm")
+        label = view.loupe_label or f"×{view.loupe:g}"
+        d.text((mx - self.px(16), my + mh / 2), label, font=self.font_bold, fill=AMBER, anchor="rm")
 
     def _menu(self, d, view):
         """A menu, over the left part of the image; the chosen line in amber, section titles

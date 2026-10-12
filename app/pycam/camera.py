@@ -10,6 +10,7 @@ from . import exposure as exp
 from . import lenses, looks, meter, picture
 from .engine_client import EngineError, call_blocking
 from .menu import Menu
+from .playback import PIXEL_SCALES, Playback, describe
 from .settings import DISPLAY_MODES, save_settings
 from .storage import Storage
 from .view import HudView
@@ -31,6 +32,9 @@ EXPOSURE_ACTIONS = {
 }
 FOCUS_AID_ACTIONS = {"peaking", "zebra"}
 LOUPE_LEVELS = (1, 5, 10)
+# Playback: the rear dial goes from one photo to the next, the front dial jumps ten.
+PLAYBACK_STEPS = {"rear_dial_plus": 1, "rear_dial_minus": -1, "front_dial_plus": 10, "front_dial_minus": -10}
+DELETE_CONFIRM_SECONDS = 3
 # In the loupe, the dials move it (until the camera has a joystick): action -> (dx, dy).
 LOUPE_MOVES = {
     "front_dial_plus": (1, 0),
@@ -60,6 +64,7 @@ class Review:
     info: str
     histogram: tuple
     histogram_rgb: tuple
+    size: tuple | None = None  # of the photo, in pixels (playback: for the loupe)
 
 
 class Camera:
@@ -82,6 +87,9 @@ class Camera:
         self.last_shot = None
         self.review = None  # photo shown after the shot
         self.menu = None  # Menu while open
+        self.playback = None  # Playback while open (the LECTURE button)
+        self._shown = None  # Review of the photo shown in playback, once loaded
+        self._delete_armed_until = 0.0  # deleting takes two presses of Q
         self._look_version = 0  # the last look asked for: only that one is sent
         self._look = None  # looks.Compiled sent to the engine: its curves correct the histograms
         self._look_lock = asyncio.Lock()
@@ -311,7 +319,12 @@ class Camera:
             self.end_review()
             if action != "shutter":
                 return
+        if self.playback and self.on_playback_action(action):
+            return
         if self.menu and self.on_menu_action(action):
+            return
+        if action == "play":
+            self.open_playback()
             return
         if action in ("fn1", "fn2"):  # the action they are given in the menu
             action = getattr(s, action)
@@ -408,6 +421,98 @@ class Camera:
         # Any other key does nothing while a menu is open.
         self.redraw()
         return True
+
+    # --- Playback (playback.py)
+
+    def open_playback(self):
+        playback = Playback(self.storage.root)
+        if not playback.photos:
+            self.show_message("Aucune photo sur la carte")
+            return
+        self.playback, self._shown = playback, None
+        self._delete_armed_until = 0.0
+        self.spawn(self.load_shown())
+        self.redraw()
+
+    def close_playback(self):
+        self.playback = self._shown = None
+        self.redraw()
+
+    def on_playback_action(self, action):
+        """While in playback. Returns True if handled (the shutter leaves and shoots)."""
+        p = self.playback
+        if action in ("play", "menu"):
+            self.close_playback()
+            return True
+        if action == "shutter":
+            self.close_playback()
+            return False  # and shoot: never miss a photo
+        if action == "q":
+            self.delete_shown()
+            return True
+        self._delete_armed_until = 0.0
+        if action == "loupe":
+            p.cycle_zoom()
+        elif action == "disp":
+            s = self.settings
+            s.display = DISPLAY_MODES[(DISPLAY_MODES.index(s.display) + 1) % len(DISPLAY_MODES)]
+            self.save_soon()
+        elif p.scale and action in LOUPE_MOVES:
+            p.pan(*LOUPE_MOVES[action], self.playback_zoom())
+        elif action in PLAYBACK_STEPS:
+            if p.step(PLAYBACK_STEPS[action]):
+                self.spawn(self.load_shown())
+        self.redraw()
+        return True
+
+    def delete_shown(self):
+        """Q once asks, Q again within 3 s deletes the shot (JPEG, DNG, base copy)."""
+        p = self.playback
+        name = os.path.basename(p.current)[:-4]
+        now = time.monotonic()
+        if now > self._delete_armed_until:
+            self._delete_armed_until = now + DELETE_CONFIRM_SECONDS
+            self.show_message(f"Supprimer {name} ? Q pour confirmer", warning=True)
+            return
+        self._delete_armed_until = 0.0
+        try:
+            removed = p.delete_current()
+        except OSError as e:
+            log.error("cannot delete %s: %s", name, e)
+            self.show_message("Suppression impossible", warning=True)
+            return
+        log.info("deleted %s", " ".join(os.path.basename(f) for f in removed))
+        if not p.photos:
+            self.close_playback()
+            self.show_message("Plus aucune photo sur la carte")
+            return
+        self.show_message(f"{name} supprimée")
+        self.spawn(self.load_shown())
+
+    async def load_shown(self):
+        """Decodes the photo shown in playback, off the event loop (~0.3 s)."""
+        p, hud = self.playback, self.hud
+        path = p.current if p else None
+        if not path:
+            return
+
+        def load():
+            info, size = describe(path)
+            luma, rgb = hud.load_review(path) if hud else ((), ())
+            return Review(path, info, tuple(luma), tuple(tuple(c) for c in rgb), size)
+
+        shown = await asyncio.to_thread(load)
+        if self.playback is p and p.current == path:  # not moved on meanwhile
+            self._shown = shown
+            self.redraw()
+
+    def playback_zoom(self):
+        """The playback loupe's magnification against the fitted photo."""
+        p, shown = self.playback, self._shown
+        if not p.scale or not shown or not shown.size:
+            return 1.0
+        _, _, w, h = getattr(self.hud, "rect", (0, 0, 1440, 1080))
+        return p.zoom(min(w / shown.size[0], h / shown.size[1]))
 
     def change_setting(self, steps):
         """Turns the value of the chosen menu line, and tells the engine."""
@@ -514,6 +619,22 @@ class Camera:
         s, e = self.settings, self.settings.exposure
         text, warning, until = self._message
         message = text if time.monotonic() < until else ""
+        if self.playback:
+            p, shown = self.playback, self._shown
+            if not shown or shown.path != p.current:  # being decoded
+                return HudView(display=s.display, review=p.current, playback=p.position, message=message, warning=warning)
+            return HudView(
+                display=s.display,
+                review=shown.path,
+                review_info=shown.info,
+                playback=p.position,
+                loupe=self.playback_zoom(),
+                loupe_center=p.center,
+                loupe_label=f"{PIXEL_SCALES[p.scale] * 100:g} %" if p.scale else "",
+                **self._histograms(shown.histogram, shown.histogram_rgb, live=False),
+                message=message,
+                warning=warning,
+            )
         if self.review:
             # Nothing live in it: it is drawn once, not at every stats event.
             r = self.review

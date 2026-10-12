@@ -218,9 +218,22 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | Échap | MENU | Menu complet ; Échap le ferme. Dans la loupe, la quitte d'abord. |
 | D | DISP | Affichage : détaillé → simple → nature. |
 | L | LOUPE | Loupe ×5 → ×10 → coupée. Dans la loupe, les flèches la déplacent au lieu de régler vitesse et ISO (en attendant le joystick). La grille est masquée, et le HUD montre le grossissement et une mini-carte de la zone. |
+| P | LECTURE | Les photos de la carte (voir ci-dessous). |
 | 1 / 2 | Fn1 / Fn2 | Ce que le menu leur attribue : peaking (Fn1 par défaut), zébras (Fn2 par défaut), mémoriser la balance, grille, bascule ⇄ ZSL, RAW + JPEG ⇄ JPEG. |
 
 Pendant la revue après la prise, toute touche la ferme ; le déclencheur la ferme *et* déclenche.
+
+**La lecture** (`playback.py`, bouton LECTURE). Elle s'ouvre sur la dernière photo et montre, par-dessus la visée, la photo, ce qu'elle a été prise (nom, vitesse, ISO, ouverture, preset, lus dans l'EXIF), sa place dans la carte (« 12/57 ») et son histogramme en affichage détaillé.
+
+| Commande | En lecture |
+|---|---|
+| Molette arrière | Photo précédente / suivante. |
+| Molette avant | 10 photos en arrière / en avant. |
+| LOUPE | Ajustée → 100 % (un pixel de la photo par pixel de l'écran) → 200 % → ajustée. Dans la loupe, les molettes déplacent la zone, avec la mini-carte. La photo est décodée en pleine résolution une fois (~1 s), puis seulement recadrée. |
+| DISP | Détaillé (infos et histogramme) → simple (infos) → photo seule. |
+| Q | Supprimer : un premier appui demande confirmation, un second dans les 3 s supprime la prise entière (JPEG, DNG, copie de base). Toute autre touche annule. |
+| LECTURE, MENU | Revenir à la prise de vue. |
+| Déclencheur | Revenir à la prise de vue *et* déclencher : on ne rate jamais une photo. |
 
 **Les menus** (`menu.py`). La molette arrière choisit la ligne, la molette avant change la valeur, qui s'applique tout de suite.
 

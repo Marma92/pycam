@@ -26,10 +26,12 @@ class HudView:
     zsl: bool = False
     peaking: str = ""  # its colour when on
     zebra: bool = False
-    loupe: float = 1  # 1: off
+    loupe: float = 1  # 1: off; in playback, the magnification against the fitted photo
     loupe_center: tuple = (0.5, 0.5)
+    loupe_label: str = ""  # instead of "×5": "100 %" in playback
     review: str = ""  # path of the photo being reviewed (decoded by Hud.load_review)
     review_info: str = ""
+    playback: str = ""  # in playback, where we are: "12/57"
     menu: tuple = ()  # menu lines (label, value shown; None for a section title); empty: closed
     menu_index: int = 0
     menu_title: str = ""

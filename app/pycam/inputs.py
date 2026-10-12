@@ -30,6 +30,7 @@ KEYMAP = {
     ecodes.KEY_ESC: "menu",  # full menu; closes a menu, leaves the loupe
     ecodes.KEY_D: "disp",
     ecodes.KEY_L: "loupe",  # x5, x10, off; in the loupe, the arrows move it
+    ecodes.KEY_P: "play",  # LECTURE: the photos on the card
     ecodes.KEY_1: "fn1",  # what they do is chosen in the menu
     ecodes.KEY_2: "fn2",
 }
