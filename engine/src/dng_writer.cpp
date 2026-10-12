@@ -401,47 +401,22 @@ void set_rational_array(TIFF *tif, uint32_t tag, std::array<double, 4> const &va
 		TIFFSetField(tif, tag, data);
 }
 
-} // namespace
-
-void dng_write(Span<const uint8_t> raw, StreamInfo const &info, ControlList const &metadata,
-			   std::string const &filename, std::string const &camera_model, DngOptions const &options)
+FormatInfo raw_format(StreamInfo const &info, bool &mono)
 {
-	FormatInfo format;
-	bool mono = mono_formats.count(info.pixel_format);
+	mono = mono_formats.count(info.pixel_format);
 	if (mono)
-		format = mono_formats.at(info.pixel_format);
-	else
-	{
-		auto it = bayer_formats.find(info.pixel_format);
-		if (it == bayer_formats.end())
-			throw std::runtime_error("unsupported Bayer format");
-		format = it->second;
-	}
+		return mono_formats.at(info.pixel_format);
+	auto it = bayer_formats.find(info.pixel_format);
+	if (it == bayer_formats.end())
+		throw std::runtime_error("unsupported Bayer format");
+	return it->second;
+}
 
-	// Decompression will require a buffer that's 8 pixels aligned.
-	unsigned int buf_stride_pixels = info.width;
-	unsigned int buf_stride_pixels_padded = (buf_stride_pixels + 7) & ~7;
-	std::vector<uint16_t> buf(buf_stride_pixels_padded * info.height);
-	if (format.compressed)
-	{
-		uncompress(raw.data(), info, &buf[0]);
-		buf_stride_pixels = buf_stride_pixels_padded;
-	}
-	else if (format.packed)
-	{
-		switch (format.bits)
-		{
-		case 10:
-			unpack_10bit(raw.data(), info, &buf[0]);
-			break;
-		case 12:
-			unpack_12bit(raw.data(), info, &buf[0]);
-			break;
-		}
-	}
-	else
-		unpack_16bit(raw.data(), info, &buf[0]);
-
+// The DNG itself, from the unpacked samples (buf_stride_pixels apart).
+void write_dng(std::vector<uint16_t> &buf, unsigned int buf_stride_pixels, FormatInfo const &format, bool mono,
+			   StreamInfo const &info, ControlList const &metadata, std::string const &filename,
+			   std::string const &camera_model, DngOptions const &options)
+{
 	// We need to fish out some metadata values for the DNG.
 	float black = 4096 * (1 << format.bits) / 65536.0;
 	float black_levels[] = { black, black, black, black };
@@ -696,6 +671,79 @@ void dng_write(Span<const uint8_t> raw, StreamInfo const &info, ControlList cons
 			TIFFClose(tif);
 		throw;
 	}
+}
+
+} // namespace
+
+void dng_write(Span<const uint8_t> raw, StreamInfo const &info, ControlList const &metadata,
+			   std::string const &filename, std::string const &camera_model, DngOptions const &options)
+{
+	bool mono;
+	FormatInfo format = raw_format(info, mono);
+
+	// Decompression will require a buffer that's 8 pixels aligned.
+	unsigned int buf_stride_pixels = info.width;
+	unsigned int buf_stride_pixels_padded = (buf_stride_pixels + 7) & ~7;
+	std::vector<uint16_t> buf(buf_stride_pixels_padded * info.height);
+	if (format.compressed)
+	{
+		uncompress(raw.data(), info, &buf[0]);
+		buf_stride_pixels = buf_stride_pixels_padded;
+	}
+	else if (format.packed)
+	{
+		switch (format.bits)
+		{
+		case 10:
+			unpack_10bit(raw.data(), info, &buf[0]);
+			break;
+		case 12:
+			unpack_12bit(raw.data(), info, &buf[0]);
+			break;
+		}
+	}
+	else
+		unpack_16bit(raw.data(), info, &buf[0]);
+	write_dng(buf, buf_stride_pixels, format, mono, info, metadata, filename, camera_model, options);
+}
+
+void dng_write_unpacked(std::vector<uint16_t> &pixels, StreamInfo const &info, ControlList const &metadata,
+						std::string const &filename, std::string const &camera_model, DngOptions const &options)
+{
+	bool mono;
+	FormatInfo format = raw_format(info, mono);
+	if (pixels.size() < size_t(info.width) * info.height)
+		throw std::runtime_error("DNG: fewer samples than pixels");
+	write_dng(pixels, info.width, format, mono, info, metadata, filename, camera_model, options);
+}
+
+void unpack_raw(uint8_t const *raw, StreamInfo const &info, uint16_t *dest)
+{
+	bool mono;
+	FormatInfo format = raw_format(info, mono);
+	if (format.compressed)
+		throw std::runtime_error("compressed raw frames cannot be unpacked here");
+	if (!format.packed)
+		unpack_16bit(raw, info, dest);
+	else if (format.bits == 12)
+		unpack_12bit(raw, info, dest);
+	else
+		unpack_10bit(raw, info, dest);
+}
+
+int raw_bits(StreamInfo const &info)
+{
+	bool mono;
+	return raw_format(info, mono).bits;
+}
+
+int raw_bayer_order(StreamInfo const &info)
+{
+	bool mono;
+	FormatInfo format = raw_format(info, mono);
+	if (mono)
+		return -1;
+	return format.order == TIFF_RGGB ? 0 : format.order == TIFF_GRBG ? 1 : format.order == TIFF_GBRG ? 2 : 3;
 }
 
 } // namespace pycam

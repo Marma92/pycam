@@ -1,6 +1,6 @@
 import unittest
 
-from pycam.exposure import SHUTTER_SPEEDS, Exposure, format_ev, format_shutter
+from pycam.exposure import SHUTTER_SPEEDS, Exposure, format_duration, format_ev, format_shutter
 
 
 class ExposureTest(unittest.TestCase):
@@ -40,9 +40,30 @@ class ExposureTest(unittest.TestCase):
         self.assertEqual(e.iso, 1600)
 
     def test_slowest_shutter_is_honoured(self):
-        e = Exposure(shutter=1)
+        e = Exposure(shutter=1, iso=100)  # M: up to the sensor's slowest, then B
         e.step_shutter(+50, None, slowest=2)
-        self.assertEqual(e.shutter, 2)
+        self.assertEqual((e.shutter, e.bulb), (2, True))
+        e.step_shutter(-1, None, slowest=2)  # back from B to the slowest speed
+        self.assertEqual((e.shutter, e.bulb), (2, False))
+
+    def test_long_exposures(self):
+        e = Exposure(shutter=0.5)  # S stops at 1 s: the automatic gain needs a few frames
+        e.step_shutter(+10, None, slowest=674)
+        self.assertEqual((e.shutter, e.bulb), (1, False))
+        e = Exposure(shutter=30, iso=200)
+        e.step_shutter(+13, None, slowest=674)
+        self.assertEqual(e.shutter, 640)  # 10'40", the IMX477's limit is 674 s
+        e.step_shutter(+1, None, slowest=674)
+        self.assertTrue(e.bulb)
+        controls = e.controls()
+        self.assertEqual((controls["ExposureTime"], controls["AnalogueGain"]), (1_000_000, 2.0))  # B: 1 s frames
+        e.step_shutter(+1, None, slowest=674)  # nothing past B
+        self.assertTrue(e.bulb)
+        self.assertTrue(Exposure.from_dict(e.to_dict()).bulb)
+        e.toggle_iso_auto(400)  # M -> S: no B, and 1 s at most
+        self.assertEqual((e.mode, e.shutter, e.bulb), ("S", 1, False))
+        self.assertFalse(Exposure.from_dict({"shutter": 30, "bulb": True}).bulb)  # S: no B
+        self.assertEqual(Exposure.from_dict({"shutter": 30}).shutter, 1)
 
     def test_auto_toggles(self):
         e = Exposure()
@@ -63,6 +84,9 @@ class ExposureTest(unittest.TestCase):
         self.assertEqual(format_shutter(1 / 250), "1/250")
         self.assertEqual(format_shutter(0.5), '0.5"')
         self.assertEqual(format_shutter(2), '2"')
+        self.assertEqual(format_shutter(80), "1'20\"")
+        self.assertEqual(format_shutter(240), "4'")
+        self.assertEqual(format_duration(83.7), "1:23")
         self.assertEqual(format_ev(0), "±0")
         self.assertEqual(format_ev(-2 / 3), "-0.7")
 

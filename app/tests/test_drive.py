@@ -32,6 +32,8 @@ class Engine(FakeEngine):
         self.busy = 0
         self.shot_times = []
         self.clock = lambda: 0.0
+        self.long_us = 0  # captures expose that long ("exposing"), until finish() or cancelled
+        self.open = None  # the capture id of the exposure in progress
 
     async def call(self, cmd, timeout=10.0, **params):
         if cmd == "capture" and self.busy:
@@ -42,7 +44,19 @@ class Engine(FakeEngine):
         loop = asyncio.get_running_loop()
         if cmd == "capture":
             self.shot_times.append(self.clock())
-            loop.call_soon(self.on_event, {"event": "captured", "capture_id": reply["capture_id"]})
+            capture_id, stack = reply["capture_id"], params.get("stack")
+            if stack or self.long_us:
+                self.open = capture_id
+                event = {"event": "exposing", "capture_id": capture_id, "exposure_us": 0 if stack else self.long_us}
+                loop.call_soon(self.on_event, {**event, "stack": bool(stack)})
+            else:
+                loop.call_soon(self.on_event, {"event": "captured", "capture_id": capture_id})
+        elif cmd == "capture_stop" and self.open:
+            loop.call_soon(self.finish, 7)
+        elif cmd == "capture_cancel" and self.open:
+            event = {"event": "capture_error", "capture_id": self.open, "error": "cancelled"}
+            self.open = None
+            loop.call_soon(self.on_event, event)
         elif cmd == "set_controls" and manual(params["controls"]):
             c = params["controls"]
             loop.call_soon(
@@ -53,8 +67,16 @@ class Engine(FakeEngine):
     def captures(self):
         return [params for name, params in self.calls if name == "capture"]
 
+    def finish(self, frames=1):
+        """The exposure in progress is over (a bulb: after `frames` seconds)."""
+        capture_id, self.open = self.open, None
+        self.on_event({"event": "stack_frame", "capture_id": capture_id, "frames": frames, "exposure_us": frames * 1e6})
+        self.on_event({"event": "captured", "capture_id": capture_id, "frames": frames})
 
-class DriveTest(unittest.IsolatedAsyncioTestCase):
+
+class DriveCase(unittest.IsolatedAsyncioTestCase):
+    """A camera on the fake engine; time passes only when the drive sleeps."""
+
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.env = {k: os.environ.get(k) for k in ("XDG_CACHE_HOME", "XDG_CONFIG_HOME")}
@@ -93,6 +115,8 @@ class DriveTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
         self.fail("the sequence never ends")
 
+
+class DriveTest(DriveCase):
     async def test_single_is_one_photo_per_press(self):
         self.camera.on_action("shutter")
         self.camera.on_action("shutter_release")
@@ -268,6 +292,103 @@ class DriveTest(unittest.IsolatedAsyncioTestCase):
         self.camera.on_action("front_dial_plus")
         self.assertEqual(self.settings.drive, "burst")
         self.assertIn(("Mode de déclenchement", "Rafale"), self.camera.view().menu)
+
+
+class LongExposureTest(DriveCase):
+    """Long exposures and the bulb."""
+
+    def bulb(self, mode="hold"):
+        e = self.settings.exposure
+        e.shutter, e.iso, e.bulb = 640, 400, True
+        self.settings.bulb_mode = mode
+
+    async def test_bulb_held(self):
+        self.bulb()
+        self.assertEqual(self.camera.view().shutter, "B")
+        self.camera.on_action("shutter")
+        await asyncio.sleep(0.01)
+        self.assertEqual(self.engine.last("capture")["stack"], {"mode": "add"})
+        view = self.camera.view()
+        self.assertEqual((view.exposure_label, view.exposure_timer), ("POSE B", "0:00"))
+        self.camera.on_action("front_dial_plus")  # no exposure change in the middle of it
+        self.assertIn("Pose en cours", self.camera.view().message)
+        self.camera.on_action("shutter_release")
+        await self.finished()
+        self.assertIn("capture_stop", [name for name, _ in self.engine.calls])
+        self.camera.on_action("shutter")  # during its last second: ignored, not a cancel
+        await asyncio.sleep(0.01)
+        self.assertNotIn("capture_cancel", [name for name, _ in self.engine.calls])
+        self.assertIsNone(self.camera.exposing)
+        self.assertEqual(self.camera.view().exposure_timer, "")
+
+    async def test_bulb_toggle_and_remote(self):
+        self.bulb("toggle")
+        self.camera.on_action("shutter")
+        self.camera.on_action("shutter_release")  # the release does not end it
+        await asyncio.sleep(0.01)
+        self.assertTrue(self.camera.drive.active)
+        self.camera.on_action("shutter")  # a second press does
+        await self.finished()
+        self.assertIn("capture_stop", [name for name, _ in self.engine.calls])
+        await asyncio.sleep(0.01)  # its last second
+
+        self.bulb("hold")  # the web interface has no release: always one press, then another
+        self.camera.on_action("remote_shutter")
+        await asyncio.sleep(0.01)
+        self.assertTrue(self.camera.drive.active)
+        self.camera.on_action("remote_shutter")
+        await self.finished()
+        self.assertEqual([name for name, _ in self.engine.calls].count("capture_stop"), 2)
+
+    async def test_bulb_ends_by_itself(self):
+        self.bulb()
+        self.camera.on_action("shutter")
+        await asyncio.sleep(0.01)
+        self.engine.finish(1800)  # the engine's limit, 30 minutes
+        await self.finished()
+        self.assertNotIn("capture_stop", [name for name, _ in self.engine.calls])
+
+    async def test_long_exposure_timer_and_cancel(self):
+        e = self.settings.exposure
+        e.shutter, e.iso = 30, 100
+        self.engine.long_us = 30_000_000
+        self.camera.on_action("shutter")
+        await asyncio.sleep(0.01)
+        view = self.camera.view()
+        self.assertEqual((view.exposure_label, view.exposure_timer), ("POSE", "0:30"))
+        self.camera.on_action("shutter")  # cancels it
+        await asyncio.sleep(0.01)
+        self.assertIn("capture_cancel", [name for name, _ in self.engine.calls])
+        self.assertIn("annulée", self.camera.view().message)
+        self.assertIsNone(self.camera.exposing)
+
+    async def test_exposure_changes_wait_for_the_end(self):
+        e = self.settings.exposure
+        e.shutter, e.iso = 30, 100
+        self.engine.long_us = 30_000_000
+        self.camera.on_action("shutter")
+        await asyncio.sleep(0.01)
+        sent = len([1 for name, _ in self.engine.calls if name == "set_controls"])
+        self.camera.set_preset("portrait-400")  # its exposure shift: after the exposure
+        await asyncio.sleep(0.01)
+        self.assertEqual(len([1 for name, _ in self.engine.calls if name == "set_controls"]), sent)
+        self.engine.finish()
+        await asyncio.sleep(0.01)
+        self.assertEqual(len([1 for name, _ in self.engine.calls if name == "set_controls"]), sent + 1)
+
+    async def test_meter_in_m_reads_the_settings(self):
+        e = self.settings.exposure
+        e.shutter, e.iso = 8, 100
+        # The viewfinder runs automatically (8 s at ISO 100 cannot be simulated): 1/50 at gain 2.
+        k = self.settings.meter_k
+        lux = k / (8e6 * 1.0)  # the light for which 8 s at ISO 100 is right
+        self.camera.on_event(
+            {"event": "stats", "exposure_us": 20000, "analogue_gain": 2.0, "lux": lux, "viewfinder": "auto"}
+        )
+        view = self.camera.view()
+        self.assertEqual((view.meter, view.viewfinder_auto), (0, True))
+        e.bulb = True
+        self.assertIsNone(self.camera.view().meter)  # B: no duration to meter
 
 
 class HelpersTest(unittest.TestCase):

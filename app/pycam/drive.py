@@ -12,6 +12,11 @@
   frozen too: the photos of a bracketing are to be merged.
 
 The shutter pressed during a sequence stops it; the camera stays usable meanwhile.
+
+The shutter also drives the long exposures, whatever the mode:
+- B (exposure.py): the engine adds up 1 s exposures from the press until the release, or
+  until a second press ("Pose B" in the menu, and always from the web interface);
+- a long exposure alone (no sequence) is cancelled by the shutter.
 """
 
 import asyncio
@@ -38,7 +43,8 @@ COUNTS = (10, 25, 50, 100, 250, 0)  # 0: until stopped
 BRACKET_SHOTS = (3, 5)
 BRACKET_STEPS = (1, 2, 3)  # thirds of a stop
 BURST_MAX = 20
-BUSY_WAIT = 15.0  # seconds a sequence waits for the writing queue before giving up
+BUSY_WAIT = 15.0  # seconds a sequence waits for the writing queue (plus the exposure)
+MAX_BULB = 30 * 60  # seconds: the engine ends a bulb there
 MIN_TIME_US = 60  # the sensor's shortest exposure
 MAX_GAIN = 16.0  # ISO 1600, the highest offered
 
@@ -93,6 +99,8 @@ class Drive:
         self.status = ""  # shown on the HUD during a sequence
         self.countdown = 0  # seconds left on the self-timer
         self.held = False  # the shutter, for the burst
+        self.bulb_toggle = False  # the bulb ends with a second press, not the release
+        self.bulb_stop = None  # asyncio.Event: end the bulb
         self.sleep = asyncio.sleep  # the tests make time pass faster
         self.clock = time.monotonic
 
@@ -110,20 +118,39 @@ class Drive:
         """No review after each photo: it would hide the burst or the bracketing."""
         return self.active and self.running in ("burst", "bracket")
 
-    def shutter(self):
-        """The shutter pressed: one photo, or a sequence started, or the one running stopped."""
+    def shutter(self, remote=False):
+        """The shutter pressed: one photo, or a sequence started, or the one running stopped.
+        remote: from the web interface, which has no release (a burst takes one photo, the
+        bulb ends with a second press)."""
+        cam = self.camera
         if self.active:
+            if self.running == "bulb":
+                if self.bulb_toggle:
+                    self.bulb_stop.set()
+                return
             if self.running == "burst":  # pressed again before its last photo: it goes on
-                self.held = True
+                self.held = not remote
                 return
             self.stop()
-            self.camera.show_message("Séquence arrêtée")
+            cam.show_message("Séquence arrêtée")
             return
-        mode = self.camera.settings.drive
+        if cam.exposing:
+            # A long exposure on its own: the shutter cancels it. A bulb being stopped
+            # exposes its last second: never lose it to a press.
+            if cam.exposing.duration is not None:
+                cam.spawn(cam.cancel_capture())
+            return
+        if cam.settings.exposure.bulb:
+            self.bulb_toggle = remote or cam.settings.bulb_mode == "toggle"
+            self.bulb_stop = asyncio.Event()
+            self.running = "bulb"
+            self.task = asyncio.get_running_loop().create_task(self._run(self._bulb()))
+            return
+        mode = cam.settings.drive
         if mode not in MODES or mode == "single":
-            self.camera.spawn(self.camera.capture())
+            cam.spawn(cam.capture())
             return
-        self.held = True
+        self.held = not remote
         self.running = mode
         sequence = {
             "burst": self._burst,
@@ -136,6 +163,8 @@ class Drive:
 
     def release(self):
         self.held = False
+        if self.active and self.running == "bulb" and not self.bulb_toggle:
+            self.bulb_stop.set()
 
     def stop(self):
         if self.active:
@@ -160,12 +189,30 @@ class Drive:
     async def _shoot(self):
         """One photo, once the engine can take it (the writing queue may be full): its
         capture id, or None."""
-        deadline = self.clock() + BUSY_WAIT
+        deadline = self.clock() + BUSY_WAIT + (self.camera.settings.exposure.shutter or 0)
         while True:
             capture_id = await self.camera.capture(quiet=True)
             if capture_id is not None or self.camera.capture_error != "busy" or self.clock() > deadline:
                 return capture_id
             await self.sleep(0.1)
+
+    async def _bulb(self):
+        cam = self.camera
+        capture_id = await cam.capture(stack={"mode": "add"})
+        if capture_id is None:
+            return
+        stopped = asyncio.ensure_future(self.bulb_stop.wait())
+        ended = asyncio.ensure_future(cam.wait_captured(capture_id, timeout=MAX_BULB + 60))
+        try:
+            done, _ = await asyncio.wait({stopped, ended}, return_when=asyncio.FIRST_COMPLETED)
+            if stopped in done:
+                await cam.stop_capture()
+        except asyncio.CancelledError:
+            cam.spawn(cam.stop_capture())  # the mode changed: never leave a bulb open
+            raise
+        finally:
+            stopped.cancel()
+            ended.cancel()
 
     async def _burst(self, mode):
         count = 0

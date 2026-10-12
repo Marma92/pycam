@@ -39,6 +39,9 @@ class HudView:
     drive: str = ""  # the drive mode ("RAFALE"), or where its sequence is ("INT 4/50 · 8 s")
     drive_running: bool = False  # a sequence is running
     countdown: int = 0  # the self-timer's seconds left, shown big
+    exposure_timer: str = ""  # a long exposure's time left, a bulb's time so far ("0:23")
+    exposure_label: str = ""  # "POSE", "POSE B"
+    viewfinder_auto: bool = False  # the viewfinder does not show the manual exposure (too long)
     histogram: tuple = ()  # luminance, 64 classes
     histogram_rgb: tuple = ()  # (red, green, blue), 64 classes each; drawn instead
     message: str = ""

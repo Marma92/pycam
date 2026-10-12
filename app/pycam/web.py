@@ -125,6 +125,8 @@ class WebServer:
                 "drive": view.drive,
                 "drive_running": view.drive_running,
                 "countdown": view.countdown,
+                "exposure_timer": view.exposure_timer,
+                "exposure_label": view.exposure_label,
                 "preset": preset.id,
                 "grain": s.grain,
                 "grain_label": looks.grain_label(preset),
@@ -133,10 +135,10 @@ class WebServer:
         )
 
     async def shutter(self, request):
-        """Pressed and released: one photo, a self-timer or an interval started (or the
-        one running stopped), the first photo of a burst only."""
-        self.camera.on_action("shutter")
-        self.camera.on_action("shutter_release")
+        """A press without a release: one photo, a self-timer or an interval started (or
+        the one running stopped), the first photo of a burst only; a bulb starts, and a
+        second press ends it; a long exposure is cancelled."""
+        self.camera.on_action("remote_shutter")
         return web.json_response({"ok": True})
 
     async def choose_preset(self, request):

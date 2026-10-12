@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import math
 import os
 import time
 from collections import OrderedDict
@@ -35,6 +36,7 @@ EXPOSURE_ACTIONS = {
 FOCUS_AID_ACTIONS = {"peaking", "zebra"}
 LOUPE_LEVELS = (1, 5, 10)
 CAPTURED_TIMEOUT = 10.0  # seconds, beyond the exposure time
+LONG_EXPOSURE = 1.0  # seconds: from there, a timer on the screen during the exposure
 # Playback: the rear dial goes from one photo to the next, the front dial jumps ten.
 PLAYBACK_STEPS = {"rear_dial_plus": 1, "rear_dial_minus": -1, "front_dial_plus": 10, "front_dial_minus": -10}
 DELETE_CONFIRM_SECONDS = 3
@@ -59,6 +61,16 @@ class Shot:
     name: str
     exposure_us: float = 0
     iso: float = 0
+
+
+@dataclass
+class Exposing:
+    """A long exposure or a bulb, from its start ("exposing") to its end ("captured")."""
+
+    capture_id: int
+    start: float  # time.monotonic()
+    duration: float | None  # seconds; None: a bulb, as long as the shutter is held
+    seconds: float = 0  # bulb: exposed so far, from its frames
 
 
 @dataclass
@@ -105,6 +117,8 @@ class Camera:
         self._captured = OrderedDict()  # capture id -> taken (True) or failed (False), the last ones
         self._capture_waits = {}  # capture id -> future, for wait_captured
         self.drive = drives.Drive(self)
+        self.exposing = None  # Exposing, during a long exposure or a bulb
+        self._exposure_deferred = False  # an exposure change waits for the end of the exposure
         self._save_handle = None
         self._tasks = set()
         self._snapshots = {}  # path -> future, until the engine has written it
@@ -173,6 +187,16 @@ class Camera:
                 shot.exposure_us = msg.get("exposure_us", 0)
                 shot.iso = msg.get("analogue_gain", 0) * msg.get("digital_gain", 1) * 100
             self._capture_taken(msg.get("capture_id"), True)
+            self._end_exposure(msg.get("capture_id"))
+        elif kind == "exposing":
+            if msg.get("stack") or msg.get("exposure_us", 0) >= LONG_EXPOSURE * 1e6:
+                duration = None if msg.get("stack") else msg["exposure_us"] / 1e6
+                self.exposing = Exposing(msg.get("capture_id"), time.monotonic(), duration)
+                self.spawn(self._exposure_ticker())
+                self.redraw()
+        elif kind == "stack_frame":
+            if self.exposing and self.exposing.capture_id == msg.get("capture_id"):
+                self.exposing.seconds = msg.get("exposure_us", 0) / 1e6
         elif kind == "file_saved":
             # The JPEG is written first: review it without waiting for the DNG. Not during a
             # burst or a bracketing: the last photo is reviewed once it is over.
@@ -192,8 +216,13 @@ class Camera:
         elif kind == "capture_error":
             self.writing = max(0, self.writing - 1)
             self._capture_taken(msg.get("capture_id"), False)
-            log.error("capture %s failed: %s", msg.get("capture_id"), msg.get("error"))
-            self.show_message("Erreur d'enregistrement", warning=True)
+            self._end_exposure(msg.get("capture_id"))
+            if msg.get("error") == "cancelled":
+                log.info("capture %s cancelled", msg.get("capture_id"))
+                self.show_message("Pose annulée")
+            else:
+                log.error("capture %s failed: %s", msg.get("capture_id"), msg.get("error"))
+                self.show_message("Erreur d'enregistrement", warning=True)
         elif kind == "loupe":
             self.loupe = msg.get("loupe", {}).get("zoom", 1)
             self.redraw()
@@ -212,6 +241,9 @@ class Camera:
     async def apply_exposure(self):
         if self.drive.freezes_exposure:
             return  # the bracketing sets it, and gives it back when it is over
+        if self.exposing:
+            self._exposure_deferred = True  # not in the middle of a bulb
+            return
         try:
             preset = self.preset()
             controls = self.settings.exposure.controls(preset.exposure_bias, preset.white_balance)
@@ -337,6 +369,9 @@ class Camera:
         if action == "shutter_release":  # nothing else: it ends no review, closes no menu
             self.drive.release()
             return
+        remote = action == "remote_shutter"  # the web interface's: pressed, never held
+        if remote:
+            action = "shutter"
         if self.review:
             # Any key ends the review; the shutter also shoots: never miss a photo.
             self.end_review()
@@ -366,10 +401,10 @@ class Camera:
                 self.redraw()
             return
         if action == "shutter":
-            self.drive.shutter()
+            self.drive.shutter(remote=remote)
             return
-        if action in EXPOSURE_ACTIONS and self.drive.freezes_exposure:
-            self.show_message("Bracketing en cours", warning=True)
+        if action in EXPOSURE_ACTIONS and (self.drive.freezes_exposure or self.exposing):
+            self.show_message("Pose en cours" if self.exposing else "Bracketing en cours", warning=True)
             return
         if action == "drive":
             self.drive.stop()
@@ -585,9 +620,10 @@ class Camera:
             self.spawn(self.apply_focus_aids())
         self.save_soon()
 
-    async def capture(self, quiet=False):
+    async def capture(self, quiet=False, stack=None):
         """One photo: its capture id, or None (why in self.capture_error). quiet: no
-        "busy" message (a sequence waits for the engine)."""
+        "busy" message (a sequence waits for the engine). stack: frames added up into
+        one (the engine's "stack": the bulb)."""
         async with self._capture_lock:  # two quick presses must not get the same name
             self.capture_error = None
             if not self.engine.connected:
@@ -597,6 +633,8 @@ class Camera:
             base, folder, number = self.storage.next_photo()
             s, preset = self.settings, self.preset()
             extra = {"base_jpeg": Storage.base_copy(base)} if s.keep_base and "jpeg" in s.formats else {}
+            if stack:
+                extra["stack"] = stack
             try:
                 reply = await self.engine.call(
                     "capture",
@@ -642,6 +680,35 @@ class Camera:
             return False
         finally:
             self._capture_waits.pop(capture_id, None)
+
+    async def cancel_capture(self):
+        """Abandons the exposure in progress (nothing is written)."""
+        try:
+            await self.engine.call("capture_cancel")
+        except (EngineError, ConnectionError) as e:
+            log.warning("cannot cancel the capture: %s", e)
+
+    async def stop_capture(self):
+        """Ends a bulb with the second being exposed."""
+        try:
+            await self.engine.call("capture_stop")
+        except (EngineError, ConnectionError) as e:
+            log.warning("cannot stop the capture: %s", e)
+
+    def _end_exposure(self, capture_id):
+        if self.exposing and self.exposing.capture_id == capture_id:
+            self.exposing = None
+            if self._exposure_deferred:
+                self._exposure_deferred = False
+                self.spawn(self.apply_exposure())
+            self.redraw()
+
+    async def _exposure_ticker(self):
+        """No viewfinder frame, so no stats, during the exposure: the timer has its own beat."""
+        exposing = self.exposing
+        while self.exposing is exposing and exposing is not None:
+            self.redraw()
+            await asyncio.sleep(0.5)
 
     def _capture_taken(self, capture_id, ok):
         self._captured[capture_id] = ok
@@ -751,22 +818,34 @@ class Camera:
             )
         shutter = e.shutter if e.shutter is not None else self.measured_shutter()
         iso = e.iso if e.iso is not None else round(self.measured_iso())
-        # The meter: always in M; in the other modes, only when the automatic exposure
-        # cannot reach its aim (out of range), as a warning.
+        # The meter: always in M (but B: no duration); in the other modes, only when the
+        # automatic exposure cannot reach its aim (out of range), as a warning. In M, from
+        # the settings: the viewfinder may not run at them (long exposures).
         meter_value, meter_warning = None, False
-        stops = meter.offset(s.meter_k, self.stats)
+        if e.mode == "M":
+            stops = None if e.bulb else meter.offset(s.meter_k, self.stats, e.shutter * 1e6, e.iso / 100)
+        else:
+            stops = meter.offset(s.meter_k, self.stats)
         bias = self.preset().exposure_bias  # the preset wants this much: that is the aim
         if stops is not None:
             if e.mode == "M":
                 meter_value = meter.to_thirds(stops - bias)
             elif abs(stops - e.ev - bias) >= 2 / 3:
                 meter_value, meter_warning = meter.to_thirds(stops - e.ev - bias), True
+        timer, timer_label = "", ""
+        if self.exposing:
+            x = self.exposing
+            if x.duration is None:  # the bulb counts up, from its frames once they come
+                timer, timer_label = exp.format_duration(max(x.seconds, time.monotonic() - x.start)), "POSE B"
+            else:
+                left = x.duration - (time.monotonic() - x.start)
+                timer, timer_label = exp.format_duration(math.ceil(max(left, 0))), "POSE"
         return HudView(
             display=s.display,
             grid=s.grid and self.loupe == 1,  # the rule of thirds means nothing in the loupe
             mode=e.mode,
             metering=e.metering,
-            shutter=exp.format_shutter(shutter),
+            shutter="B" if e.bulb else exp.format_shutter(shutter),
             shutter_auto=e.shutter is None,
             iso=f"ISO {iso}" if iso else "ISO --",
             iso_auto=e.iso is None,
@@ -790,6 +869,9 @@ class Camera:
             drive=self.drive.status if self.drive.active else drives.short_label(s),
             drive_running=self.drive.active,
             countdown=self.drive.countdown,
+            exposure_timer=timer,
+            exposure_label=timer_label,
+            viewfinder_auto=self.stats.get("viewfinder") == "auto",
             **self._histograms(self.stats.get("histogram", ()), self.stats.get("histogram_rgb", ())),
             message=message,
             warning=warning,

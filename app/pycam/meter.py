@@ -31,9 +31,12 @@ def calibrate(k, stats, ev):
     return math.exp((1 - LEARNING_RATE) * math.log(k) + LEARNING_RATE * math.log(measured))
 
 
-def offset(k, stats):
-    """How many stops the current exposure is above the neutral one (None: no measure)."""
-    lux, exposure, gain = stats.get("lux"), stats.get("exposure_us"), _gain(stats)
+def offset(k, stats, exposure_us=None, gain=None):
+    """How many stops an exposure is above the neutral one (None: no measure): the one the
+    sensor runs at, or the one given (in M: the viewfinder may not run at it)."""
+    lux = stats.get("lux")
+    exposure = exposure_us if exposure_us is not None else stats.get("exposure_us")
+    gain = gain if gain is not None else _gain(stats)
     if not lux or not exposure or not gain:
         return None
     return math.log2(exposure * gain * lux / k)

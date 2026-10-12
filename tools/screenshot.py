@@ -41,15 +41,19 @@ def main():
     screen = Image.new("RGBA", (width, height), (0, 0, 0, 255))
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "viewfinder.jpg")
-        if engine.call({"cmd": "snapshot", "path": path}).get("ok"):
-            while True:
-                msg = engine.read(5.0)
-                if msg is None:
-                    sys.exit("pas de snapshot_done")
-                if msg.get("path") == path:
-                    break
-            with Image.open(path) as viewfinder:
-                screen.paste(viewfinder.convert("RGBA").resize((w, h), Image.BILINEAR), (x, y))
+        shot = engine.call({"cmd": "snapshot", "path": path}).get("ok")
+        while shot:
+            msg = engine.read(3.0)
+            if msg is None:
+                # No viewfinder frame (a long exposure: the screen keeps the last one): the
+                # HUD alone, over grey.
+                print("pas d'image de visée : le HUD seul", file=sys.stderr)
+                screen.paste((60, 60, 60, 255), (x, y, x + w, y + h))
+                shot = False
+            elif msg.get("path") == path:
+                with Image.open(path) as viewfinder:
+                    screen.paste(viewfinder.convert("RGBA").resize((w, h), Image.BILINEAR), (x, y))
+                break
 
     screen.alpha_composite(hud)
     if args.scale != 1:

@@ -25,4 +25,16 @@ struct DngOptions
 void dng_write(libcamera::Span<const uint8_t> raw, StreamInfo const &info, libcamera::ControlList const &metadata,
 			   std::string const &filename, std::string const &camera_model, DngOptions const &options);
 
+// The same from samples already unpacked, one uint16 per pixel (`info.width` per row),
+// in the raw format's bit depth: a sum of exposures (stack.hpp). `pixels` may be reused.
+void dng_write_unpacked(std::vector<uint16_t> &pixels, StreamInfo const &info, libcamera::ControlList const &metadata,
+						std::string const &filename, std::string const &camera_model, DngOptions const &options);
+
+// A raw frame (packed 10 or 12 bits, or 16 bits) into one uint16 per pixel, `info.width`
+// per row. Throws for formats it does not know.
+void unpack_raw(uint8_t const *raw, StreamInfo const &info, uint16_t *dest);
+int raw_bits(StreamInfo const &info);
+// Bayer order of the raw format: 0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR; -1 for a monochrome sensor.
+int raw_bayer_order(StreamInfo const &info);
+
 } // namespace pycam

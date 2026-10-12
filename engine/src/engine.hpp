@@ -8,6 +8,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -22,6 +23,7 @@
 #include "focus_aids.hpp"
 #include "ipc_server.hpp"
 #include "look.hpp"
+#include "stack.hpp"
 
 namespace pycam
 {
@@ -75,7 +77,9 @@ private:
 	enum class Phase
 	{
 		Viewfinder,
-		Still, // switch strategy only: full resolution mode for one frame
+		// Full resolution for the photo: one frame, or those of a stack. Switch strategy,
+		// and in ZSL for the exposures longer than its frames, and for stacks.
+		Still,
 	};
 
 	struct PendingCapture
@@ -89,6 +93,11 @@ private:
 		std::vector<std::string> exif;
 		std::string base_jpeg_path;
 		Clock::time_point t_command;
+		// A stack (bulb, stacking): frames added until `stack_frames` (0: until stopped).
+		std::shared_ptr<RawStack> stack;
+		unsigned stack_frames = 0;
+		int64_t stack_exposure_us = 0;
+		bool stop = false; // "capture_stop": the frame being exposed is the last one
 	};
 
 	void TryDisplay();
@@ -99,9 +108,13 @@ private:
 	void SetTuning();
 	void FindCameraControls();
 	void ReleaseFrames();
-	std::optional<std::array<int64_t, 2>> FrameLimits(Phase phase) const;
+	int64_t ManualExposure() const;
+	libcamera::ControlList CameraControls(Phase phase, std::string *viewfinder = nullptr) const;
 	void OnFrame(CompletedRequestPtr &request);
 	void GrabStill(CompletedRequestPtr &request);
+	void StackFrame(CompletedRequestPtr &request);
+	std::unique_ptr<CaptureJob> NewJob(PendingCapture const &capture, CompletedRequestPtr &request);
+	json CancelCapture();
 	void PublishStats(CompletedRequestPtr &request);
 	void DrainCommands();
 	void HandleCommand(int client, json const &command, Clock::time_point received);
@@ -130,6 +143,12 @@ private:
 	std::string snapshot_path_; // next shown frame to save as JPEG ("snapshot" command)
 	std::shared_ptr<const Preview> preview_; // the look on the viewfinder, roughly; none: the base
 	libcamera::ControlInfoMap const *camera_controls_ = nullptr;
+	float max_gain_ = 16; // highest analogue gain of the sensor
+	// The tuning's tone curve, to develop stacks the way the ISP renders the other photos.
+	std::shared_ptr<const std::vector<uint8_t>> tone_;
+	// The viewfinder's exposure when it cannot be the photo's (long manual exposures):
+	// "simulated" (shorter, with more gain), "auto"; empty: the photo's.
+	std::string viewfinder_exposure_;
 
 	std::mutex commands_mutex_;
 	std::deque<std::tuple<int, json, Clock::time_point>> commands_;
@@ -149,6 +168,11 @@ private:
 	float loupe_zoom_ = 1;
 	float loupe_x_ = 0.5f, loupe_y_ = 0.5f;
 	std::atomic<bool> quit_ { false };
+	// Wakes the camera loop up while it waits for something other than a frame (a camera
+	// that may not be stopped yet): during a long exposure, no frame comes for minutes.
+	std::atomic<bool> tick_ { false };
+	std::atomic<bool> ticker_quit_ { false };
+	std::thread ticker_;
 
 	float fps_ = 0;
 	Clock::time_point last_stats_ {};

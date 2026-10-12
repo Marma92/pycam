@@ -22,6 +22,7 @@ PEAKING_COLORS = ("red", "yellow", "green", "blue", "white")
 PEAKING_SENSITIVITIES = ("low", "medium", "high")
 REVIEW_SECONDS = (0, 1, 2, 4)  # 0: no review after the shot
 HISTOGRAMS = ("rgb", "luma")
+BULB_MODES = ("hold", "toggle")  # B: held shutter, or one press to start and one to stop
 # What the Fn1 and Fn2 buttons can do: actions of Camera.on_action.
 FN_ACTIONS = ("peaking", "zebra", "awb_lock", "grid", "strategy", "raw", "drive")
 
@@ -48,6 +49,7 @@ class Settings:
     interval_count: int = 0  # drive.COUNTS, 0: until stopped
     bracket_shots: int = 3  # drive.BRACKET_SHOTS
     bracket_step: int = 3  # thirds of a stop, drive.BRACKET_STEPS
+    bulb_mode: str = "hold"  # BULB_MODES
     display: str = "detailed"
     grid: bool = True
     peaking: bool = False
@@ -133,6 +135,8 @@ def load_settings(path):
         settings.review_seconds = defaults.review_seconds
     if settings.histogram not in HISTOGRAMS:
         settings.histogram = defaults.histogram
+    if settings.bulb_mode not in BULB_MODES:
+        settings.bulb_mode = defaults.bulb_mode
     for name in ("fn1", "fn2"):
         if getattr(settings, name) not in FN_ACTIONS:
             setattr(settings, name, getattr(defaults, name))

@@ -3,6 +3,10 @@
 The aperture is a ring on the lens, so the classic modes come from what is manual:
 P (nothing), S (shutter speed), A (ISO: the camera picks the speed for the aperture set
 on the lens), M (both).
+
+Long exposures: up to 1 s in S (the automatic gain needs a few frames of the exposure to
+settle), up to the sensor's limit in M (10'40"), then B, the bulb: as long as the
+shutter is held, made of 1 s exposures added up (drive.py, the engine's stacks).
 """
 
 import math
@@ -14,8 +18,10 @@ SHUTTER_SPEEDS = (
     1 / 500, 1 / 400, 1 / 320, 1 / 250, 1 / 200, 1 / 160, 1 / 125, 1 / 100, 1 / 80, 1 / 60,
     1 / 50, 1 / 40, 1 / 30, 1 / 25, 1 / 20, 1 / 15, 1 / 13, 1 / 10, 1 / 8, 1 / 6, 1 / 5,
     1 / 4, 0.3, 0.4, 0.5, 0.6, 0.8, 1, 1.3, 1.6, 2, 2.5, 3.2, 4, 5, 6, 8, 10, 13, 15, 20,
-    25, 30, 40, 50, 60,
+    25, 30, 40, 50, 60, 80, 100, 120, 160, 200, 240, 320, 400, 480, 640,
 )
+S_SLOWEST = 1.0  # seconds: the slowest speed in S
+BULB_FRAME = 1.0  # seconds: the exposures a bulb is made of
 ISO_VALUES = (100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600)
 EV_MAX = 3.0
 EV_STEP = 1 / 3
@@ -55,9 +61,18 @@ def nearest_index(values, x):
 def format_shutter(seconds):
     if seconds <= 0:
         return "--"
+    if seconds >= 60:
+        minutes, rest = divmod(round(seconds), 60)
+        return f"{minutes}'{rest:02d}\"" if rest else f"{minutes}'"
     if seconds >= 0.3 - 1e-6:
         return f'{seconds:g}"'
     return f"1/{round(1 / seconds)}"
+
+
+def format_duration(seconds):
+    """A long exposure's time, as on a timer: 0:07, 2:30."""
+    seconds = max(0, int(seconds))
+    return f"{seconds // 60}:{seconds % 60:02d}"
 
 
 def format_ev(ev):
@@ -75,6 +90,7 @@ class Exposure:
     kelvin: int = 5500  # for awb == "Kelvin"
     wb_gains: list | None = None  # [red, blue] for awb == "Locked"
     metering: str = "centre"  # METERING
+    bulb: bool = False  # B, past the slowest speed in M: as long as the shutter is held
 
     @classmethod
     def from_dict(cls, data):
@@ -96,6 +112,9 @@ class Exposure:
             exposure.awb = awb
         if data.get("metering") in METERING:
             exposure.metering = data["metering"]
+        exposure.bulb = data.get("bulb") is True and exposure.mode == "M"
+        if exposure.mode == "S" and exposure.shutter > S_SLOWEST:
+            exposure.shutter = S_SLOWEST
         return exposure
 
     def to_dict(self):
@@ -128,7 +147,8 @@ class Exposure:
         if self.shutter is None:
             controls["ExposureTimeMode"] = "Auto"
         else:
-            controls["ExposureTime"] = round(self.shutter * 1e6)
+            # B: the engine adds up exposures of BULB_FRAME; the viewfinder shows one.
+            controls["ExposureTime"] = round((BULB_FRAME if self.bulb else self.shutter) * 1e6)
             controls["ExposureTimeMode"] = "Manual"
         if self.iso is None:
             controls["AnalogueGainMode"] = "Auto"
@@ -141,10 +161,19 @@ class Exposure:
     # the picture does not jump when going manual.
 
     def step_shutter(self, steps, measured_seconds, slowest=SHUTTER_SPEEDS[-1]):
-        """steps > 0: slower (brighter)."""
+        """steps > 0: slower (brighter). In M, one step past the slowest speed is B."""
+        manual_iso = self.iso is not None
+        limit = slowest if manual_iso else min(slowest, S_SLOWEST)
+        speeds = [s for s in SHUTTER_SPEEDS if s <= limit * 1.001] or [SHUTTER_SPEEDS[0]]
+        if self.bulb:
+            if steps >= 0:
+                return
+            self.bulb, self.shutter, steps = False, speeds[-1], steps + 1
         current = self.shutter if self.shutter is not None else (measured_seconds or 1 / 60)
-        speeds = [s for s in SHUTTER_SPEEDS if s <= slowest * 1.001] or [SHUTTER_SPEEDS[0]]
         index = nearest_index(speeds, current) + steps
+        if manual_iso and index >= len(speeds):
+            self.bulb, self.shutter = True, speeds[-1]
+            return
         self.shutter = speeds[max(0, min(len(speeds) - 1, index))]
 
     def step_iso(self, steps, measured_iso):
@@ -159,13 +188,15 @@ class Exposure:
         if self.shutter is None:
             self.step_shutter(0, measured_seconds)
         else:
-            self.shutter = None
+            self.shutter, self.bulb = None, False
 
     def toggle_iso_auto(self, measured_iso):
         if self.iso is None:
             self.step_iso(0, measured_iso)
         else:
-            self.iso = None
+            self.iso, self.bulb = None, False
+            if self.shutter is not None and self.shutter > S_SLOWEST:  # S stops at 1 s
+                self.shutter = S_SLOWEST
 
     def next_awb(self):
         """Presets, then Kelvin, then back to Auto (a locked balance is left for Auto)."""

@@ -115,6 +115,7 @@ BRACKET_SHOTS = Item("Vues du bracketing", "bracket_shots", drive.BRACKET_SHOTS,
 BRACKET_STEP = Item(
     "Écart du bracketing", "bracket_step", drive.BRACKET_STEPS, tuple(f"±{drive.format_step(t)} IL" for t in drive.BRACKET_STEPS)
 )
+BULB = Item("Pose B", "bulb_mode", ("hold", "toggle"), ("Tenir le déclencheur", "Un appui, puis un autre"))
 REVIEW = Item("Revue après la prise", "review_seconds", (0, 1, 2, 4), ("Coupée", "1 s", "2 s", "4 s"))
 # Applied at the next start of the application (web.py).
 WEB = Item("Interface web", "web", (True, False), ("Oui · au prochain démarrage", "Non · au prochain démarrage"))
@@ -170,6 +171,7 @@ FULL = (
     INTERVAL_COUNT,
     BRACKET_SHOTS,
     BRACKET_STEP,
+    BULB,
     STRATEGY,
     REVIEW,
     KEEP_BASE,
