@@ -123,12 +123,17 @@ document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
 
 // --- Viewfinder and state
 
+let running = false;  // a drive sequence: the state is followed every second
+
 async function refreshState() {
   try {
     const s = await api("/api/state");
+    running = s.drive_running;
     const parts = [["Mode", s.mode], ["Vitesse", s.shutter], ["", s.iso], ["Correction", s.ev || "—"], ["Balance", s.awb],
                    ["Format", s.formats], ["Vues restantes", s.shots]];
     if (s.writing) parts.push(["Écriture", s.writing]);
+    if (s.drive) parts.unshift(["", s.countdown ? `${s.drive} · ${s.countdown}` : s.drive]);
+    $("shutter").textContent = s.drive_running ? "Arrêter la séquence" : "Déclencher";
     $("status").innerHTML = (s.connected ? "" : "<b>Moteur indisponible</b> ") +
       parts.map(([k, v]) => `<span>${k ? k + " " : ""}<b>${esc(v)}</b></span>`).join("");
     const select = $("preset");
@@ -151,7 +156,7 @@ function refreshViewfinder() {
 }
 
 $("shutter").onclick = async () => {
-  try { await post("/api/shutter", {}); toast("Déclenché"); setTimeout(refreshState, 800); }
+  try { await post("/api/shutter", {}); toast("Déclenché"); setTimeout(refreshState, 300); }
   catch (e) { toast(e.message); }
 };
 $("preset").onchange = async (e) => {
@@ -218,7 +223,8 @@ $("send").onclick = async () => {
   } catch (e) { toast(e.message); }
 };
 
-refreshState(); setInterval(refreshState, 3000); refreshViewfinder();
+async function followState() { await refreshState(); setTimeout(followState, running ? 1000 : 3000); }
+followState(); refreshViewfinder();
 </script>
 </body>
 </html>

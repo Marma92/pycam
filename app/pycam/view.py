@@ -36,6 +36,9 @@ class HudView:
     menu_index: int = 0
     menu_title: str = ""
     writing: int = 0  # photos waiting to be written
+    drive: str = ""  # the drive mode ("RAFALE"), or where its sequence is ("INT 4/50 · 8 s")
+    drive_running: bool = False  # a sequence is running
+    countdown: int = 0  # the self-timer's seconds left, shown big
     histogram: tuple = ()  # luminance, 64 classes
     histogram_rgb: tuple = ()  # (red, green, blue), 64 classes each; drawn instead
     message: str = ""

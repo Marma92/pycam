@@ -49,7 +49,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Loupe de mise au point | ×5 / ×10 (le protocole accepte 1 à 16), déplaçable ; vrais pixels grâce au passage en pleine résolution (14 i/s) ; compatible avec le peaking ; le déclencheur la quitte. | ✅ |
 | Revue après la prise | Affichage 1, 2 ou 4 s, désactivable, avec nom, vitesse, ISO et histogramme de la photo. Visible ~1,5 s après l'appui : l'application décode le JPEG en 1/4 (~0,2 s). Plus rapide plus tard si le moteur fournit l'aperçu à partir du YUV. | ✅ |
 | Profils d'objectifs | Nom, marque, focale, ouverture max (et l'ouverture réglée, si indiquée) écrits dans l'EXIF du JPEG et du DNG ; choix par N et F, affichage dans le bandeau. Pas encore de menu pour créer un profil : on édite `settings.json`. | ✅ |
-| Paramètres d'image | Dans le menu rapide :<br>• netteté (dans l'ISP), contraste et saturation (−2…+2, plus noir et blanc ; compilés dans le look), tous visibles en visée ;<br>• réduction du bruit (aucune, légère, rapide, haute qualité) ;<br>• taille JPEG L / M / S (12, 6, 3 Mpx ; le DNG reste en pleine résolution) ;<br>• qualité JPEG, RAW on/off, compression du RAW. | ✅ |
+| Paramètres d'image | Dans le menu rapide :<br>• netteté (dans l'ISP), contraste et saturation (−2…+2, plus noir et blanc ; compilés dans le look), tous visibles en visée ;<br>• réduction du bruit (aucune, légère, rapide, haute qualité ; dans MENU › Image) ;<br>• taille JPEG L / M / S (12, 6, 3 Mpx ; le DNG reste en pleine résolution) ;<br>• qualité JPEG, RAW on/off, compression du RAW. | ✅ |
 | Réglages persistants | Fichier JSON, écriture atomique ; reprise à l'allumage. | ✅ |
 
 ## M2 — « Autonome » (dépend du matériel, voir `hardware.md`)
@@ -57,7 +57,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Fonctionnalité | Détail | État |
 |---|---|---|
 | Boutons physiques | Déclencheur à deux crans, deux molettes, joystick 5 directions, Q, MENU, LECTURE, DISP, LOUPE, Fn1/Fn2 (voir `hardware.md` §2). Liste d'achats chiffrée et câblage prêts (`hardware.md`) : chaque bouton produit la touche que l'application connaît, et elle lit déjà les molettes (`rotary-encoder`). Reste à acheter et câbler. | 🟨 |
-| Menu rapide Q | Les 12 réglages de prise de vue, par-dessus la visée : simulation, mesure, balance des blancs et température, peaking, netteté, contraste, saturation, réduction du bruit, format, déclenchement, ouverture. La molette arrière choisit la ligne, la molette avant change la valeur, le déclencheur ferme et déclenche. Au clavier : Tab. Fait en avance avec M1. | ✅ |
+| Menu rapide Q | Les 12 réglages de prise de vue, par-dessus la visée : simulation, grain, mesure, balance des blancs et température, peaking, netteté, contraste, saturation, format, mode de déclenchement, ouverture. La molette arrière choisit la ligne, la molette avant change la valeur, le déclencheur ferme et déclenche. Au clavier : Tab. Fait en avance avec M1. | ✅ |
 | Menus | MENU : tous les réglages par section (exposition, mise au point, image, fichiers, prise de vue, objectif, affichage, boutons), avec défilement. Le clavier ne garde plus qu'une touche par commande de l'appareil (`architecture.md` §5) ; reste à brancher les vrais boutons (M2). Au clavier : Échap. | 🟨 |
 | Lecture / galerie | Bouton LECTURE (touche P) : défilement à la molette arrière (de 10 en 10 à l'avant), loupe 100 % / 200 % déplaçable, infos tirées de l'EXIF (vitesse, ISO, ouverture, preset), histogramme, suppression en deux appuis de la prise entière. Le déclencheur ramène à la visée et déclenche. | ✅ |
 | Batterie | Niveau affiché, extinction propre sur batterie faible. | ⬜ |
@@ -71,9 +71,9 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 
 | Fonctionnalité | Détail | État |
 |---|---|---|
-| Modes de déclenchement | Rafale, retardateur 2 s / 10 s, intervallomètre (timelapse), bracketing AEB 3/5 vues. | ⬜ |
+| Modes de déclenchement | Vue par vue, rafale (déclencheur tenu, 20 vues au plus), retardateur 2 s / 10 s (gros compte à rebours), intervallomètre (2 s à 5 min, 10 à 250 vues ou jusqu'à l'arrêt), bracketing d'exposition (3 ou 5 vues, ±⅓, ±⅔ ou ±1 IL, exposition et balance figées). Dans Q et MENU › Prise de vue, ou sur Fn ; le déclencheur arrête une séquence. Badge en haut à gauche, progression en orange ; visible aussi dans l'interface web. Mesuré : en bascule, en RAW + JPEG avec un look, la rafale prend ~1 vue/s jusqu'à la file d'écriture pleine (3 vues), puis suit l'écriture (~5 s/vue). | ✅ |
 | Pose longue / pose B | Jusqu'à la limite du capteur (à mesurer), avec compte à rebours. | ⬜ |
-| ZSL | Déclenchement instantané, en option (compromis avec la fluidité de visée) : ligne « Déclenchement » de MENU, ou Fn. Fait en avance avec M0. | ✅ |
+| ZSL | Déclenchement instantané, en option (compromis avec la fluidité de visée) : ligne « Réactivité » de MENU, ou Fn. Fait en avance avec M0. | ✅ |
 | Simulations de pellicules | Presets ouverts (recette TOML, LUT `.cube` ou Hald), compilés en une LUT 3D avec grain et vignettage, appliqués au JPEG ; DNG neutre. Fait : base fixe, correction d'ombrage à part, moteur (LUT, grain, vignettage, « garder la base »), presets Standard et Base, menus, EXIF, aperçu en visée et histogramme corrigé, outil `tools/pycam_preset.py`, premières versions des pellicules (Portrait 400, Velours 50, Cinéma 800T, Cinéma 800T +2, Triple-X 400). Halation des CineStill et balance « Pellicule » (tungstène, lumière du jour). Reste : les affiner sur de vraies photos, halation en visée, méthode B. Conception : `presets.md`. | 🟨 |
 | DNG compressé | LJ92 sans perte, au format Adobe (2 composantes, prédicteur 1) : 12,1 Mo au lieu de 24,8 ; relu au bit près par LibRaw et rendu par darktable. Activé par défaut, ligne « RAW compressé » du menu. Fait en avance avec M1. | ✅ |
 | Vidéo | H.264 1080p30 matériel, avec les réglages manuels. | ⬜ |

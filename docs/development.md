@@ -101,7 +101,7 @@ cd ~/pycam/engine && meson test -C build --print-errorlogs
    cd ~/pycam/app && nohup python3 -m pycam -v > /tmp/pycam-app.log 2>&1 < /dev/null &
    ```
    - Elle prend la main sur les claviers branchés au Pi : voir les touches dans `architecture.md` §5.
-   - Sans clavier, on simule des appuis : `sudo python3 tools/press.py right up space`.
+   - Sans clavier, on simule des appuis : `sudo python3 tools/press.py right up space` ; `space:3` tient la touche 3 s (rafale).
    - Ses réglages sont dans `~/.config/pycam/settings.json`, et les photos dans `~/DCIM/100PYCAM/`.
    - Tests de la logique, sans Pi ni Pillow ni evdev : `cd app && python3 -m unittest discover -s tests -t .`
 6. On rapatrie les images (`scp`) pour les inspecter.

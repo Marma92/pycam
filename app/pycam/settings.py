@@ -10,7 +10,7 @@ import logging
 import os
 from dataclasses import dataclass, field, fields
 
-from . import picture
+from . import drive, picture
 from .exposure import Exposure
 from .lenses import DEFAULT_LENSES, clean_lens
 
@@ -23,7 +23,7 @@ PEAKING_SENSITIVITIES = ("low", "medium", "high")
 REVIEW_SECONDS = (0, 1, 2, 4)  # 0: no review after the shot
 HISTOGRAMS = ("rgb", "luma")
 # What the Fn1 and Fn2 buttons can do: actions of Camera.on_action.
-FN_ACTIONS = ("peaking", "zebra", "awb_lock", "grid", "strategy", "raw")
+FN_ACTIONS = ("peaking", "zebra", "awb_lock", "grid", "strategy", "raw", "drive")
 
 
 def default_path():
@@ -43,6 +43,11 @@ class Settings:
     saturation: int = 0  # -3: black and white
     denoise: str = "hq"  # picture.DENOISE
     strategy: str = "switch"
+    drive: str = "single"  # drive.MODES
+    interval_seconds: int = 10  # drive.INTERVALS
+    interval_count: int = 0  # drive.COUNTS, 0: until stopped
+    bracket_shots: int = 3  # drive.BRACKET_SHOTS
+    bracket_step: int = 3  # thirds of a stop, drive.BRACKET_STEPS
     display: str = "detailed"
     grid: bool = True
     peaking: bool = False
@@ -138,6 +143,11 @@ def load_settings(path):
         ("contrast", picture.CONTRAST),
         ("saturation", picture.SATURATION),
         ("denoise", picture.DENOISE),
+        ("drive", drive.MODES),
+        ("interval_seconds", drive.INTERVALS),
+        ("interval_count", drive.COUNTS),
+        ("bracket_shots", drive.BRACKET_SHOTS),
+        ("bracket_step", drive.BRACKET_STEPS),
     ):
         if getattr(settings, name) not in allowed:
             setattr(settings, name, getattr(defaults, name))

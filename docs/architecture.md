@@ -202,7 +202,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | `settings` | Réglages persistants dans `~/.config/pycam/settings.json`, écriture atomique. JSON plutôt que TOML : la bibliothèque standard sait le lire *et* l'écrire. | ✅ |
 | `storage` | DCIM, numérotation persistante, espace libre. | ✅ (suppression à venir) |
 | `state` | Machine d'états : `VIEW` → `MENU` / `PLAYBACK` / `SLEEP`. | ⬜ |
-| `drive` | Vue par vue, rafale, retardateur, intervallomètre, bracketing, pose B. | ⬜ |
+| `drive` | Modes de déclenchement : vue par vue, rafale, retardateur, intervallomètre, bracketing (voir plus bas). Pose B à venir. | ✅ |
 | `sensors` | IMU (niveau, orientation), batterie, RTC. | ⬜ |
 | `web` | `aiohttp`, port 8080, réseau local seulement : visée (une image par seconde, prise par la commande `snapshot`), déclencheur, preset et grain, galerie avec téléchargement et suppression, installation de presets. Une page unique sans dépendance (`web/index.html`). | ✅ |
 
@@ -210,7 +210,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 
 | Touche | Commande de l'appareil | Action |
 |---|---|---|
-| Espace / Entrée | Déclencheur | Déclencher. Ferme aussi un menu, la loupe ou la revue, et déclenche quand même. |
+| Espace / Entrée | Déclencheur | Déclencher, selon le mode de déclenchement (tenu : la rafale continue). Pendant une séquence, l'arrête. Ferme aussi un menu, la loupe ou la revue, et déclenche quand même. |
 | ← / → | Molette avant | En S et M : vitesse plus lente / plus rapide. En P et A : correction d'exposition −⅓ / +⅓ IL. Dans un menu : changer la valeur. |
 | ↓ / ↑ | Molette arrière | En A et M : ISO. En P et S : correction d'exposition −⅓ / +⅓ IL. Dans un menu : changer de ligne. |
 | S / I | Appui sur la molette avant / arrière | Vitesse / ISO : basculer automatique ⇄ manuel (le passage en manuel part de la valeur mesurée). |
@@ -219,7 +219,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | D | DISP | Affichage : détaillé → simple → nature. |
 | L | LOUPE | Loupe ×5 → ×10 → coupée. Dans la loupe, les flèches la déplacent au lieu de régler vitesse et ISO (en attendant le joystick). La grille est masquée, et le HUD montre le grossissement et une mini-carte de la zone. |
 | P | LECTURE | Les photos de la carte (voir ci-dessous). |
-| 1 / 2 | Fn1 / Fn2 | Ce que le menu leur attribue : peaking (Fn1 par défaut), zébras (Fn2 par défaut), mémoriser la balance, grille, bascule ⇄ ZSL, RAW + JPEG ⇄ JPEG. |
+| 1 / 2 | Fn1 / Fn2 | Ce que le menu leur attribue : peaking (Fn1 par défaut), zébras (Fn2 par défaut), mémoriser la balance, grille, bascule ⇄ ZSL, RAW + JPEG ⇄ JPEG, mode de déclenchement suivant. |
 
 Pendant la revue après la prise, toute touche la ferme ; le déclencheur la ferme *et* déclenche.
 
@@ -237,25 +237,37 @@ Pendant la revue après la prise, toute touche la ferme ; le déclencheur la fer
 
 **Les menus** (`menu.py`). La molette arrière choisit la ligne, la molette avant change la valeur, qui s'applique tout de suite.
 
-- **Q, réglages rapides** : les 12 réglages de prise de vue. Simulation (le preset), simuler le grain, mesure de la lumière, balance des blancs, température, peaking (coupé ou sa couleur), netteté, contraste, saturation (dont N&B), réduction du bruit, format, ouverture. Le déclenchement (bascule ou ZSL) est dans MENU, et attribuable à Fn.
+- **Q, réglages rapides** : les 12 réglages de prise de vue. Simulation (le preset), simuler le grain, mesure de la lumière, balance des blancs, température, peaking (coupé ou sa couleur), netteté, contraste, saturation (dont N&B), format, mode de déclenchement, ouverture. La réactivité (bascule ou ZSL) et la réduction du bruit sont dans MENU ; la réactivité est attribuable à Fn.
 - **MENU, menu complet** : tous les réglages, par section, la configuration comprise.
   - Exposition : mesure, balance des blancs, température.
   - Simulation : le preset (`presets.md`), simuler le grain.
   - Mise au point : peaking, sensibilité du peaking, zébras.
   - Image : netteté, contraste, saturation, réduction du bruit.
   - Fichiers : format, taille et qualité JPEG, compression du RAW.
-  - Prise de vue : déclenchement, revue après la prise, garder la base (un JPEG neutre en plus, `PYB_0001.JPG`).
+  - Prise de vue : mode de déclenchement, intervalle et nombre de vues de l'intervallomètre, vues et écart du bracketing, réactivité (bascule ou ZSL), revue après la prise, garder la base (un JPEG neutre en plus, `PYB_0001.JPG`).
   - Objectif : profil d'objectif, ouverture, correction de l'ombrage (un autre tuning : la caméra est rouverte, ~0,2 s).
   - Affichage : grille des tiers, histogramme.
   - Boutons : fonctions de Fn1 et Fn2.
 
-  Il fait 25 lignes et défile ; une barre à droite montre où l'on est.
+  Il fait 42 lignes (titres compris) et défile ; une barre à droite montre où l'on est.
 - Quelques lignes ont un comportement propre :
   - **Balance des blancs** : la valeur « Pellicule », juste après « Auto », prend la balance fixe du film du preset (5500 K pour Portrait 400 et Velours 50, 3200 K pour les Cinéma 800T), comme un vrai film : une pellicule tungstène sort bleue en lumière du jour. Un preset sans balance propre (Standard, Triple-X 400) reste alors en automatique. Le bandeau affiche « Film 3200 K ». La valeur « Mémorisée », en dernier, garde les gains que la balance automatique mesure à cet instant (viser une charte grise d'abord) ; Fn peut faire la même chose sans ouvrir le menu.
   - **Température** : hors mode Kelvin, elle affiche la température mesurée (« ≈ 4500 K »). Le premier cran part de cette valeur et passe la balance en Kelvin.
-  - **Déclenchement** : le changement n'est gardé que si le moteur l'accepte (il refuse pendant une prise).
+  - **Réactivité** : le changement n'est gardé que si le moteur l'accepte (il refuse pendant une prise).
   - **Objectif** : en changer oublie l'ouverture indiquée. Les profils sont dans `settings.json` ; par défaut, les deux objectifs officiels Raspberry Pi.
   - **Ouverture** : celle de la bague, écrite dans l'EXIF et affichée dans le bandeau. Sans objectif choisi, il n'y a rien à régler.
+
+**Les modes de déclenchement** (`drive.py`, 2026-10-12). Ce que fait le déclencheur ; le mode est un réglage (Q, MENU › Prise de vue, ou Fn qui passe au suivant).
+
+| Mode | Comportement |
+|---|---|
+| Vue par vue | Une photo par appui. |
+| Rafale | Tant que le déclencheur est tenu (au moins une vue, 20 au plus) : chaque vue dès que le moteur a pris la précédente (`captured`), puis au rythme de l'écriture quand la file est pleine. Le clavier et les boutons envoient le relâchement (`shutter_release`) ; le déclencheur web fait appui + relâchement, donc une vue. |
+| Retardateur 2 s / 10 s | Compte à rebours en gros chiffres au centre de la visée, puis une photo. |
+| Intervallomètre | Une photo toutes les 2, 5, 10, 30 s, 1 ou 5 min ; 10, 25, 50, 100, 250 vues ou jusqu'à l'arrêt. En retard d'un intervalle entier (file d'écriture pleine), la suivante part un intervalle plus tard : pas de rattrapage en rafale. |
+| Bracketing | 3 ou 5 vues autour de la mesure (0, −, +, −−, ++), à ±⅓, ±⅔ ou ±1 IL. L'exposition mesurée est figée (temps et gain manuels) et c'est le temps qui varie (le gain en S, où la vitesse est celle de l'utilisateur), ce qui ne dépend pas de la convergence de l'exposition automatique. Une balance automatique est figée aussi, pour que les vues se fusionnent. Pendant la série, les molettes d'exposition sont bloquées et l'apprentissage du posemètre suspendu ; l'exposition de l'utilisateur revient à la fin. |
+
+Le déclencheur pressé pendant une séquence l'arrête (sauf la rafale, qu'il prolonge). Une séquence attend la file d'écriture (jusqu'à 15 s) au lieu d'afficher « Occupé ». Le bandeau montre le mode en haut à gauche (« RAFALE », « RET 10 s », « INT 10 s », « BKT 3 × 1 ») et, pendant la séquence, sa progression en orange (« INT 4/50 · 8 s », « BKT 2/3 · −1.0 »). Pas de revue après chaque vue d'une rafale ou d'un bracketing : seule la dernière est montrée, à la fin. L'interface web affiche la même chose, et son bouton devient « Arrêter la séquence ».
 
 **Les molettes** (décidé le 2026-10-11). Chacune règle sa valeur quand elle est manuelle, sinon la correction d'exposition :
 
@@ -362,6 +374,8 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 8. 🟨 **Temps de démarrage** : la visée apparaît 25,4 s après le démarrage du noyau (§8). Le démarrage complet du système prend ~50 s, mais l'appareil est utilisable avant. L'objectif est de moins de 12 s (M2).
 9. ✅ **Durabilité des photos** (2026-10-12). Chaque fichier est écrit en `.part`, forcé sur la carte (`fsync`), renommé, puis le dossier est forcé à son tour : `capture_done` signifie « sur la carte », et une coupure de courant ne laisse jamais de fichier tronqué sous son vrai nom. Coût mesuré sur la carte SD du Pi : JPEG 0,67 s au lieu de 0,4, DNG compressé 2,8 s au lieu de 1,8. La revue n'attend pas : elle part du JPEG, écrit en premier. Une photo RAW + JPEG occupe le fil d'écriture ~4 s avec le look, ce qui limite surtout les rafales.
 10. ✅ **Commande de la correction d'exposition** : la molette dont la valeur est automatique la règle (§5). Plus de touche dédiée.
+11. ✅ **Course à l'arrêt de la caméra** (2026-10-12, vue pendant les essais du bracketing : deux plantages du moteur, « double free or corruption »). Dans rpicam-apps 1.13, `StopCamera()` vide la liste des requêtes rendues à l'application sans verrou, alors que `queueRequest()` y cherche et y efface, verrou pris, quand un autre fil rend une image. Le fil d'affichage rendait parfois la sienne à ce moment-là. Le moteur lui fait désormais rendre ses images *avant* d'arrêter la caméra (`ReleaseFrames`). 200 captures de suite en bascule sans plantage ensuite ; la course étant rare, aucun essai ne l'a reproduite à la demande avant le correctif.
+12. ✅ **Contrôles mémorisés** (2026-10-12). Le moteur rend tous les contrôles reçus à la caméra à chaque redémarrage (photo en bascule, loupe, ZSL). Des gains de balance reçus une fois (balance « Mémorisée », bracketing) y restaient après le retour en Auto, et coupaient la balance automatique à la photo suivante. Désormais, un mode automatique oublie la valeur manuelle qu'il remplace, et les gains et la température s'excluent (`remember_controls`, testé). De même, une pose manuelle plus longue que l'image de visée allonge tout de suite les limites de durée d'image ; avant, il fallait attendre un redémarrage, et en ZSL une pose de ½ s était coupée à ¼ s.
 
 ## 11. Décisions (résumé)
 

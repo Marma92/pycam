@@ -57,6 +57,7 @@ class Hud:
         self.font = ImageFont.truetype(FONT, max(11, round(32 * self.s)))
         self.font_bold = ImageFont.truetype(FONT_BOLD, max(12, round(40 * self.s)))
         self.font_message = ImageFont.truetype(FONT_BOLD, max(14, round(52 * self.s)))
+        self.font_countdown = ImageFont.truetype(FONT_BOLD, max(40, round(300 * self.s)))
         self._backgrounds = {}
         self._review = (None, None)  # (path, image fitted to the image area)
         self._full = (None, None)  # (path, full resolution image), for the playback loupe
@@ -102,6 +103,8 @@ class Hud:
             self._histogram(d, view)
         if view.loupe > 1:  # whatever the display: you must know the image is magnified
             self._loupe(d, view)
+        if view.countdown:  # whatever the display: the self-timer is running
+            self._countdown(d, view.countdown)
         if view.menu:
             self._menu(d, view)
         if view.message:
@@ -253,7 +256,8 @@ class Hud:
         return width
 
     def _status(self, d, view):
-        """Top left: what is switched on (ZSL, peaking, zebras) and the photos being written."""
+        """Top left: the drive mode (amber while its sequence runs), what is switched on (ZSL,
+        peaking, zebras) and the photos being written."""
         x, y, w, h = self.rect
         cx, cy = x + self.px(24), y + self.px(24)
         badge_h = self.font.size + self.px(14)
@@ -265,6 +269,8 @@ class Hud:
             d.text((cx + self.px(10), cy + self.px(5)), label, font=self.font, fill=colour)
             cx += tw + self.px(32)
 
+        if view.drive:
+            badge(view.drive, AMBER if view.drive_running else WHITE)
         if view.zsl:
             badge("ZSL", AMBER)
         if view.peaking:
@@ -367,6 +373,19 @@ class Hud:
             d.text((px + self.px(28), ry + row_h // 2), label, font=self.font, fill=colour, anchor="lm")
             shown = f"◀  {value}  ▶" if chosen else value
             d.text((px + width - self.px(28), ry + row_h // 2), shown, font=self.font, fill=colour, anchor="rm")
+
+    def _countdown(self, d, seconds):
+        """The self-timer's seconds left, big in the middle, outlined to read on any scene."""
+        x, y, w, h = self.rect
+        d.text(
+            (x + w / 2, y + h / 2),
+            str(seconds),
+            font=self.font_countdown,
+            fill=(255, 255, 255, 230),
+            anchor="mm",
+            stroke_width=self.px(6),
+            stroke_fill=(0, 0, 0, 160),
+        )
 
     def _message(self, d, message, warning):
         x, y, w, h = self.rect

@@ -10,7 +10,7 @@ Q, MENU or the shutter close them; the shutter also shoots.
 
 from dataclasses import dataclass
 
-from . import exposure, lenses, looks, picture
+from . import drive, exposure, lenses, looks, picture
 from .settings import FN_ACTIONS, PEAKING_COLORS, PEAKING_SENSITIVITIES
 
 
@@ -64,6 +64,7 @@ FN_LABELS = {
     "grid": "Grille",
     "strategy": "Bascule / ZSL",
     "raw": "RAW + JPEG / JPEG",
+    "drive": "Mode de déclenchement",
 }
 
 METERING = Item(
@@ -106,7 +107,14 @@ JPEG_SIZE = Item("Taille JPEG", "jpeg_size", tuple(picture.JPEG_SIZES), ("L · 1
 JPEG_QUALITY = Item("Qualité JPEG", "jpeg_quality", picture.JPEG_QUALITIES, ("Normale", "Fine", "Extra fine"))
 DNG_COMPRESSION = Item("RAW compressé", "dng_compression", (True, False), ("Oui · sans perte", "Non"))
 # Applied once the engine accepts it (Camera.set_strategy).
-STRATEGY = Item("Déclenchement", "strategy", ("switch", "zsl"), ("Bascule · visée fluide", "ZSL · sans latence"))
+STRATEGY = Item("Réactivité", "strategy", ("switch", "zsl"), ("Bascule · visée fluide", "ZSL · sans latence"))
+DRIVE = Item("Mode de déclenchement", "drive", drive.MODES, tuple(drive.LABELS[m] for m in drive.MODES))
+INTERVAL = Item("Intervalle", "interval_seconds", drive.INTERVALS, tuple(drive.format_interval(i) for i in drive.INTERVALS))
+INTERVAL_COUNT = Item("Nombre de vues", "interval_count", drive.COUNTS, tuple(str(c) if c else "Jusqu'à l'arrêt" for c in drive.COUNTS))
+BRACKET_SHOTS = Item("Vues du bracketing", "bracket_shots", drive.BRACKET_SHOTS, tuple(str(n) for n in drive.BRACKET_SHOTS))
+BRACKET_STEP = Item(
+    "Écart du bracketing", "bracket_step", drive.BRACKET_STEPS, tuple(f"±{drive.format_step(t)} IL" for t in drive.BRACKET_STEPS)
+)
 REVIEW = Item("Revue après la prise", "review_seconds", (0, 1, 2, 4), ("Coupée", "1 s", "2 s", "4 s"))
 # Applied at the next start of the application (web.py).
 WEB = Item("Interface web", "web", (True, False), ("Oui · au prochain démarrage", "Non · au prochain démarrage"))
@@ -130,8 +138,8 @@ QUICK = (
     SHARPNESS,
     CONTRAST,
     SATURATION,
-    DENOISE,
     FORMAT,
+    DRIVE,
     APERTURE,
 )
 FULL = (
@@ -157,6 +165,11 @@ FULL = (
     JPEG_QUALITY,
     DNG_COMPRESSION,
     Item("Prise de vue"),
+    DRIVE,
+    INTERVAL,
+    INTERVAL_COUNT,
+    BRACKET_SHOTS,
+    BRACKET_STEP,
     STRATEGY,
     REVIEW,
     KEEP_BASE,

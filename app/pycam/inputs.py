@@ -85,9 +85,11 @@ class Inputs:
     def _actions(event, dial):
         """The actions an input event stands for: a key pressed (or repeating), or the
         detents a dial turned."""
-        if event.type == ecodes.EV_KEY and event.value:  # 0: key released
+        if event.type == ecodes.EV_KEY:
             action = KEYMAP.get(event.code)
-            if action and (event.value == 1 or action in REPEATABLE):  # 2: auto-repeat
+            if action == "shutter" and event.value == 0:  # released: ends a burst
+                return ["shutter_release"]
+            if action and (event.value == 1 or action in REPEATABLE and event.value == 2):  # 2: auto-repeat
                 return [action]
         elif dial and event.type == ecodes.EV_REL and event.code in DIALS:
             plus, minus = DIALS[event.code]

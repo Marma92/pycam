@@ -122,6 +122,9 @@ class WebServer:
                 "formats": view.formats,
                 "shots": view.shots,
                 "writing": view.writing,
+                "drive": view.drive,
+                "drive_running": view.drive_running,
+                "countdown": view.countdown,
                 "preset": preset.id,
                 "grain": s.grain,
                 "grain_label": looks.grain_label(preset),
@@ -130,7 +133,10 @@ class WebServer:
         )
 
     async def shutter(self, request):
+        """Pressed and released: one photo, a self-timer or an interval started (or the
+        one running stopped), the first photo of a burst only."""
         self.camera.on_action("shutter")
+        self.camera.on_action("shutter_release")
         return web.json_response({"ok": True})
 
     async def choose_preset(self, request):

@@ -126,14 +126,20 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
             self.camera.on_action("front_dial_minus")  # down to black and white, and stays there
         self.assertEqual(self.settings.saturation, -3)  # compiled into the look
         self.assertEqual(dict(self.camera.view().menu)["Saturation"], "N&B")
-        self.camera.on_action("rear_dial_minus")  # denoise: an engine setting
-        self.camera.on_action("front_dial_minus")
-        await self.settle()
-        self.assertEqual(self.engine.last("configure")["still_denoise"], "cdn_fast")
+        self.camera.on_action("rear_dial_minus")  # format
+        self.camera.on_action("rear_dial_minus")  # drive mode
+        self.camera.on_action("front_dial_plus")
+        self.assertEqual(self.settings.drive, "burst")
         self.camera.on_action("rear_dial_plus")  # the arrows stay in the menu: exposure untouched
         self.assertIsNone(self.settings.exposure.iso)
         self.camera.on_action("q")  # closes
         self.assertEqual(self.camera.view().menu, ())
+
+    async def test_denoise_is_an_engine_setting(self):
+        self.menu_line("Réduction du bruit")  # in MENU only
+        self.camera.on_action("front_dial_minus")
+        await self.settle()
+        self.assertEqual(self.engine.last("configure")["still_denoise"], "cdn_fast")
 
     async def test_full_menu(self):
         self.camera.on_action("menu")
@@ -573,7 +579,7 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_strategy_from_the_menu(self):
         self.engine.refuse["configure"] = "busy"
-        self.menu_line("Déclenchement")  # in MENU: Q has the grain instead
+        self.menu_line("Réactivité")  # in MENU only
         self.camera.on_action("front_dial_plus")
         await self.settle()
         self.assertEqual(self.settings.strategy, "switch")
@@ -581,7 +587,7 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.camera.on_action("front_dial_plus")
         await self.settle()
         self.assertEqual(self.engine.last("configure")["strategy"], "zsl")
-        self.assertIn(("Déclenchement", "ZSL · sans latence"), self.camera.view().menu)
+        self.assertIn(("Réactivité", "ZSL · sans latence"), self.camera.view().menu)
 
 
 if __name__ == "__main__":

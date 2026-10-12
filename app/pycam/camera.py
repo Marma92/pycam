@@ -4,8 +4,10 @@ import asyncio
 import logging
 import os
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 
+from . import drive as drives
 from . import exposure as exp
 from . import lenses, looks, meter, picture
 from .engine_client import EngineError, call_blocking
@@ -32,6 +34,7 @@ EXPOSURE_ACTIONS = {
 }
 FOCUS_AID_ACTIONS = {"peaking", "zebra"}
 LOUPE_LEVELS = (1, 5, 10)
+CAPTURED_TIMEOUT = 10.0  # seconds, beyond the exposure time
 # Playback: the rear dial goes from one photo to the next, the front dial jumps ten.
 PLAYBACK_STEPS = {"rear_dial_plus": 1, "rear_dial_minus": -1, "front_dial_plus": 10, "front_dial_minus": -10}
 DELETE_CONFIRM_SECONDS = 3
@@ -98,6 +101,10 @@ class Camera:
         self._review_handle = None
         self._redraw = asyncio.Event()
         self._capture_lock = asyncio.Lock()
+        self.capture_error = None  # why the last capture() was refused: "busy", "unavailable"...
+        self._captured = OrderedDict()  # capture id -> taken (True) or failed (False), the last ones
+        self._capture_waits = {}  # capture id -> future, for wait_captured
+        self.drive = drives.Drive(self)
         self._save_handle = None
         self._tasks = set()
         self._snapshots = {}  # path -> future, until the engine has written it
@@ -156,7 +163,8 @@ class Camera:
         if kind == "stats":
             self.stats = msg
             e = self.settings.exposure
-            if e.mode == "P":  # fully automatic: learn the meter constant (saved with the settings)
+            if e.mode == "P" and not self.drive.freezes_exposure:
+                # Fully automatic: learn the meter constant (saved with the settings).
                 self.settings.meter_k = meter.calibrate(self.settings.meter_k, msg, e.ev + self.preset().exposure_bias)
             self.redraw()
         elif kind == "captured":
@@ -164,10 +172,18 @@ class Camera:
             if shot and shot.capture_id == msg.get("capture_id"):
                 shot.exposure_us = msg.get("exposure_us", 0)
                 shot.iso = msg.get("analogue_gain", 0) * msg.get("digital_gain", 1) * 100
+            self._capture_taken(msg.get("capture_id"), True)
         elif kind == "file_saved":
-            # The JPEG is written first: review it without waiting for the DNG.
+            # The JPEG is written first: review it without waiting for the DNG. Not during a
+            # burst or a bracketing: the last photo is reviewed once it is over.
             path, shot = msg.get("path", ""), self.last_shot
-            if path.endswith(".JPG") and shot and shot.capture_id == msg.get("capture_id") and self.settings.review_seconds:
+            if (
+                path.endswith(".JPG")
+                and shot
+                and shot.capture_id == msg.get("capture_id")
+                and self.settings.review_seconds
+                and not self.drive.quiet
+            ):
                 self.spawn(self.show_review(shot, path))
         elif kind == "capture_done":
             self.writing = msg.get("write_queue", 0)
@@ -175,6 +191,7 @@ class Camera:
             self.redraw()
         elif kind == "capture_error":
             self.writing = max(0, self.writing - 1)
+            self._capture_taken(msg.get("capture_id"), False)
             log.error("capture %s failed: %s", msg.get("capture_id"), msg.get("error"))
             self.show_message("Erreur d'enregistrement", warning=True)
         elif kind == "loupe":
@@ -193,6 +210,8 @@ class Camera:
             log.error("engine: %s", msg.get("error"))
 
     async def apply_exposure(self):
+        if self.drive.freezes_exposure:
+            return  # the bracketing sets it, and gives it back when it is over
         try:
             preset = self.preset()
             controls = self.settings.exposure.controls(preset.exposure_bias, preset.white_balance)
@@ -315,6 +334,9 @@ class Camera:
     def on_action(self, action):
         log.debug("action %s", action)
         s, e = self.settings, self.settings.exposure
+        if action == "shutter_release":  # nothing else: it ends no review, closes no menu
+            self.drive.release()
+            return
         if self.review:
             # Any key ends the review; the shutter also shoots: never miss a photo.
             self.end_review()
@@ -344,7 +366,16 @@ class Camera:
                 self.redraw()
             return
         if action == "shutter":
-            self.spawn(self.capture())
+            self.drive.shutter()
+            return
+        if action in EXPOSURE_ACTIONS and self.drive.freezes_exposure:
+            self.show_message("Bracketing en cours", warning=True)
+            return
+        if action == "drive":
+            self.drive.stop()
+            s.drive = _next(drives.MODES, s.drive) if s.drive in drives.MODES else drives.MODES[0]
+            self.show_message(drives.LABELS[s.drive])
+            self.save_soon()
             return
         if action == "strategy":
             self.spawn(self.set_strategy("zsl" if s.strategy == "switch" else "switch"))
@@ -536,6 +567,8 @@ class Camera:
                 menu.set(item.attr, value)
             if item.attr == "lens":
                 s.aperture = None  # it belonged to the previous lens
+            if item.attr == "drive":
+                self.drive.stop()  # the sequence of the previous mode
         if item.attr == "preset":
             self.spawn(self.apply_exposure())  # its exposure shift
         if item.attr == "lens_shading":
@@ -552,11 +585,15 @@ class Camera:
             self.spawn(self.apply_focus_aids())
         self.save_soon()
 
-    async def capture(self):
+    async def capture(self, quiet=False):
+        """One photo: its capture id, or None (why in self.capture_error). quiet: no
+        "busy" message (a sequence waits for the engine)."""
         async with self._capture_lock:  # two quick presses must not get the same name
+            self.capture_error = None
             if not self.engine.connected:
+                self.capture_error = "unavailable"
                 self.show_message("Moteur indisponible", warning=True)
-                return
+                return None
             base, folder, number = self.storage.next_photo()
             s, preset = self.settings, self.preset()
             extra = {"base_jpeg": Storage.base_copy(base)} if s.keep_base and "jpeg" in s.formats else {}
@@ -571,19 +608,48 @@ class Camera:
                     **extra,
                 )
             except EngineError as e:
+                self.capture_error = e.code
                 if e.code != "busy":
                     log.error("capture refused: %s", e)
-                self.show_message("Occupé…" if e.code == "busy" else "Déclenchement refusé", warning=True)
-                return
+                    self.show_message("Déclenchement refusé", warning=True)
+                elif not quiet:
+                    self.show_message("Occupé…", warning=True)
+                return None
             except ConnectionError:
+                self.capture_error = "unavailable"
                 self.show_message("Moteur indisponible", warning=True)
-                return
+                return None
             self.storage.commit(folder, number)
             self.save_now()  # never give the same number twice, even after a crash
             self.writing += 1
             self.loupe = 1  # the engine leaves the loupe to shoot the full frame
             self.last_shot = Shot(reply.get("capture_id"), os.path.basename(base))
             self.show_message(os.path.basename(base))
+            return self.last_shot.capture_id
+
+    async def wait_captured(self, capture_id, timeout=None):
+        """Until the engine has taken that photo ("captured"): True, or False if it failed
+        or took too long. The event may have come already."""
+        if capture_id in self._captured:
+            return self._captured[capture_id]
+        future = self._capture_waits.setdefault(capture_id, asyncio.get_running_loop().create_future())
+        if timeout is None:
+            timeout = CAPTURED_TIMEOUT + max(self.measured_shutter(), self.settings.exposure.shutter or 0)
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), timeout)
+        except asyncio.TimeoutError:
+            log.warning("capture %s: not taken after %.0f s", capture_id, timeout)
+            return False
+        finally:
+            self._capture_waits.pop(capture_id, None)
+
+    def _capture_taken(self, capture_id, ok):
+        self._captured[capture_id] = ok
+        while len(self._captured) > 32:
+            self._captured.popitem(last=False)
+        future = self._capture_waits.get(capture_id)
+        if future and not future.done():
+            future.set_result(ok)
 
     async def set_strategy(self, new):
         try:
@@ -721,6 +787,9 @@ class Camera:
             menu_title=self.menu.title if self.menu else "",
             menu_index=self.menu.index if self.menu else 0,
             writing=self.writing,
+            drive=self.drive.status if self.drive.active else drives.short_label(s),
+            drive_running=self.drive.active,
+            countdown=self.drive.countdown,
             **self._histograms(self.stats.get("histogram", ()), self.stats.get("histogram_rgb", ())),
             message=message,
             warning=warning,
