@@ -225,7 +225,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | `camera` | Le contrôleur : actions, état, rendu du HUD (5 Hz max, seulement si la vue change). Il renvoie tout l'état au moteur à chaque (re)connexion. | ✅ |
 | `exposure` | Modes P/S/A/M, pas de 1/3 IL, tables de vitesses et d'ISO. Un passage en manuel part de la valeur mesurée. | ✅ |
 | `inputs` | Lecture **evdev** de tout ce qui a des touches utiles ; les périphériques sont « grabbés » et ceux branchés à chaud sont détectés. | ✅ |
-| `menu` | Menus Q (12 réglages de prise de vue) et MENU (tous les réglages, par section, avec défilement). | ✅ |
+| `menu` | Menus Q (12 réglages de prise de vue) et MENU (tous les réglages, par section, avec défilement). Une ligne peut aussi ouvrir un autre menu (les applications), lancer une action ou seulement informer. | ✅ |
 | `hud` / `view` | `view` décrit ce qu'il faut montrer (une valeur comparable) ; `hud` le dessine avec Pillow. | ✅ |
 | `settings` | Réglages persistants dans `~/.config/pycam/settings.json`, écriture atomique. JSON plutôt que TOML : la bibliothèque standard sait le lire *et* l'écrire. | ✅ |
 | `storage` | DCIM, numérotation persistante, espace libre. | ✅ (suppression à venir) |
@@ -234,7 +234,8 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | `sensors` | IMU (niveau, orientation), batterie, RTC. | ⬜ |
 | `timelapse` | L'assemblage des vues d'un timelapse en vidéo MP4, par ffmpeg (voir plus bas). | ✅ |
 | `video` | Le mode vidéo : définitions, débits, exposition automatique, temps restant (voir plus bas). | ✅ |
-| `web` | `aiohttp`, port 8080, réseau local seulement : visée (une image par seconde, prise par la commande `snapshot`), déclencheur, preset et grain, galerie avec téléchargement et suppression, installation de presets. Une page unique sans dépendance (`web/index.html`). | ✅ |
+| `web` | `aiohttp`, port 8080, réseau local seulement : visée (une image par seconde, prise par la commande `snapshot`), déclencheur, preset et grain, galerie avec téléchargement et suppression, installation de presets, compte et mode de Cloud sync. Une page unique sans dépendance (`web/index.html`). | ✅ |
+| `apps` | Les applications de l'appareil, dans MENU › Applications (voir plus bas). La première : `cloudsync`. | ✅ |
 
 **Commandes clavier, en attendant les boutons.** Le clavier ne garde qu'une touche par commande de l'appareil (`hardware.md` §2) ; tous les autres réglages sont dans les menus. Les touches sont choisies pour être au même endroit en QWERTY et en AZERTY.
 
@@ -272,6 +273,7 @@ Les **vidéos** des timelapses y sont aussi, chacune après ses vues. Une vidéo
 
 - **Q, réglages rapides** : les 12 réglages de prise de vue. Simulation (le preset), simuler le grain, mesure de la lumière, balance des blancs, température, peaking (coupé ou sa couleur), netteté, contraste, saturation (dont N&B), format, mode de déclenchement, ouverture. La réactivité (bascule ou ZSL) et la réduction du bruit sont dans MENU ; la réactivité est attribuable à Fn.
 - **MENU, menu complet** : tous les réglages, par section, la configuration comprise.
+  - Applications : ouvre la liste des applications (Cloud sync), chacune avec son état ; la molette avant ouvre, MENU revient en arrière.
   - Exposition : mesure, balance des blancs, température.
   - Simulation : le preset (`presets.md`), simuler le grain.
   - Mise au point : peaking, sensibilité du peaking, zébras.
@@ -282,7 +284,7 @@ Les **vidéos** des timelapses y sont aussi, chacune après ses vues. Une vidéo
   - Affichage : grille des tiers, histogramme, écran pendant les longues prises.
   - Boutons : fonctions de Fn1 et Fn2.
 
-  Il fait 42 lignes (titres compris) et défile ; une barre à droite montre où l'on est.
+  Il fait 61 lignes (titres compris) et défile ; une barre à droite montre où l'on est.
 - Quelques lignes ont un comportement propre :
   - **Balance des blancs** : la valeur « Pellicule », juste après « Auto », prend la balance fixe du film du preset (5500 K pour Portrait 400 et Velours 50, 3200 K pour les Cinéma 800T), comme un vrai film : une pellicule tungstène sort bleue en lumière du jour. Un preset sans balance propre (Standard, Triple-X 400) reste alors en automatique. Le bandeau affiche « Film 3200 K ». La valeur « Mémorisée », en dernier, garde les gains que la balance automatique mesure à cet instant (viser une charte grise d'abord) ; Fn peut faire la même chose sans ouvrir le menu.
   - **Température** : hors mode Kelvin, elle affiche la température mesurée (« ≈ 4500 K »). Le premier cran part de cette valeur et passe la balance en Kelvin.
@@ -320,6 +322,27 @@ Le déclencheur pressé pendant une séquence l'arrête (sauf la rafale, qu'il p
 - Le menu Q devient « Réglages vidéo » : appareil, définition, qualité, ISO, mesure, balance, température, peaking, zébras.
 - Le bandeau montre « V », la vitesse et l'ISO mesurés, la correction, la balance, « 1080p 25 i/s · Normale » et le temps d'enregistrement restant sur la carte. L'image est en 16:9, avec des bandes noires dans la zone d'image.
 - Les vidéos vont dans la lecture et l'interface web (lecture, téléchargement, suppression), comme les timelapses. Le mode, enregistré dans les réglages, revient au démarrage.
+
+**Les applications** (`apps/`, 2026-10-12). Ce que l'appareil fait en plus des photos, dans MENU › Applications : une ligne par application, avec son état à droite (« À jour », « Envoi 40 % »), qui ouvre son propre menu. Une application est un objet créé avec l'appareil : son nom, son état en une ligne, son menu, une coroutine lancée avec l'appareil (son travail de fond), un réveil quand des fichiers arrivent sur la carte ou qu'un de ses réglages change, et quelques caractères pour le HUD pendant qu'elle travaille (affichés là où s'affiche « VIDÉO 40 % »).
+
+**Cloud sync** (`apps/cloudsync/`, 2026-10-12). Envoie les photos et vidéos de la carte vers **ownCloud / Nextcloud**, **Dropbox** ou **Google Drive**, dans un dossier du cloud (`pycam/DCIM/100PYCAM/PYC_0001.JPG`…). Trois modes, dans son menu ou la page web :
+
+| Mode | Comportement |
+|---|---|
+| Synchroniser · garder (défaut) | À chaque connexion à Internet, puis après chaque prise, envoie ce que le cloud n'a pas encore. La carte garde tout. |
+| Déverser · libérer la carte | Pareil, puis efface de la carte chaque prise (JPEG, DNG, copie de base) dès que tous ses fichiers sont dans le cloud, vérifiés et inchangés depuis. Les dossiers vidés disparaissent, sauf celui des prochaines photos. |
+| Manuel | Rien tout seul. « Synchroniser maintenant » et « Déverser maintenant » (deux appuis, ou une confirmation sur la page web) le font une fois. |
+
+- **Quand.** NetworkManager est interrogé toutes les 20 s (`nmcli`, 0,08 s) : « en ligne », c'est connecté à Internet (pas seulement au réseau, ni derrière un portail captif). Tout seul, jamais sur un **réseau facturé** (le partage de connexion d'un téléphone se déclare ainsi) : on peut toujours lancer l'envoi à la main. Jamais pendant un enregistrement vidéo, une séquence (intervallomètre, timelapse, empilement…), une pose longue, l'assemblage d'une vidéo ou l'écriture d'une photo : l'envoi se met en pause et reprend après. Les fichiers de moins de 10 s attendent le passage suivant (une prise peut être en cours d'écriture). Un fichier à la fois, les plus anciens d'abord. « Arrêter l'envoi » suspend tout jusqu'à la prochaine connexion.
+- **Vérifié avant d'être compté.** Chaque fichier est envoyé en flux (jamais entier en mémoire : une vidéo pèse des Go), puis vérifié par l'empreinte que le service sait donner : SHA1 (ownCloud, envoyée avec le fichier et contrôlée par le serveur), « content hash » (Dropbox), MD5 (Google Drive), et la taille. Ce qui est envoyé est noté dans une petite base SQLite (`~/.local/share/pycam/cloudsync.db`) avec sa taille et sa date : un fichier modifié depuis repart, et changer de compte ou de dossier renvoie tout. Le déversement relit la taille et la date de chaque fichier juste avant de l'effacer, et relit le mode : tourner la molette de « Déverser » vers un autre mode arrête les effacements aussitôt. « Déverser » est en dernier dans la liste, pour qu'on ne le traverse jamais en allant de « Manuel » à « Synchroniser », et un changement de mode n'agit qu'après 10 s.
+- **Jamais par-dessus un autre fichier.** Une fois la carte vidée, le cloud a la seule copie, et la numérotation peut repartir de `PYC_0001` (réglages perdus). Un fichier du même nom et du même contenu compte comme envoyé (sans renvoi si le service donne son empreinte avant) ; d'un autre contenu, le nouveau va à côté (`PYC_0001_1.JPG`, `PYC_0001 (1).JPG` chez Dropbox).
+- **Erreurs.** Service injoignable : nouvel essai dans 1, 5, puis 15 min, et tout de suite à la connexion suivante. Accès refusé (mot de passe révoqué, jeton expiré) : plus rien tout seul, « Connexion à refaire ».
+- **Les comptes** se connectent depuis la page web (onglet Cloud) : l'appareil n'a pas de clavier. Les secrets sont dans `~/.config/pycam/cloud.json`, lisible par son seul propriétaire (0600), et ne ressortent jamais : la page sait seulement s'ils sont là.
+  - **ownCloud / Nextcloud** : WebDAV (`<serveur>/remote.php/webdav`), avec un **mot de passe d'application** (révocable sans toucher au compte). L'adresse peut être tapée telle quelle (`cloud.exemple.fr`, ou copiée avec `/remote.php/webdav`).
+  - **Dropbox** : l'utilisateur crée sa propre app (accès « App folder », permissions `files.metadata.read` et `files.content.write`) et en donne la clé ; connexion OAuth2 PKCE sans redirection (Dropbox affiche un code à recopier), donc **sans secret** sur l'appareil. Au-delà de 150 Mo, envoi par session de morceaux de 8 Mo.
+  - **Google Drive** : l'utilisateur crée son propre client OAuth de type « TV et appareils à entrée limitée » (API Drive activée) ; connexion par code (« device flow ») : la page affiche un code à saisir sur google.com/device depuis un téléphone. Portée `drive.file` : l'appareil ne voit que les fichiers qu'il a créés. L'écran de consentement doit être **publié** : en mode « Test », Google fait expirer l'accès au bout de 7 jours. Envoi « resumable ».
+- **À l'écran.** « CLOUD 40 % » en haut à gauche pendant un envoi (le pourcentage du passage, redessiné au plus 100 fois). Le menu donne le service, le compte, l'adresse de la page web, l'état, ce qui reste à envoyer (« 234 fichiers · 1,1 Go »). Une action lancée à la main affiche son bilan (« Cloud : 12 fichiers envoyés, 180 Mo libérés »).
+- **Mesuré** (2026-10-12, vers un serveur WebDAV de test sur le Pi lui-même) : 234 fichiers, 1,1 Go en 163 s (6,8 Mo/s, limité par la carte SD qui lit et écrit à la fois), tous identiques à l'octet près ; une photo RAW + JPEG part ~12 s après la prise. En Wi-Fi (2,4 GHz seulement sur le Pi 3B), compter plutôt 2 à 4 Mo/s.
 
 **Les poses longues** (2026-10-12, §2.4). En M, la molette avant va jusqu'à 10'40" (la limite du capteur, 674 s), puis **B**.
 
@@ -449,3 +472,4 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 | D6 | Compilation native sur le Pi | Cross-compilation depuis Windows | Simplicité. Le moteur est petit, donc la compilation sur le Pi reste supportable. |
 | D7 | Écran HDMI sans tactile ; navigation 100 % boutons et molettes | DSI tactile ; SPI | Choix de l'utilisateur (2026-10-11). Le GPIO reste libre et on garde la composition matérielle. |
 | D8 | Deux stratégies de capture, « bascule » (visée 30 i/s, ~0,4 s de latence) et « ZSL » (visée ~10 i/s, latence ~0), au choix | Une seule stratégie imposée | D'après les mesures du 2026-10-11 : aucune n'est meilleure dans tous les cas. |
+| D9 | Cloud sync parle lui-même aux trois services (aiohttp), avec l'app Dropbox et le client Google de l'utilisateur | rclone ; une app « pycam » enregistrée chez Dropbox et Google | Aucun secret dans un dépôt public, aucune validation d'app par Google, chacun garde la main sur ses accès. rclone ajouterait un binaire de ~60 Mo et sa propre configuration, sans le contrôle fin de la vérification avant effacement. |

@@ -27,6 +27,10 @@
              background: var(--accent); color: #111; font: 600 18px system-ui, sans-serif; cursor: pointer; }
   #shutter:active { transform: scale(.99); }
   label { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+  input[type=text], input[type=password] { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; width: 60%; min-width: 0; }
+  .steps { margin: 8px 0; padding: 10px; border: 1px dashed var(--line); border-radius: 8px; }
+  .steps a { color: var(--accent); }
+  .code { font: 600 22px ui-monospace, monospace; letter-spacing: 2px; color: var(--accent); }
   select, input[type=file] { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; max-width: 60%; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
   .grid figure { margin: 0; cursor: pointer; }
@@ -56,6 +60,7 @@
     <button data-tab="shoot" class="on">Visée</button>
     <button data-tab="photos">Photos</button>
     <button data-tab="presets">Presets</button>
+    <button data-tab="cloud">Cloud</button>
   </nav>
 </header>
 <main>
@@ -81,6 +86,59 @@
     <div class="panel">
       <p style="margin-top:0">Ajouter un preset : un <b>.zip</b> de son dossier, ou ses fichiers (<b>preset.toml</b> et sa LUT .cube ou .png). Il apparaît aussitôt dans les menus de l'appareil.</p>
       <div class="row"><input type="file" id="upload" multiple accept=".zip,.toml,.cube,.png"><button class="btn" id="send">Installer</button></div>
+    </div>
+  </section>
+
+  <section id="cloud">
+    <div class="panel">
+      <div id="cloud-status" class="status" style="margin-top:0">…</div>
+      <label>Mode <select id="cloud-mode"></select></label>
+      <p class="muted" style="margin:4px 0 10px">Synchroniser : à chaque connexion à Internet, puis à chaque prise, l'appareil envoie ce que le cloud n'a pas encore et garde tout.
+        Déverser : pareil, puis il efface de la carte chaque prise envoyée et vérifiée. Manuel : rien tout seul.
+        Jamais tout seul sur un réseau facturé (partage de connexion d'un téléphone).</p>
+      <div class="row">
+        <button class="btn" id="cloud-sync">Synchroniser maintenant</button>
+        <button class="btn danger" id="cloud-offload">Déverser maintenant</button>
+        <button class="btn" id="cloud-stop">Arrêter</button>
+      </div>
+    </div>
+    <div class="panel">
+      <div id="cloud-account"></div>
+      <label>Service <select id="cloud-provider">
+        <option value="owncloud">ownCloud / Nextcloud</option><option value="dropbox">Dropbox</option><option value="gdrive">Google Drive</option>
+      </select></label>
+      <div data-provider="owncloud">
+        <label>Serveur <input type="text" id="oc-url" placeholder="https://cloud.exemple.fr" autocomplete="url"></label>
+        <label>Utilisateur <input type="text" id="oc-user" autocomplete="username"></label>
+        <label>Mot de passe d'application <input type="password" id="oc-password" autocomplete="new-password"></label>
+        <p class="muted">Un mot de passe d'application, pas celui du compte : Paramètres › Sécurité › « Créer un nouveau mot de passe d'application ».
+          Il peut être révoqué à tout moment sans toucher au compte.</p>
+      </div>
+      <div data-provider="dropbox">
+        <p class="muted">Votre propre app Dropbox : sur <a href="https://www.dropbox.com/developers/apps" target="_blank" rel="noopener">dropbox.com/developers/apps</a>,
+          « Create app », accès <b>App folder</b> ; dans l'onglet Permissions, cocher <b>files.metadata.read</b> et <b>files.content.write</b> ;
+          puis recopier ici sa clé (« App key »). Aucun secret n'est nécessaire.</p>
+        <label>Clé de l'app <input type="text" id="db-key" autocomplete="off"></label>
+        <div class="steps" id="db-steps" hidden>
+          1. Ouvrir <a id="db-link" target="_blank" rel="noopener">la page d'autorisation Dropbox</a> et accepter.<br>
+          2. Recopier ici le code que Dropbox affiche :
+          <label>Code <input type="text" id="db-code" autocomplete="off"></label>
+        </div>
+      </div>
+      <div data-provider="gdrive">
+        <p class="muted">Votre propre client Google : dans la <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console Google Cloud</a>,
+          activer l'API Google Drive, configurer l'écran de consentement (puis le <b>publier</b> : en test, l'accès expire au bout de 7 jours),
+          créer un ID client OAuth de type <b>TV et appareils à entrée limitée</b>. L'appareil ne voit que les fichiers qu'il a créés.</p>
+        <label>ID client <input type="text" id="gd-id" autocomplete="off"></label>
+        <label>Code secret du client <input type="password" id="gd-secret" autocomplete="off"></label>
+        <div class="steps" id="gd-steps" hidden>
+          Sur un téléphone ou un ordinateur, ouvrir <a id="gd-link" target="_blank" rel="noopener"></a> et saisir le code :
+          <div class="code" id="gd-code"></div>
+          <span class="muted">L'appareil attend la réponse de Google.</span>
+        </div>
+      </div>
+      <label>Dossier dans le cloud <input type="text" id="cloud-folder" value="pycam" autocomplete="off"></label>
+      <div class="row"><button class="btn" id="cloud-connect">Connecter</button><button class="btn danger" id="cloud-disconnect" hidden>Déconnecter</button></div>
     </div>
   </section>
 </main>
@@ -121,6 +179,7 @@ document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
   document.querySelectorAll("section").forEach((s) => s.classList.toggle("on", s.id === tab));
   if (tab === "photos") loadPhotos();
   if (tab === "presets") loadPresets();
+  if (tab === "cloud") followCloud();
 });
 
 // --- Viewfinder and state
@@ -257,6 +316,97 @@ $("send").onclick = async () => {
     const r = await api("/api/presets", {method: "POST", body: form});
     toast("Installé : " + r.name); $("upload").value = ""; loadPresets(); refreshState();
   } catch (e) { toast(e.message); }
+};
+
+// --- Cloud sync
+
+let cloud = null;
+
+function showProvider() {
+  const provider = $("cloud-provider").value;
+  document.querySelectorAll("[data-provider]").forEach((d) => d.hidden = d.dataset.provider !== provider);
+  $("cloud-connect").textContent = provider === "dropbox" && !$("db-steps").hidden ? "Valider le code" : "Connecter";
+}
+$("cloud-provider").onchange = showProvider;
+
+async function loadCloud() {
+  cloud = await api("/api/cloud");
+  const c = cloud.config, parts = [["", cloud.text]];
+  if (cloud.pending) parts.push(["À envoyer", cloud.pending_text]);
+  if (cloud.last_sync) parts.push(["Dernier envoi complet", new Date(cloud.last_sync * 1000).toLocaleString("fr-FR")]);
+  if (cloud.error) parts.push(["Erreur", cloud.error]);
+  $("cloud-status").innerHTML = parts.map(([k, v]) => `<span>${k ? k + " " : ""}<b>${esc(v)}</b></span>`).join("");
+  const select = $("cloud-mode");
+  if (!select.options.length) select.innerHTML = cloud.modes.map((m) => `<option value="${m.id}">${esc(m.label)}</option>`).join("");
+  if (document.activeElement !== select) select.value = cloud.mode;
+  ["cloud-sync", "cloud-offload", "cloud-stop"].forEach((id) => $(id).disabled = !c.ready);
+  $("cloud-account").innerHTML = c.ready
+    ? `<p style="margin-top:0">Connecté à <b>${esc(cloud.service)}</b> : <b>${esc(c.account)}</b>, dossier <b>${esc(c.folder)}</b>.</p>`
+    : '<p style="margin-top:0">Aucun compte connecté.</p>';
+  $("cloud-disconnect").hidden = !c.ready;
+  if (document.activeElement !== $("cloud-provider") && !cloud.connecting.provider && c.provider) {
+    $("cloud-provider").value = c.provider;
+  }
+  const g = cloud.connecting;
+  $("gd-steps").hidden = !(g.provider === "gdrive" && g.user_code);
+  if (g.provider === "gdrive" && g.user_code) {
+    $("gd-link").href = $("gd-link").textContent = g.url;
+    $("gd-code").textContent = g.user_code;
+  }
+  if (g.provider === "gdrive" && g.error && loadCloud.lastError !== g.error) toast("Google : " + g.error);
+  loadCloud.lastError = g.error;
+  showProvider();
+}
+
+async function followCloud() {
+  if (tab !== "cloud") return;
+  try { await loadCloud(); } catch (e) { $("cloud-status").textContent = e.message; }
+  clearTimeout(followCloud.timer);
+  followCloud.timer = setTimeout(followCloud, 2000);
+}
+
+$("cloud-mode").onchange = async (e) => {
+  if (e.target.value === "offload" && !confirm("En mode Déverser, chaque prise envoyée et vérifiée est effacée de la carte. Continuer ?")) {
+    return loadCloud();
+  }
+  try { await post("/api/cloud/mode", {mode: e.target.value}); toast("Mode : " + e.target.selectedOptions[0].textContent); }
+  catch (err) { toast(err.message); }
+  loadCloud();
+};
+for (const action of ["sync", "offload", "stop"]) {
+  $("cloud-" + action).onclick = async () => {
+    if (action === "offload" && !confirm("Envoyer ce qui manque, puis effacer de la carte toutes les prises envoyées ?")) return;
+    try { toast((await post("/api/cloud/action", {action})).message); } catch (e) { toast(e.message); }
+    loadCloud();
+  };
+}
+
+$("cloud-connect").onclick = async () => {
+  const provider = $("cloud-provider").value, folder = $("cloud-folder").value;
+  const button = $("cloud-connect");
+  button.disabled = true;
+  try {
+    if (provider === "owncloud") {
+      const r = await post("/api/cloud/owncloud", {url: $("oc-url").value, user: $("oc-user").value, password: $("oc-password").value, folder});
+      $("oc-password").value = ""; toast("Connecté : " + r.account);
+    } else if (provider === "dropbox" && $("db-steps").hidden) {
+      const r = await post("/api/cloud/dropbox/start", {app_key: $("db-key").value, folder});
+      $("db-link").href = r.url; $("db-steps").hidden = false; window.open(r.url, "_blank", "noopener");
+    } else if (provider === "dropbox") {
+      const r = await post("/api/cloud/dropbox/finish", {code: $("db-code").value});
+      $("db-steps").hidden = true; $("db-code").value = ""; toast("Connecté : " + r.account);
+    } else {
+      await post("/api/cloud/google/start", {client_id: $("gd-id").value, client_secret: $("gd-secret").value, folder});
+      $("gd-secret").value = "";
+    }
+  } catch (e) { toast(e.message); }
+  button.disabled = false;
+  loadCloud();
+};
+$("cloud-disconnect").onclick = async () => {
+  if (!confirm("Déconnecter ce compte ? Les fichiers déjà envoyés restent dans le cloud.")) return;
+  try { await api("/api/cloud", {method: "DELETE"}); toast("Compte déconnecté"); } catch (e) { toast(e.message); }
+  loadCloud();
 };
 
 async function followState() { await refreshState(); setTimeout(followState, running ? 1000 : 3000); }

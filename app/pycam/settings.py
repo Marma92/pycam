@@ -27,6 +27,9 @@ SCREEN_OFF = (10, 30, 60, 0)  # B: held shutter, or one press to start and one t
 # What the Fn1 and Fn2 buttons can do: actions of Camera.on_action.
 FN_ACTIONS = ("peaking", "zebra", "awb_lock", "grid", "strategy", "raw", "drive", "video")
 CAMERA_MODES = ("photo", "video")
+# Cloud sync (apps/cloudsync): only by hand, send and keep, send and free the card. Freeing
+# last, so that turning the dial from one to the other never goes through it.
+CLOUD_MODES = ("manual", "sync", "offload")
 
 
 def default_path():
@@ -78,6 +81,7 @@ class Settings:
     keep_base: bool = False  # also write the JPEG without the look (PYB_0001.JPG)
     lens_shading: bool = False  # correct the lens shading (another ISP tuning)
     web: bool = True  # the web interface, on the local network (web.py)
+    cloud_mode: str = "sync"  # CLOUD_MODES; nothing happens until an account is connected
     fn1: str = "peaking"  # FN_ACTIONS
     fn2: str = "zebra"
     lenses: list = field(default_factory=lambda: copy.deepcopy(DEFAULT_LENSES))  # edit to add yours
@@ -176,6 +180,7 @@ def load_settings(path):
         ("timelapse_photos", drive.TL_PHOTOS),
         ("stack_mode", drive.STACK_MODES),
         ("mode", CAMERA_MODES),
+        ("cloud_mode", CLOUD_MODES),
         ("video_resolution", tuple(video.RESOLUTIONS)),
         ("video_quality", video.QUALITIES),
         ("video_iso", video.ISO_VALUES),

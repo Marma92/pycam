@@ -157,10 +157,12 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
     async def test_full_menu(self):
         self.camera.on_action("menu")
         view = self.camera.view()
-        self.assertEqual((view.menu_title, view.menu[0]), ("Menu", ("Exposition", None)))
-        self.assertEqual(view.menu_index, 1)  # the first setting, not its section title
+        self.assertEqual((view.menu_title, view.menu[0]), ("Menu", ("Applications", None)))
+        self.assertEqual(view.menu_index, 1)  # the first line, not its section title
+        self.assertEqual(view.menu[1], ("Applications", "›"))  # it opens a menu
         self.camera.on_action("rear_dial_plus")  # around, to the last line
         self.assertEqual(self.camera.menu.item.label, "Bouton Fn2")
+        self.camera.on_action("rear_dial_minus")
         self.camera.on_action("rear_dial_minus")
         self.assertEqual(self.camera.menu.item.label, "Mesure de la lumière")
         self.menu_line("Zébras")

@@ -27,12 +27,13 @@ Ce que l'appareil fait aujourd'hui :
 - **Simulations de pellicules** : presets ouverts (une recette TOML, éventuellement une LUT), appliqués au JPEG avec grain, halation et vignettage, aperçus en visée ; le DNG reste neutre. Livrés : Standard, Base, Portrait 400, Velours 50, Cinéma 800T (+2), Triple-X 400. On peut écrire les siens (`docs/presets.md`).
 - **Menus** Q (12 réglages de prise de vue) et MENU (tout le reste), **lecture** des photos (loupe, suppression) et des vidéos (décodeur matériel).
 - **Économie d'énergie** : l'écran se met en veille pendant les longues prises.
-- **Interface web** sur le réseau local (port 8080) : visée, déclencheur, choix du preset, galerie et téléchargement (photos et vidéos de timelapse), installation de presets.
+- **Applications** (MENU › Applications), dont **Cloud sync** : la carte envoyée vers ownCloud / Nextcloud, Dropbox ou Google Drive dès que le Wi-Fi trouve Internet, puis après chaque prise ; en gardant tout, en libérant la carte (seulement ce qui est vérifié dans le cloud), ou à la demande.
+- **Interface web** sur le réseau local (port 8080) : visée, déclencheur, choix du preset, galerie et téléchargement (photos et vidéos), installation de presets, connexion des comptes cloud.
 
 ## Comment c'est fait
 
 - `engine/` : le moteur caméra en C++ (`pycam-engine`), lié à `librpicam_app`. Il fait la visée, les prises, les looks des JPEG, l'écriture DNG, les mesures, et se pilote par un socket Unix en JSON (`docs/protocol.md`).
-- `app/` : l'application Python (`asyncio`) : commandes, exposition, menus, HUD, presets, rangement DCIM, réglages persistants, interface web.
+- `app/` : l'application Python (`asyncio`) : commandes, exposition, menus, HUD, presets, rangement DCIM, réglages persistants, interface web, applications (`app/pycam/apps/`).
 - `system/` et `tools/install-services.sh` : les deux services systemd qui les lancent au démarrage.
 - `tools/` : déploiement depuis un PC (`deploy.sh`), client du moteur, captures d'écran à distance, outil de presets.
 

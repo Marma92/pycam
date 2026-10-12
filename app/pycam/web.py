@@ -4,7 +4,8 @@
 - the viewfinder, roughly once a second, and a remote shutter;
 - the preset and its grain;
 - the photos: thumbnails, download (JPEG, DNG), deletion;
-- the presets: install one made on a computer, remove it.
+- the presets: install one made on a computer, remove it;
+- Cloud sync: its account (connected from here: the camera has no keyboard), its mode.
 
 Local network only: any other address is refused, IPv6 included (the camera may have a
 public IPv6 address, and nothing here asks for a password).
@@ -21,10 +22,12 @@ import tempfile
 import time
 import zipfile
 
+import aiohttp
 from aiohttp import web
 
 from . import looks
 from .playback import companions, describe, list_photos
+from .settings import CLOUD_MODES
 
 log = logging.getLogger(__name__)
 
@@ -92,6 +95,14 @@ class WebServer:
                 web.get("/api/presets", self.presets),
                 web.post("/api/presets", self.install_preset),
                 web.delete("/api/presets/{id}", self.remove_preset),
+                web.get("/api/cloud", self.cloud_state),
+                web.post("/api/cloud/owncloud", self.cloud_owncloud),
+                web.post("/api/cloud/dropbox/start", self.cloud_dropbox_start),
+                web.post("/api/cloud/dropbox/finish", self.cloud_dropbox_finish),
+                web.post("/api/cloud/google/start", self.cloud_google_start),
+                web.post("/api/cloud/mode", self.cloud_mode),
+                web.post("/api/cloud/action", self.cloud_action),
+                web.delete("/api/cloud", self.cloud_disconnect),
             ]
         )
         self.app = app
@@ -114,6 +125,7 @@ class WebServer:
     async def state(self, request):
         view, s = self.camera.view(), self.camera.settings
         preset = self.camera.preset()
+        cloud = self._cloud(required=False)
         return web.json_response(
             {
                 "connected": self.camera.engine.connected,
@@ -138,6 +150,7 @@ class WebServer:
                 "grain": s.grain,
                 "grain_label": looks.grain_label(preset),
                 "presets": [{"id": p.id, "name": p.name} for p in looks.registry().values()],
+                "cloud": cloud.summary() if cloud else "",
             }
         )
 
@@ -304,6 +317,86 @@ class WebServer:
         if self.camera.settings.preset == preset_id:  # back to the default one
             self.camera.set_preset(looks.DEFAULT)
         log.info("preset removed from the web interface: %s", preset_id)
+        return web.json_response({"ok": True})
+
+
+    # --- Cloud sync (apps/cloudsync): the secrets come in, never go out
+
+    def _cloud(self, required=True):
+        app = next((a for a in self.camera.apps if getattr(a, "id", "") == "cloudsync"), None)
+        if app is None and required:
+            raise web.HTTPNotFound(text="Cloud sync n'est pas disponible.")
+        return app
+
+    async def _connect(self, coro):
+        from .apps.cloudsync import providers
+
+        try:
+            account = await coro
+        except providers.AuthError as e:
+            raise web.HTTPBadRequest(text=f"Refusé : {e}")
+        except (providers.CloudError, aiohttp.ClientError, TimeoutError, OSError) as e:
+            raise web.HTTPBadGateway(text=f"Service injoignable : {e or type(e).__name__}")
+        return account
+
+    @staticmethod
+    async def _fields(request, *names):
+        data = await request.json()
+        return [str(data.get(name) or "") for name in names]
+
+    async def cloud_state(self, request):
+        return web.json_response(self._cloud().status())
+
+    async def cloud_owncloud(self, request):
+        url, user, password, folder = await self._fields(request, "url", "user", "password", "folder")
+        if not (url and user and password):
+            raise web.HTTPBadRequest(text="Il faut le serveur, l'utilisateur et un mot de passe d'application.")
+        account = await self._connect(self._cloud().connect_owncloud(url, user, password, folder))
+        return web.json_response({"ok": True, "account": account})
+
+    async def cloud_dropbox_start(self, request):
+        app_key, folder = await self._fields(request, "app_key", "folder")
+        if not app_key:
+            raise web.HTTPBadRequest(text="Il faut la clé de l'app Dropbox.")
+        return web.json_response({"url": self._cloud().dropbox_start(app_key, folder)})
+
+    async def cloud_dropbox_finish(self, request):
+        (code,) = await self._fields(request, "code")
+        if not code:
+            raise web.HTTPBadRequest(text="Il faut le code donné par Dropbox.")
+        account = await self._connect(self._cloud().dropbox_finish(code))
+        return web.json_response({"ok": True, "account": account})
+
+    async def cloud_google_start(self, request):
+        client_id, client_secret, folder = await self._fields(request, "client_id", "client_secret", "folder")
+        if not (client_id and client_secret):
+            raise web.HTTPBadRequest(text="Il faut l'ID client et son code secret.")
+        info = await self._connect(self._cloud().google_start(client_id, client_secret, folder))
+        return web.json_response(info)
+
+    async def cloud_mode(self, request):
+        (mode,) = await self._fields(request, "mode")
+        if mode not in CLOUD_MODES:
+            raise web.HTTPBadRequest(text="Mode inconnu.")
+        self.camera.settings.cloud_mode = mode
+        self.camera.save_soon()
+        self.camera.wake_apps()
+        self.camera.redraw()
+        return web.json_response({"ok": True})
+
+    async def cloud_action(self, request):
+        (action,) = await self._fields(request, "action")
+        app = self._cloud()
+        if action in ("sync", "offload"):
+            message = app.request(action)
+        elif action == "stop":
+            message = app.stop()
+        else:
+            raise web.HTTPBadRequest(text="Action inconnue.")
+        return web.json_response({"ok": True, "message": message})
+
+    async def cloud_disconnect(self, request):
+        await self._cloud().disconnect()
         return web.json_response({"ok": True})
 
 
