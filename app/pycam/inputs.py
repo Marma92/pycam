@@ -33,6 +33,7 @@ KEYMAP = {
     ecodes.KEY_P: "play",  # LECTURE: the photos on the card
     ecodes.KEY_1: "fn1",  # what they do is chosen in the menu
     ecodes.KEY_2: "fn2",
+    ecodes.KEY_V: "video",  # PHOTO / VIDÉO (a switch on the camera, or a Fn button)
 }
 # The camera's dials (docs/hardware.md, "Câblage"): the kernel's rotary-encoder driver, one
 # relative axis each; one step per detent. Only devices named "rotary...": a mouse moves

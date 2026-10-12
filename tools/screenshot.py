@@ -54,7 +54,11 @@ def main():
                 shot = False
             elif msg.get("path") == path:
                 with Image.open(path) as viewfinder:
-                    screen.paste(viewfinder.convert("RGBA").resize((w, h), Image.BILINEAR), (x, y))
+                    # Fitted in the image area as the engine does (the video mode is 16:9).
+                    scale = min(w / viewfinder.width, h / viewfinder.height)
+                    fw, fh = round(viewfinder.width * scale), round(viewfinder.height * scale)
+                    fitted = viewfinder.convert("RGBA").resize((fw, fh), Image.BILINEAR)
+                    screen.paste(fitted, (x + (w - fw) // 2, y + (h - fh) // 2))
                 break
 
     screen.alpha_composite(hud)

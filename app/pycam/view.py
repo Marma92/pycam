@@ -45,6 +45,8 @@ class HudView:
     drive_running: bool = False  # a sequence is running
     countdown: int = 0  # the self-timer's seconds left, shown big
     task: str = ""  # a background task and where it is ("VIDÉO 40 %")
+    video_mode: bool = False  # the video mode: a 16:9 image, the info bar for the video
+    recording: str = ""  # while recording, for how long ("0:12")
     exposure_timer: str = ""  # a long exposure's time left, a bulb's time so far ("0:23")
     exposure_label: str = ""  # "POSE", "POSE B"
     viewfinder_auto: bool = False  # the viewfinder does not show the manual exposure (too long)

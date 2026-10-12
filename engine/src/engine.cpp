@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
@@ -42,6 +43,10 @@ constexpr int64_t kZslMaxFrameUs = 250'000;
 constexpr char kViewfinderMode[] = "2028:1520:12:P";
 constexpr char kStillMode[] = "4056:3040:12:P";
 constexpr char kLoupeMode[] = "4056:3040:10:P";
+// Video: 2x2 binning, the full width of the sensor and 1080 of its (binned) lines, up to
+// 50 fps; scaled by the ISP to 1080p or 720p. The screen shows a small 16:9 stream.
+constexpr char kVideoMode[] = "2028:1080:12:P";
+constexpr unsigned kVideoLoresWidth = 1024, kVideoLoresHeight = 576;
 constexpr float kLoupeMaxZoom = 16;
 
 // How long to wait for the first real frame after a start before stopping the camera
@@ -249,7 +254,7 @@ int Engine::Run()
 									 { "capture_id", pending_->id },
 									 { "error", std::string("cannot switch to full resolution: ") + e.what() } });
 				pending_.reset();
-				Restart(Phase::Viewfinder);
+				Restart(IdlePhase());
 			}
 		}
 		// Something to do as soon as the camera may stop: do not wait for a frame.
@@ -257,6 +262,14 @@ int Engine::Run()
 	}
 
 	std::cerr << "pycam-engine: stopping\n";
+	EndWarmup();
+	if (recorder_) // a video being recorded is finished, not lost
+	{
+		json done = recorder_->Stop();
+		recorder_.reset();
+		done["event"] = "record_done";
+		ipc_.Broadcast(done);
+	}
 	player_.reset(); // its frames are on the display
 	display_.reset(); // planes off, frames given back before the camera stops (see ReleaseFrames)
 	app_.StopCamera();
@@ -302,6 +315,8 @@ void Engine::BeforeShow(CompletedRequestPtr const &request, Stream *stream, Stre
 		snapshot.swap(snapshot_path_);
 		preview = preview_;
 	}
+	if (video_display_)
+		preview.reset(); // a video has no look: show it as it is recorded
 	if (!preview && !focus_aids_.Active() && snapshot.empty())
 		return;
 
@@ -349,6 +364,33 @@ void Engine::Start(Phase phase)
 		options->Set().viewfinder_mode = Mode(kLoupeMode);
 		app_.ConfigureViewfinder();
 	}
+	else if (phase == Phase::Video)
+	{
+		// The video's own settings, for this configuration only.
+		auto &o = options->Set();
+		auto const saved_width = o.width, saved_height = o.height, saved_lores_w = o.lores_width,
+				   saved_lores_h = o.lores_height, saved_buffers = o.buffer_count;
+		auto const saved_framerate = o.framerate;
+		auto const saved_mode = o.mode;
+		std::string const saved_denoise = o.denoise;
+		o.width = video_->width;
+		o.height = video_->height;
+		o.framerate = float(video_->fps);
+		o.mode = Mode(kVideoMode);
+		o.lores_width = kVideoLoresWidth;
+		o.lores_height = kVideoLoresHeight;
+		o.buffer_count = 6;
+		o.denoise = "cdn_fast";
+		app_.ConfigureVideo();
+		o.width = saved_width;
+		o.height = saved_height;
+		o.lores_width = saved_lores_w;
+		o.lores_height = saved_lores_h;
+		o.buffer_count = saved_buffers;
+		o.framerate = saved_framerate;
+		o.mode = saved_mode;
+		o.denoise = saved_denoise;
+	}
 	else if (phase == Phase::Still)
 	{
 		// A stack needs a second buffer: with one, the camera has nowhere to put the next
@@ -379,6 +421,7 @@ void Engine::Start(Phase phase)
 		app_.ConfigureViewfinder();
 	}
 
+	video_display_ = phase == Phase::Video;
 	app_.SetControls(CameraControls(phase, phase == Phase::Viewfinder ? &viewfinder_exposure_ : nullptr));
 	if (loupe)
 		app_.SetControls(LoupeCrop()); // otherwise rpicam sets the full field of view
@@ -403,6 +446,15 @@ libcamera::ControlList Engine::CameraControls(Phase phase, std::string *viewfind
 		viewfinder->clear();
 	if (phase == Phase::Still)
 		return user_controls_;
+	if (phase == Phase::Video)
+	{
+		// A steady frame rate: the exposure stays within a frame.
+		libcamera::ControlList list = user_controls_;
+		int64_t const frame = 1'000'000 / video_->fps;
+		std::array<int64_t, 2> const limits { frame, frame };
+		list.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(limits));
+		return list;
+	}
 
 	// The viewfinder keeps at least 10 frames a second (4 in ZSL; the loupe is a plain
 	// viewfinder). An exposure that fits is shown as it is; a longer manual one with a
@@ -449,6 +501,14 @@ void Engine::ReleaseFrames()
 	// frames, and this one hands it none until the camera starts again.
 	if (display_)
 		display_->Reset(); // the last image stays on the screen during the reconfiguration
+	EndWarmup();
+	if (recorder_) // a camera restart ends a recording: the file is finished, not lost
+	{
+		json done = recorder_->Stop();
+		recorder_.reset();
+		done["event"] = "record_done";
+		ipc_.Broadcast(done);
+	}
 }
 
 void Engine::Restart(Phase phase)
@@ -492,7 +552,7 @@ void Engine::Reopen()
 	SetTuning();
 	app_.OpenCamera();
 	FindCameraControls();
-	Start(Phase::Viewfinder);
+	Start(IdlePhase());
 	reconfigure_ms_ = ms_between(t, started_);
 	std::cerr << "pycam-engine: tuning " << (tuning_.empty() ? std::string("libcamera") : tuning_)
 			  << ", camera reopened in " << int(reconfigure_ms_) << " ms\n";
@@ -525,6 +585,34 @@ void Engine::OnFrame(CompletedRequestPtr &request)
 	if (pending_ && zsl_ && app_.StillStream())
 		GrabStill(request);
 
+	if (phase_ == Phase::Video)
+	{
+		Stream *video = app_.VideoStream();
+		if (video && recorder_)
+			recorder_->Encode(request, video, app_);
+		else if (video && !encoder_warm_)
+		{
+			encoder_warm_ = true; // once, even if it fails
+			try
+			{
+				StreamInfo info;
+				app_.VideoStream(&info);
+				warmup_ = std::make_unique<Recorder>("/run/pycam/encoder-warmup.MP4", info, video_->fps,
+													 video_->bitrate, [](json) {});
+			}
+			catch (std::exception const &e)
+			{
+				std::cerr << "pycam-engine: encoder warm-up: " << e.what() << "\n";
+			}
+		}
+		if (video && warmup_)
+		{
+			warmup_->Encode(request, video, app_);
+			if (++warmup_frames_ >= 12)
+				EndWarmup();
+		}
+	}
+
 	// Before the display: in ZSL the statistics come from the viewfinder stream, on which
 	// the display thread paints the peaking and the zebras.
 	if (Clock::now() - last_stats_ >= kStatsPeriod)
@@ -532,9 +620,13 @@ void Engine::OnFrame(CompletedRequestPtr &request)
 
 	if (display_)
 	{
+		// The viewfinder stream; in video mode, the small one.
 		StreamInfo info;
-		if (Stream *viewfinder = app_.ViewfinderStream(&info))
-			display_->ShowFrame(request, viewfinder, info);
+		Stream *shown = app_.ViewfinderStream(&info);
+		if (!shown)
+			shown = app_.LoresStream(&info);
+		if (shown)
+			display_->ShowFrame(request, shown, info);
 	}
 }
 
@@ -758,7 +850,17 @@ void Engine::HandleCommand(int client, json const &command, Clock::time_point re
 			app_.SetControls(list);
 		}
 		else if (name == "capture")
+		{
+			if (video_)
+				throw CommandError("busy", "video mode: no photo");
 			reply.update(Capture(command, received));
+		}
+		else if (name == "video_mode")
+			VideoMode(command);
+		else if (name == "record_start")
+			reply.update(RecordStart(command));
+		else if (name == "record_stop")
+			reply.update(RecordStop());
 		else if (name == "capture_stop")
 		{
 			// A stack ends with the frame being exposed; a single exposure goes on.
@@ -959,8 +1061,89 @@ void Engine::Configure(json const &command)
 			reopen_ = true; // a few seconds without viewfinder
 		}
 	}
-	if (restart)
+	if (restart && !video_) // in video mode, they wait for the photo mode
 		next_phase_ = Phase::Viewfinder;
+}
+
+void Engine::VideoMode(json const &command)
+{
+	if (pending_ || phase_ == Phase::Still)
+		throw CommandError("busy", "a capture is in progress");
+	if (!command.at("on").get<bool>())
+	{
+		RecordStop();
+		if (video_)
+		{
+			video_.reset();
+			next_phase_ = Phase::Viewfinder;
+		}
+		return;
+	}
+	VideoSetup setup;
+	setup.width = command.value("width", setup.width);
+	setup.height = command.value("height", setup.height);
+	setup.fps = command.value("fps", setup.fps);
+	setup.bitrate = command.value("bitrate", setup.bitrate);
+	if (setup.width > 2028 || setup.height > 1080 || setup.width < 320 || setup.height < 180 || setup.width % 2 ||
+		setup.height % 2)
+		throw CommandError("bad_request", "video size: even, up to 2028x1080");
+	if (setup.fps < 1 || setup.fps > 50)
+		throw CommandError("bad_request", "video fps: 1 to 50");
+	if (setup.bitrate < 500'000 || setup.bitrate > 25'000'000)
+		throw CommandError("bad_request", "video bitrate: 0.5 to 25 Mbit/s");
+	if (recorder_)
+		throw CommandError("busy", "recording");
+	bool const changed = !video_ || !(*video_ == setup);
+	video_ = setup;
+	loupe_zoom_ = 1;
+	if (changed || phase_ != Phase::Video)
+		next_phase_ = Phase::Video;
+}
+
+void Engine::EndWarmup()
+{
+	if (!warmup_)
+		return;
+	warmup_->Stop();
+	warmup_.reset();
+	std::remove("/run/pycam/encoder-warmup.MP4");
+}
+
+json Engine::RecordStart(json const &command)
+{
+	if (!video_ || phase_ != Phase::Video || next_phase_)
+		throw CommandError("busy", "not in video mode (yet)");
+	if (recorder_)
+		throw CommandError("busy", "already recording");
+	EndWarmup(); // the user is first
+	std::string const path = command.at("path").get<std::string>();
+	if (path.empty())
+		throw CommandError("bad_request", "empty path");
+	StreamInfo info;
+	if (!app_.VideoStream(&info))
+		throw CommandError("busy", "no video stream");
+	try
+	{
+		recorder_ = std::make_unique<Recorder>(path, info, video_->fps, video_->bitrate,
+											   [this](json event) { ipc_.Broadcast(event); });
+	}
+	catch (std::exception const &e)
+	{
+		throw CommandError("bad_request", e.what());
+	}
+	return { { "path", path } };
+}
+
+json Engine::RecordStop()
+{
+	if (!recorder_)
+		return { { "recording", false } };
+	json done = recorder_->Stop();
+	recorder_.reset();
+	json event = done;
+	event["event"] = "record_done";
+	ipc_.Broadcast(event);
+	return done;
 }
 
 void Engine::SetLook(json const &command)
@@ -1035,6 +1218,8 @@ json Engine::LookState() const
 
 void Engine::Loupe(json const &command)
 {
+	if (video_)
+		throw CommandError("unsupported", "no loupe in video mode");
 	float zoom = command.value("zoom", loupe_zoom_);
 	if (!(zoom >= 1 && zoom <= kLoupeMaxZoom))
 		throw CommandError("bad_request", "zoom: between 1 (off) and 16");
@@ -1092,7 +1277,11 @@ json Engine::State() const
 	return {
 		{ "camera", app_.CameraModel() },
 		{ "strategy", zsl_ ? "zsl" : "switch" },
-		{ "phase", phase_ == Phase::Still ? "still" : "viewfinder" },
+		{ "phase", phase_ == Phase::Still ? "still" : phase_ == Phase::Video ? "video" : "viewfinder" },
+		{ "video_mode", video_ ? json { { "width", video_->width }, { "height", video_->height },
+										{ "fps", video_->fps }, { "bitrate", video_->bitrate } }
+							   : json(nullptr) },
+		{ "recording", recorder_ ? recorder_->State() : json(nullptr) },
 		{ "viewfinder_exposure", viewfinder_exposure_.empty() ? json(nullptr) : json(viewfinder_exposure_) },
 		{ "fps", fps_ },
 		{ "write_queue", writer_.Queued() },

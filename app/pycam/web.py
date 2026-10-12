@@ -34,8 +34,8 @@ PREVIEW = "/run/pycam/web-preview.jpg"  # tmpfs, written by the engine
 PREVIEW_MAX_AGE = 0.5  # seconds: two browsers watching share the same frame
 MAX_UPLOAD = 32 * 1024**2
 FOLDER = re.compile(r"^\d{3}PYCAM$")
-SHOT = re.compile(r"^(PY[CB]_\d{4}\.(JPG|DNG)|PYT_\d{4}\.MP4)$")
-VIDEO = re.compile(r"^PYT_\d{4}\.MP4$")
+SHOT = re.compile(r"^(PY[CB]_\d{4}\.(JPG|DNG)|PY[TV]_\d{4}\.MP4)$")
+VIDEO = re.compile(r"^PY[TV]_\d{4}\.MP4$")
 PRESET_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
 
 
@@ -82,6 +82,7 @@ class WebServer:
                 web.post("/api/shutter", self.shutter),
                 web.post("/api/preset", self.choose_preset),
                 web.post("/api/grain", self.grain),
+                web.post("/api/mode", self.mode),
                 web.get("/api/preview.jpg", self.preview),
                 web.get("/api/photos", self.photos),
                 web.get("/api/videos", self.videos),
@@ -127,6 +128,8 @@ class WebServer:
                 "drive": view.drive,
                 "task": view.task,
                 "screen": self.camera.screen_on,
+                "camera_mode": s.mode,
+                "recording": view.recording,
                 "drive_running": view.drive_running,
                 "countdown": view.countdown,
                 "exposure_timer": view.exposure_timer,
@@ -149,6 +152,12 @@ class WebServer:
         data = await request.json()
         if not self.camera.set_preset(str(data.get("id", ""))):
             raise web.HTTPNotFound(text="Preset inconnu.")
+        return web.json_response({"ok": True})
+
+    async def mode(self, request):
+        data = await request.json()
+        if not self.camera.set_mode(str(data.get("mode", ""))):
+            raise web.HTTPConflict(text="Impossible pendant un enregistrement.")
         return web.json_response({"ok": True})
 
     async def grain(self, request):

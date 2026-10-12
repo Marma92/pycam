@@ -58,6 +58,7 @@ executable('pycam-engine',
                'src/stack.cpp',
                'src/develop.cpp',
                'src/video_player.cpp',
+               'src/recorder.cpp',
            ),
            # Vendored code (see its README): a system include, its warnings are not ours.
            include_directories : lj92_inc,

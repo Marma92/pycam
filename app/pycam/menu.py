@@ -10,7 +10,7 @@ Q, MENU or the shutter close them; the shutter also shoots.
 
 from dataclasses import dataclass
 
-from . import drive, exposure, lenses, looks, picture
+from . import drive, exposure, lenses, looks, picture, video
 from .settings import FN_ACTIONS, PEAKING_COLORS, PEAKING_SENSITIVITIES
 
 
@@ -54,6 +54,13 @@ def _timelapse_count_options(settings):
     return tuple((n, f"{n} vues · {n / fps:.0f} s de vidéo" if n else "Jusqu'à l'arrêt") for n in drive.TL_COUNTS)
 
 
+def _video_quality_options(settings):
+    return tuple(
+        (q, f"{video.QUALITY_LABELS[q]} · {video.BITRATES[(settings.video_resolution, q)] // 1_000_000} Mbit/s")
+        for q in video.QUALITIES
+    )
+
+
 def _aperture_options(settings):
     if not 0 <= settings.lens < len(settings.lenses):
         return ((None, "Choisir l'objectif"),)
@@ -71,6 +78,7 @@ FN_LABELS = {
     "strategy": "Bascule / ZSL",
     "raw": "RAW + JPEG / JPEG",
     "drive": "Mode de déclenchement",
+    "video": "Photo / Vidéo",
 }
 
 METERING = Item(
@@ -139,6 +147,12 @@ STACK_MODE = Item(
 STACK_COUNT = Item(
     "Vues empilées", "stack_frames", drive.STACK_COUNTS, tuple(str(n) if n else "Jusqu'à l'arrêt" for n in drive.STACK_COUNTS)
 )
+CAMERA_MODE = Item("Appareil", "mode", ("photo", "video"), ("Photo", "Vidéo"), "mode")
+VIDEO_RESOLUTION = Item(
+    "Définition vidéo", "video_resolution", tuple(video.RESOLUTIONS), ("1080p · 1920 × 1080", "720p · 1280 × 720"), "video"
+)
+VIDEO_QUALITY = Item("Qualité vidéo", "video_quality", _video_quality_options, push="video")
+VIDEO_ISO = Item("ISO vidéo", "video_iso", video.ISO_VALUES, ("Auto",) + tuple(str(i) for i in video.ISO_VALUES[1:]), "exposure")
 REVIEW = Item("Revue après la prise", "review_seconds", (0, 1, 2, 4), ("Coupée", "1 s", "2 s", "4 s"))
 # Applied at the next start of the application (web.py).
 WEB = Item("Interface web", "web", (True, False), ("Oui · au prochain démarrage", "Non · au prochain démarrage"))
@@ -171,6 +185,18 @@ QUICK = (
     FORMAT,
     DRIVE,
     APERTURE,
+)
+# In video mode, Q holds the video's settings instead.
+QUICK_VIDEO = (
+    CAMERA_MODE,
+    VIDEO_RESOLUTION,
+    VIDEO_QUALITY,
+    VIDEO_ISO,
+    METERING,
+    WHITE_BALANCE,
+    KELVIN,
+    PEAKING,
+    ZEBRA,
 )
 FULL = (
     Item("Exposition"),
@@ -214,6 +240,11 @@ FULL = (
     Item("Empilement"),
     STACK_MODE,
     STACK_COUNT,
+    Item("Vidéo"),
+    CAMERA_MODE,
+    VIDEO_RESOLUTION,
+    VIDEO_QUALITY,
+    VIDEO_ISO,
     Item("Objectif"),
     LENS,
     APERTURE,
@@ -235,7 +266,10 @@ class Menu:
         self.settings = settings
         self.quick = quick
         self.title = "Réglages rapides" if quick else "Menu"
-        self.items = QUICK if quick else FULL
+        if quick and settings.mode == "video":
+            self.title, self.items = "Réglages vidéo", QUICK_VIDEO
+        else:
+            self.items = QUICK if quick else FULL
         self.index = 0
         self.move(0)  # past a section title
 

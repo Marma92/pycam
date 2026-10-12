@@ -703,7 +703,8 @@ void Display::ShowVideo(Pending &frame)
 		colour_space_set_ = true;
 	}
 
-	SetPlane(video_plane_, it->second.fb, image_rect_, frame.info.width, frame.info.height);
+	// Fitted in the image area: the viewfinder fills it, the 16:9 video mode is letterboxed.
+	SetPlane(video_plane_, it->second.fb, Fit(frame.info.width, frame.info.height), frame.info.width, frame.info.height);
 
 	// The previous frame has left the screen: its buffer goes back to the camera.
 	on_screen_ = std::move(frame.request);

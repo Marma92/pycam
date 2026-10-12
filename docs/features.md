@@ -79,7 +79,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | ZSL | Déclenchement instantané, en option (compromis avec la fluidité de visée) : ligne « Réactivité » de MENU, ou Fn. Fait en avance avec M0. | ✅ |
 | Simulations de pellicules | Presets ouverts (recette TOML, LUT `.cube` ou Hald), compilés en une LUT 3D avec grain et vignettage, appliqués au JPEG ; DNG neutre. Fait : base fixe, correction d'ombrage à part, moteur (LUT, grain, vignettage, « garder la base »), presets Standard et Base, menus, EXIF, aperçu en visée et histogramme corrigé, outil `tools/pycam_preset.py`, premières versions des pellicules (Portrait 400, Velours 50, Cinéma 800T, Cinéma 800T +2, Triple-X 400). Halation des CineStill et balance « Pellicule » (tungstène, lumière du jour). Reste : les affiner sur de vraies photos, halation en visée, méthode B. Conception : `presets.md`. | 🟨 |
 | DNG compressé | LJ92 sans perte, au format Adobe (2 composantes, prédicteur 1) : 12,1 Mo au lieu de 24,8 ; relu au bit près par LibRaw et rendu par darktable. Activé par défaut, ligne « RAW compressé » du menu. Fait en avance avec M1. | ✅ |
-| Vidéo | H.264 1080p30 matériel, avec les réglages manuels. | ⬜ |
+| Vidéo | Mode vidéo d'appoint : 1080p ou 720p à 25 i/s, H.264 par l'encodeur matériel (zéro copie, ~7 % de CPU), en MP4 sans son ; qualité (débit) et ISO réglables, exposition automatique avec correction ; écran 16:9, « ● REC » et temps restant ; vidéos dans la lecture et l'interface web. Pas de look sur la vidéo, pas d'images de la vidéo en photo, pas de son (pas de micro). | ✅ |
 | Point d'accès Wi-Fi | Pour le terrain, sans box. | ⬜ |
 | GPS | Géomarquage, en option. | ⬜ |
 | Données gyro | Export des données gyroscopiques pour la stabilisation vidéo (Gyroflow). | ⬜ |
