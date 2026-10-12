@@ -9,7 +9,12 @@
 - Partage: a photo shared on Instagram, Flickr, Bluesky, with the preview of each; the accounts.
 
 Local network only: any other address is refused, IPv6 included (the camera may have a
-public IPv6 address, and nothing here asks for a password).
+public IPv6 address, and nothing here asks for a password). And from its own page only: a
+page of another site, open in a browser on the same network, could otherwise send it
+commands (connect a cloud account of its choosing, then empty the card into it). Requests
+that change something must come from this page (their Origin), and the camera must be
+called by an address or a local name (a site's name resolved to the camera's address, "DNS
+rebinding", is refused).
 """
 
 import asyncio
@@ -19,15 +24,17 @@ import logging
 import os
 import re
 import shutil
+import socket
 import tempfile
 import time
+import urllib.parse
 import zipfile
 
 import aiohttp
 from aiohttp import web
 
 from . import looks
-from .playback import companions, describe, list_photos
+from .playback import companions, describe, list_photos, thumbs_dir
 from .settings import CLOUD_MODES
 
 log = logging.getLogger(__name__)
@@ -63,8 +70,37 @@ async def local_only(request, handler):
     return await handler(request)
 
 
-def thumbs_dir():
-    return os.path.join(os.path.dirname(looks.cache_dir()), "thumbs")
+# Names only a local network resolves: no site can make a browser resolve them.
+LOCAL_SUFFIXES = (".local", ".lan", ".home", ".internal", ".home.arpa", ".localhost")
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+
+
+def local_host(host):
+    """The Host a request names: an address, the camera's name, or a local name."""
+    name = (urllib.parse.urlsplit(f"//{host}").hostname or "").lower()
+    if not name:
+        return False
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        pass
+    return name in ("localhost", socket.gethostname().lower()) or "." not in name or name.endswith(LOCAL_SUFFIXES)
+
+
+@web.middleware
+async def same_origin(request, handler):
+    if not local_host(request.host):
+        log.warning("refused a request for %r: not the camera's name", request.host)
+        raise web.HTTPForbidden(text="Nom d'hôte inconnu.")
+    if request.method not in SAFE_METHODS:
+        origin = request.headers.get("Origin")
+        if origin is not None and urllib.parse.urlsplit(origin).netloc.lower() != request.host.lower():
+            log.warning("refused %s %s from the page %s", request.method, request.path, origin)
+            raise web.HTTPForbidden(text="Seulement depuis la page de l'appareil.")
+        if request.headers.get("Sec-Fetch-Site") == "cross-site":
+            raise web.HTTPForbidden(text="Seulement depuis la page de l'appareil.")
+    return await handler(request)
 
 
 def slug(text):
@@ -79,7 +115,7 @@ class WebServer:
         self.runner = None
         self._preview_lock = asyncio.Lock()
         self._preview_time = 0.0
-        app = web.Application(middlewares=[local_only], client_max_size=MAX_UPLOAD)
+        app = web.Application(middlewares=[local_only, same_origin], client_max_size=MAX_UPLOAD)
         app.add_routes(
             [
                 web.get("/", self.page),
@@ -214,6 +250,10 @@ class WebServer:
         return path
 
     async def photos(self, request):
+        # Off the event loop: a full card is thousands of files to look at.
+        return web.json_response(await asyncio.to_thread(self._photos))
+
+    def _photos(self):
         root = self.camera.storage.root
         out = []
         for jpeg in reversed(list_photos(root)):  # the last one first
@@ -231,10 +271,13 @@ class WebServer:
                     "time": int(st.st_mtime),
                 }
             )
-        return web.json_response(out)
+        return out
 
     async def videos(self, request):
-        """The timelapse videos, the last one first."""
+        """The videos and timelapses, the last one first."""
+        return web.json_response(await asyncio.to_thread(self._videos))
+
+    def _videos(self):
         root = self.camera.storage.root
         out = []
         try:
@@ -250,7 +293,7 @@ class WebServer:
                 st = os.stat(os.path.join(root, folder, name))
                 out.append({"folder": folder, "name": name, "size": st.st_size, "time": int(st.st_mtime)})
         out.sort(key=lambda v: v["time"], reverse=True)
-        return web.json_response(out)
+        return out
 
     async def thumb(self, request):
         path = self._path(request)

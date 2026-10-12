@@ -207,6 +207,9 @@ class CloudSync:
     def photo_items(self, camera, path):
         return []
 
+    def files_in_use(self):
+        return set()
+
     def _offload_pressed(self, camera):
         """Two presses within 3 s: it deletes from the card."""
         now = time.monotonic()
@@ -483,6 +486,8 @@ class CloudSync:
         """Deletes a shot from the card if each of its files is in the cloud as it is now.
         Returns the bytes freed."""
         identity = self.config.identity
+        if any(f.path in self.camera.files_in_use() for f in shot):
+            return 0  # another application still needs it (a photo waiting to be shared)
         for f in shot:
             try:
                 st = os.stat(f.path)

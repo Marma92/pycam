@@ -130,6 +130,10 @@ class Share:
     def wake(self):
         """Nothing to do with new files: a photo is shared by hand."""
 
+    def files_in_use(self):
+        """The photos not published everywhere yet (waiting, or failed: to retry)."""
+        return {i["photo"] for i in self.queue.items if any(e["status"] != "done" for e in i["platforms"].values())}
+
     def menu(self, camera):
         address = local_address()
         items = [Item("Comptes")]

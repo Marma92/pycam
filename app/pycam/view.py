@@ -1,6 +1,6 @@
 """What the HUD shows, as a plain value: the camera builds it, the HUD draws it."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 # Framing guides: the crop of another format, in the image (stories, Instagram, cinema).
 GUIDES = ("none", "9:16", "4:5", "1:1", "2.39:1")
@@ -72,3 +72,18 @@ class HudView:
     histogram_rgb: tuple = ()  # (red, green, blue), 64 classes each; drawn instead
     message: str = ""
     warning: bool = False
+
+
+# What the info bar and the badges show: nothing of it in the "clean" display.
+INFO_FIELDS = ("mode", "metering", "shutter", "shutter_auto", "iso", "iso_auto", "ev", "meter", "meter_warning", "awb",
+               "formats", "look", "lens", "shots", "drive", "drive_running", "task", "zsl", "peaking", "zebra",
+               "writing", "viewfinder_auto")  # fmt: skip
+_DEFAULTS = HudView()
+
+
+def visible(view):
+    """The view without what its display does not show: a value changing there does not
+    redraw the HUD (~0.015 s of CPU each time)."""
+    if view.display != "clean" or view.review or view.video_playing:
+        return view
+    return replace(view, **{name: getattr(_DEFAULTS, name) for name in INFO_FIELDS})

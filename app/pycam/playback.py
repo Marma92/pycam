@@ -56,6 +56,12 @@ def posters_dir():
     return os.path.join(base, "pycam", "posters")
 
 
+def thumbs_dir():
+    """The web interface's thumbnails (web.py)."""
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(base, "pycam", "thumbs")
+
+
 def poster(video):
     """A JPEG of the video's first frame (cached), to show it before playing; None if
     ffmpeg cannot make one. Slow (~0.5 s the first time): off the event loop."""
@@ -71,6 +77,38 @@ def poster(video):
             return None
         os.replace(part, cache)
     return cache
+
+
+def prune_caches(root):
+    """The first frames and the thumbnails of shots gone or changed (deleted, offloaded to a
+    cloud) removed from the caches: they would grow for ever. Returns how many. Slow on a
+    full card: off the event loop."""
+    posters, thumbs = set(), set()
+    for path in list_photos(root, videos=True):
+        folder = os.path.basename(os.path.dirname(path))
+        for f in companions(path):
+            try:
+                stem, mtime = os.path.basename(f)[:-4], int(os.path.getmtime(f))
+            except OSError:
+                continue
+            (posters if is_video(f) else thumbs).add(f"{stem}_{mtime}.jpg" if is_video(f) else f"{folder}_{stem}_{mtime}.jpg")
+    return _prune(posters_dir(), posters) + _prune(thumbs_dir(), thumbs)
+
+
+def _prune(folder, keep):
+    removed = 0
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return 0
+    for name in names:
+        if name not in keep:
+            try:
+                os.remove(os.path.join(folder, name))
+                removed += 1
+            except OSError:
+                pass
+    return removed
 
 
 def describe_video(path):

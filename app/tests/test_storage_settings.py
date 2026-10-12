@@ -5,7 +5,7 @@ import unittest
 
 from pycam.exposure import Exposure
 from pycam.settings import Settings, load_settings, save_settings
-from pycam.storage import Storage
+from pycam.storage import RESERVE_BYTES, Storage
 
 
 class StorageTest(unittest.TestCase):
@@ -31,13 +31,28 @@ class StorageTest(unittest.TestCase):
         self.assertEqual((folder, number), (100, 2))
         self.assertTrue(base.endswith("PYC_0002"))
 
+    def test_a_number_taken_by_a_video_is_skipped(self):
+        # Settings lost: the numbering starts again, and must not reach an old video.
+        os.makedirs(os.path.join(self.tmp.name, "100PYCAM"))
+        for name in ("PYV_0001.MP4", "PYT_0002.MP4"):
+            open(os.path.join(self.tmp.name, "100PYCAM", name), "w").close()
+        self.assertEqual(self.storage.next_photo()[1:], (100, 3))
+
+    def test_the_reserve_is_kept(self):
+        self.storage.free_bytes = lambda: RESERVE_BYTES + 3 * 4 * 1024**2
+        self.assertEqual(self.storage.shots_remaining(["jpeg"]), 3)
+        self.storage.free_bytes = lambda: RESERVE_BYTES - 1
+        self.assertEqual((self.storage.shots_remaining(["jpeg"]), self.storage.usable_bytes()), (0, 0))
+
     def test_next_folder_after_9999(self):
         self.storage.commit(100, 9999)
         self.assertEqual((self.settings.folder_number, self.settings.next_number), (101, 1))
 
-    def test_shots_remaining_without_dcim_folder(self):
+    def test_free_space_without_dcim_folder(self):
+        from tests import measured_free_bytes
+
         self.settings.dcim = os.path.join(self.tmp.name, "not", "yet")
-        self.assertGreater(self.storage.shots_remaining(["jpeg", "dng"]), 0)
+        self.assertGreater(measured_free_bytes(self.storage), 0)  # the disk it will be on
 
 
 class SettingsTest(unittest.TestCase):

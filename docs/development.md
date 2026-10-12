@@ -103,7 +103,7 @@ cd ~/pycam/engine && meson test -C build --print-errorlogs
    - Elle prend la main sur les claviers branchés au Pi : voir les touches dans `architecture.md` §5.
    - Sans clavier, on simule des appuis : `sudo python3 tools/press.py right up space` ; `space:3` tient la touche 3 s (rafale).
    - Ses réglages sont dans `~/.config/pycam/settings.json`, et les photos dans `~/DCIM/100PYCAM/`.
-   - Tests de la logique, sans Pi ni Pillow ni evdev : `cd app && python3 -m unittest discover -s tests -t .` Ceux de l'interface web et de Cloud sync ont besoin d'aiohttp : ils sont sautés sans lui, et tournent sur le Pi. Cloud sync y est testé contre de faux services WebDAV, Dropbox et Google Drive lancés sur 127.0.0.1 : aucun compte réel n'est nécessaire.
+   - Tests de la logique, sans Pi ni Pillow ni evdev : `cd app && python3 -m unittest discover -s tests -t .` Ceux de l'interface web et de Cloud sync ont besoin d'aiohttp : ils sont sautés sans lui, et tournent sur le Pi. Les tests simulent une grande carte (`tests/__init__.py`) : sur le Pi, `/tmp` est un disque en mémoire de moins de 256 Mo libres, sous la réserve de la carte, et toutes les photos y seraient refusées. Cloud sync y est testé contre de faux services WebDAV, Dropbox et Google Drive lancés sur 127.0.0.1 : aucun compte réel n'est nécessaire.
 6. On rapatrie les images (`scp`) pour les inspecter.
 7. **Capture d'écran à distance** : `python3 tools/screenshot.py /tmp/ecran.jpg --scale 0.5` compose la visée (commande `snapshot`) et le HUD (mémoire partagée) exactement comme l'écran. On la rapatrie avec `scp`. Elle prend ~2 s en 1080p.
 8. Pour voir le rendu sur l'écran du Pi sans l'application :

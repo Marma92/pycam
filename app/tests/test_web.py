@@ -69,6 +69,19 @@ class WebTest(unittest.IsolatedAsyncioTestCase):
         looks.refresh()
         self.tmp.cleanup()
 
+    async def test_only_from_its_own_page(self):
+        # A page of another site, in a browser on the same network: refused.
+        r = await self.client.post("/api/shutter", headers={"Origin": "https://evil.example"})
+        self.assertEqual(r.status, 403)
+        r = await self.client.post("/api/shutter", headers={"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(r.status, 403)
+        host = f"{self.client.host}:{self.client.port}"
+        r = await self.client.post("/api/shutter", headers={"Origin": f"http://{host}"})
+        self.assertEqual(r.status, 200)
+        # A site's name resolved to the camera ("DNS rebinding"): refused; the camera's own names: fine.
+        self.assertEqual((await self.client.get("/api/state", headers={"Host": "evil.example:8080"})).status, 403)
+        self.assertEqual((await self.client.get("/api/state", headers={"Host": "pycam.local:8080"})).status, 200)
+
     async def test_state_shutter_and_preset(self):
         state = await (await self.client.get("/api/state")).json()
         self.assertEqual((state["mode"], state["preset"]), ("P", "standard"))

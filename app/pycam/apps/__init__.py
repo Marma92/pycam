@@ -8,7 +8,9 @@ An application is an object made with the camera, with:
 - run(): a coroutine started with the camera (its background work);
 - wake(): new files on the card (a shot, a video), or one of its settings changed;
 - hud(): a few characters for the HUD while it works, or "";
-- photo_items(camera, path): the menu lines it adds to a shot's menu (MENU in playback).
+- photo_items(camera, path): the menu lines it adds to a shot's menu (MENU in playback);
+- files_in_use(): the files it still needs, which no other application deletes (Cloud sync
+  offloading a photo waiting to be shared).
 """
 
 

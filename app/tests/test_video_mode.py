@@ -200,6 +200,16 @@ class VideoModeTest(DriveCase):
         controls = self.picture_controls()
         self.assertEqual((controls["Saturation"], controls["Contrast"]), (1.0, 1.0))
 
+    async def test_the_video_mode_starts_without_loupe_nor_restart(self):
+        self.settings.mode = "video"
+        await self.camera.sync_engine()
+        names = [name for name, _ in self.engine.calls]
+        self.assertNotIn("loupe", names)  # the engine refuses it in video
+        self.assertEqual([p.get("restart") for p in self.calls("video_mode")], [False])  # once
+        self.camera.set_grain(not self.settings.grain)  # nothing for the ISP: no restart
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.calls("video_mode")), 1)
+
     async def test_a_picture_change_in_video_starts_the_camera_again(self):
         await self.video_mode()
         self.camera.on_action("menu")

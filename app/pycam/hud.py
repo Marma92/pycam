@@ -57,6 +57,11 @@ class Hud:
             self.shm = mmap.mmap(fd, hud["stride"] * hud["height"])
         finally:
             os.close(fd)
+        # Drawn in place: the engine reads this memory only at "hud_commit", sent once a
+        # drawing is done. Copying a whole image into it each time cost ~0.1 s of the
+        # ~0.12 s of a drawing on a Pi 3B (three copies of 8 MB); in place, ~0.015 s.
+        self._canvas = Image.frombuffer("RGBA", self.size, self.shm, "raw", "RGBA", hud["stride"], 1)
+        self._canvas.readonly = 0  # else Pillow would copy it at the first stroke
         self.s = self.rect[3] / 1080  # sizes below are for a 1080 pixel high image
         self.font = ImageFont.truetype(FONT, max(11, round(32 * self.s)))
         self.font_bold = ImageFont.truetype(FONT_BOLD, max(12, round(40 * self.s)))
@@ -68,7 +73,16 @@ class Hud:
         self._full = (None, None)  # (path, full resolution image), for the playback loupe
 
     def close(self):
-        self.shm.close()
+        self._canvas = None  # it holds the memory: closing it first
+        try:
+            self.shm.close()
+        except BufferError:  # a drawing still holds it: unmapped when it is collected
+            pass
+
+    def _start(self, background):
+        """The shared memory, as an image to draw into, starting from `background`."""
+        self._canvas.paste(background)
+        return self._canvas
 
     def px(self, value):
         return max(1, round(value * self.s))
@@ -100,13 +114,15 @@ class Hud:
         if view.review:
             self._draw_review(view)
             return
-        img = self._background(view.grid and view.display != "clean", view.video_mode, view.guide).copy()
+        img = self._start(self._background(view.grid and view.display != "clean", view.video_mode, view.guide))
         d = ImageDraw.Draw(img)
         if view.display != "clean":
             self._info_bar(d, view)
             self._status(d, view)
             if view.metering == "spot" and view.loupe == 1 and not view.menu:
                 self._spot_area(d)
+        elif view.recording:  # whatever the display: you must know it records
+            self._status(d, view, only_recording=True)
         if view.display == "detailed":
             self._histogram(d, view)
         if view.loupe > 1:  # whatever the display: you must know the image is magnified
@@ -119,16 +135,15 @@ class Hud:
             self._menu(d, view)
         if view.message:
             self._message(d, view.message, view.warning)
-        self.shm[:] = img.tobytes()
 
     def draw_default(self):
         """What the engine shows when no application runs: black margins, nothing else."""
-        self.shm[:] = self._background(False).tobytes()
+        self._start(self._background(False))
 
     def _draw_review(self, view):
         """A photo (just taken, or in playback), opaque over the viewfinder, with what it was
         shot at. In playback, maybe magnified (view.loupe: against the fitted photo)."""
-        img = self._background(False).copy()
+        img = self._start(self._background(False))
         path, photo = self._review
         x, y, w, h = self.rect
         if path == view.review and view.loupe > 1:
@@ -152,7 +167,6 @@ class Hud:
             self._menu(d, view)
         if view.message:
             self._message(d, view.message, view.warning)
-        self.shm[:] = img.tobytes()
 
     def _play_button(self, d, cx, cy, hint):
         """A video's first frame: a play sign in the middle, and how to play it."""
@@ -167,7 +181,7 @@ class Hud:
         """A video played by the engine on the video plane, in the image area, under this
         HUD: transparent there but for a bar at the bottom (name, time, progress) and the
         pause sign; black around, as for the photos."""
-        img = self._background(False).copy()
+        img = self._start(self._background(False))
         d = ImageDraw.Draw(img)
         x0, y0, sw, sh = self.rect
         if view.video_paused:
@@ -192,7 +206,6 @@ class Hud:
             d.text((right, top + bar_h // 2), view.video_time, font=self.font_bold, fill=WHITE, anchor="rm")
         if view.message:
             self._message(d, view.message, view.warning)
-        self.shm[:] = img.tobytes()
 
     def _magnified(self, path, zoom, center):
         """The part of the photo shown at `zoom` times the fitted size, around `center`. The
@@ -323,9 +336,10 @@ class Hud:
             d.polygon([(base, mid_y + self.px(1)), (base, mid_y + self.px(13)), (tip, mid_y + self.px(7))], fill=colour)
         return width
 
-    def _status(self, d, view):
+    def _status(self, d, view, only_recording=False):
         """Top left: the drive mode (amber while its sequence runs), what is switched on (ZSL,
-        peaking, zebras) and the photos being written."""
+        peaking, zebras) and the photos being written. only_recording: "● REC" alone (the
+        clean display)."""
         x, y, w, h = self.rect
         cx, cy = x + self.px(24), y + self.px(24)
         badge_h = self.font.size + self.px(14)
@@ -339,6 +353,10 @@ class Hud:
 
         if view.recording:
             badge(f"● REC {view.recording}", RED)
+        if only_recording:
+            return
+        if view.recording:
+            pass
         elif view.video_mode:
             badge("VIDÉO", WHITE)
         if view.drive:

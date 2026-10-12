@@ -62,7 +62,7 @@ class EngineClient:
         while True:
             try:
                 reader, writer = await asyncio.open_unix_connection(self.path, limit=1 << 20)
-            except (FileNotFoundError, ConnectionRefusedError) as e:
+            except OSError as e:  # not there yet, refused, or no permission
                 if not warned:
                     log.warning("engine not reachable at %s (%s), retrying", self.path, e)
                     warned = True
@@ -103,13 +103,18 @@ class EngineClient:
                     log.error("invalid message from the engine: %r", line[:200])
                     continue
                 if "event" in msg:
-                    self.on_event(msg)
+                    try:
+                        self.on_event(msg)
+                    except Exception:  # an event handled badly: the next ones still are
+                        log.exception("event %s failed", msg.get("event"))
                 else:
                     future = self._pending.get(msg.get("id"))
                     if future and not future.done():
                         future.set_result(msg)
         except ConnectionError:
             pass
+        except ValueError as e:  # a line beyond the limit: connect again
+            log.error("engine connection: %s", e)
 
 
 def call_blocking(path, cmd, timeout=2.0, **params):

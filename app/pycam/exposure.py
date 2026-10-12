@@ -51,6 +51,15 @@ KELVIN_STEPS = (
 )
 
 
+# The ISO shown when automatic: the nearest third of a stop, as cameras do (the measured one
+# moves by a few units at each measure, which would redraw the HUD each time).
+NOMINAL_ISO = ISO_VALUES + (2000, 2500, 3200)
+
+
+def nominal_iso(measured):
+    return NOMINAL_ISO[nearest_index(NOMINAL_ISO, measured)] if measured > 0 else 0
+
+
 def nearest_index(values, x):
     """Index of the value closest to x, in stops."""
     if x <= 0:
