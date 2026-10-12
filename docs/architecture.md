@@ -204,7 +204,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | `state` | Machine d'états : `VIEW` → `MENU` / `PLAYBACK` / `SLEEP`. | ⬜ |
 | `drive` | Vue par vue, rafale, retardateur, intervallomètre, bracketing, pose B. | ⬜ |
 | `sensors` | IMU (niveau, orientation), batterie, RTC. | ⬜ |
-| `web` | `aiohttp` : télécommande, galerie, téléchargement, visée distante en MJPEG basse résolution. | ⬜ |
+| `web` | `aiohttp`, port 8080, réseau local seulement : visée (une image par seconde, prise par la commande `snapshot`), déclencheur, preset et grain, galerie avec téléchargement et suppression, installation de presets. Une page unique sans dépendance (`web/index.html`). | ✅ |
 
 **Commandes clavier, en attendant les boutons.** Le clavier ne garde qu'une touche par commande de l'appareil (`hardware.md` §2) ; tous les autres réglages sont dans les menus. Les touches sont choisies pour être au même endroit en QWERTY et en AZERTY.
 

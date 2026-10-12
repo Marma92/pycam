@@ -108,6 +108,8 @@ DNG_COMPRESSION = Item("RAW compressé", "dng_compression", (True, False), ("Oui
 # Applied once the engine accepts it (Camera.set_strategy).
 STRATEGY = Item("Déclenchement", "strategy", ("switch", "zsl"), ("Bascule · visée fluide", "ZSL · sans latence"))
 REVIEW = Item("Revue après la prise", "review_seconds", (0, 1, 2, 4), ("Coupée", "1 s", "2 s", "4 s"))
+# Applied at the next start of the application (web.py).
+WEB = Item("Interface web", "web", (True, False), ("Oui · au prochain démarrage", "Non · au prochain démarrage"))
 KEEP_BASE = Item("Garder la base", "keep_base", (False, True), ("Non", "Oui · JPEG neutre en plus"))
 # Another ISP tuning: the camera is reopened (~0.2 s).
 LENS_SHADING = Item("Correction de l'ombrage", "lens_shading", (False, True), ("Non", "Oui"), "config")
@@ -162,6 +164,8 @@ FULL = (
     LENS,
     APERTURE,
     LENS_SHADING,
+    Item("Réseau"),
+    WEB,
     Item("Affichage"),
     GRID,
     HISTOGRAM,

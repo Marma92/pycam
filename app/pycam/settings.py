@@ -55,6 +55,7 @@ class Settings:
     grain: bool = True  # simulate the preset's film grain
     keep_base: bool = False  # also write the JPEG without the look (PYB_0001.JPG)
     lens_shading: bool = False  # correct the lens shading (another ISP tuning)
+    web: bool = True  # the web interface, on the local network (web.py)
     fn1: str = "peaking"  # FN_ACTIONS
     fn2: str = "zebra"
     lenses: list = field(default_factory=lambda: copy.deepcopy(DEFAULT_LENSES))  # edit to add yours

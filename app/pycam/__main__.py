@@ -41,12 +41,25 @@ async def run(args):
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, main_task.cancel)
 
+    web_server = None
+    if settings.web:
+        try:
+            from .web import WebServer
+
+            web_server = WebServer(camera)
+            await web_server.start()
+        except (ImportError, OSError) as e:  # no aiohttp, or the port is taken
+            log.warning("no web interface: %s", e)
+            web_server = None
+
     log.info("started, settings in %s", args.settings)
     try:
         await camera.run(inputs)
     except asyncio.CancelledError:
         pass
     finally:
+        if web_server:
+            await web_server.stop()
         camera.shutdown()
         log.info("stopped")
 

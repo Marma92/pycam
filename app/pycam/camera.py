@@ -100,6 +100,7 @@ class Camera:
         self._capture_lock = asyncio.Lock()
         self._save_handle = None
         self._tasks = set()
+        self._snapshots = {}  # path -> future, until the engine has written it
 
     async def run(self, inputs):
         await asyncio.gather(self.engine.run(), inputs.run(), self.hud_loop())
@@ -179,6 +180,10 @@ class Camera:
         elif kind == "loupe":
             self.loupe = msg.get("loupe", {}).get("zoom", 1)
             self.redraw()
+        elif kind in ("snapshot_done", "snapshot_error"):
+            future = self._snapshots.pop(msg.get("path"), None)
+            if future and not future.done():
+                future.set_result(kind == "snapshot_done")
         elif kind == "tuning":
             log.info("ISP tuning %s (camera reopened in %.0f ms)", msg.get("tuning"), msg.get("reopen_ms", 0))
         elif kind == "display_ready":
@@ -592,6 +597,42 @@ class Camera:
         self.show_message("Réactivité (ZSL)" if new == "zsl" else "Fluidité (bascule)")
 
     # --- Measures
+
+    # --- For the web interface (web.py)
+
+    async def snapshot(self, path, timeout=3.0):
+        """The next viewfinder frame shown, as a JPEG at `path` (aids and look included, no
+        HUD); False if the engine could not (no screen: it is taken on the way to it)."""
+        future = self._snapshots.get(path)
+        if future is None:
+            future = self._snapshots[path] = asyncio.get_running_loop().create_future()
+            try:
+                await self.engine.call("snapshot", path=path)
+            except (EngineError, ConnectionError):
+                self._snapshots.pop(path, None)
+                return False
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), timeout)
+        except asyncio.TimeoutError:
+            self._snapshots.pop(path, None)
+            return False
+
+    def set_preset(self, preset_id):
+        """As if chosen in the menu; False if there is no such preset."""
+        if preset_id not in looks.registry():
+            return False
+        self.settings.preset = preset_id
+        self.spawn(self.apply_exposure())  # its exposure shift, its film balance
+        self.spawn(self.apply_look())
+        self.save_soon()
+        self.redraw()
+        return True
+
+    def set_grain(self, on):
+        self.settings.grain = bool(on)
+        self.spawn(self.apply_look())
+        self.save_soon()
+        self.redraw()
 
     def preset(self):
         """The chosen preset; the default one if it is gone (a deleted folder)."""

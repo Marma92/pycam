@@ -65,7 +65,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Niveau électronique | Horizon et inclinaison par l'IMU ; orientation EXIF automatique. | ⬜ |
 | Démarrage rapide | Moins de 12 s de l'allumage à la visée. | 🧪 |
 | Robustesse | Racine en lecture seule et partition photos séparée. | ⬜ |
-| Interface web | Télécommande, visée distante, galerie et téléchargement par Wi-Fi. | ⬜ |
+| Interface web | Sur le réseau local, port 8080 (`web.py`) : visée rafraîchie chaque seconde, déclencheur, choix du preset et du grain ; photos (vignettes, téléchargement JPEG et DNG, suppression) ; presets (installer un .zip ou ses fichiers depuis l'ordinateur, supprimer). Refuse toute adresse hors réseau local, IPv6 publique comprise. Réglage « Interface web » dans MENU. Pas encore de mot de passe. | ✅ |
 
 ## M3 — « Avancé »
 
