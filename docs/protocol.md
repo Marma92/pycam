@@ -92,7 +92,7 @@ Les noms sont ceux de libcamera, et `list_controls` donne la liste exacte.
 
 ### Empilements (pose B, stacking)
 
-Avec `stack`, la prise additionne les images RAW successives en mode photo, chacune avec la pose réglée (la pose B : 1 s), jusqu'à `frames` images (`0` : jusqu'à `capture_stop`), 1 800 images ou 30 minutes au plus. `mode` : `add` (la somme : une seule pose aussi longue que toutes), `mean` (la moyenne : moins de bruit), `max` (le plus clair de chaque pixel : traînées de lumière). Le DNG contient le RAW combiné ; le JPEG est développé par le moteur à partir de lui (`docs/architecture.md` §2.4), puis reçoit le look. Pour ces prises, le DNG est écrit avant le JPEG. Chaque image donne un évènement `stack_frame`.
+Avec `stack`, la prise additionne les images RAW successives en mode photo, chacune avec la pose réglée (la pose B : 1 s), jusqu'à `frames` images (`0` : jusqu'à `capture_stop`), 3 600 images au plus, et 30 minutes de pose pour une somme. `mode` : `add` (la somme : une seule pose aussi longue que toutes), `mean` (la moyenne : moins de bruit), `max` (le plus clair de chaque pixel : traînées de lumière). Le DNG contient le RAW combiné ; le JPEG est développé par le moteur à partir de lui (`docs/architecture.md` §2.4), puis reçoit le look. Pour ces prises, le DNG est écrit avant le JPEG. Chaque image donne un évènement `stack_frame`.
 
 ## Évènements (moteur → application)
 

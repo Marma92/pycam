@@ -48,9 +48,10 @@ constexpr float kLoupeMaxZoom = 16;
 // anyway (a camera that delivers nothing does not deadlock either). See Run().
 constexpr auto kStartupGrace = std::chrono::seconds(3);
 
-// Stacks: 30 minutes of 1 s frames at most (the exposure time of the metadata is in
-// microseconds, on 32 bits: 35 minutes).
-constexpr unsigned kMaxStackFrames = 1800;
+// Stacks: 3600 frames at most (an hour of 1 s frames); a sum, 30 minutes of exposure at
+// most (its exposure time goes into the metadata in microseconds, on 32 bits: 35 minutes).
+// A mean or a maximum keeps one frame's exposure: star trails may last longer.
+constexpr unsigned kMaxStackFrames = 3600;
 constexpr int64_t kMaxStackExposureUs = 30LL * 60 * 1'000'000;
 
 std::string tuning_path(std::string const &dir, std::string const &name)
@@ -353,8 +354,10 @@ void Engine::Start(Phase phase)
 		// A stack needs a second buffer: with one, the camera has nowhere to put the next
 		// frame while this one is added up, and drops every other frame (measured: 1 s
 		// exposures 2 s apart).
-		options->Set().buffer_count = pending_ && pending_->stack ? 2 : 1;
-		options->Set().denoise = still_denoise_;
+		bool const stack = pending_ && pending_->stack;
+		options->Set().buffer_count = stack ? 2 : 1;
+		// A stack only uses the raw frames: no ISP time spent denoising the YUV ones.
+		options->Set().denoise = stack ? "cdn_off" : still_denoise_;
 		options->Set().width = still_size_ ? (*still_size_)[0] : 0; // 0: full sensor
 		options->Set().height = still_size_ ? (*still_size_)[1] : 0;
 		app_.ConfigureStill(RPiCamApp::FLAG_STILL_RAW);
@@ -576,8 +579,10 @@ void Engine::StackFrame(CompletedRequestPtr &request)
 					 { "capture_id", capture.id },
 					 { "frames", frames },
 					 { "exposure_us", capture.stack_exposure_us } });
+	bool const sum = capture.stack->mode() == RawStack::Mode::Add;
 	bool const last = capture.stop || (capture.stack_frames && frames >= capture.stack_frames) ||
-					  frames >= kMaxStackFrames || capture.stack_exposure_us + info.exposure_time > kMaxStackExposureUs;
+					  frames >= kMaxStackFrames ||
+					  (sum && capture.stack_exposure_us + info.exposure_time > kMaxStackExposureUs);
 	if (!last)
 		return;
 
