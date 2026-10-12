@@ -16,13 +16,23 @@ echo "sources copiées vers $PI_HOST:~/pycam"
 
 [ "${1:-}" = "--no-build" ] && exit 0
 
+# The camera and the application are stopped during the build: with them running, two
+# compilers in parallel do not fit in the Pi 3B's 1 GB, which then swaps for tens of
+# minutes (seen 2026-10-12, a header change rebuilding the whole engine).
 ssh -o BatchMode=yes "$PI_HOST" '
 	set -e
 	cd ~/pycam/engine
-	[ -d build ] || CXX="ccache g++" meson setup build >/dev/null
-	ninja -C build -j2
+	services=""
 	if systemctl is-enabled --quiet pycam-engine.service 2>/dev/null; then
-		sudo systemctl restart pycam-engine.service pycam.service
+		services="pycam-engine.service pycam.service"
+		sudo systemctl stop $services
+	fi
+	[ -d build ] || CXX="ccache g++" meson setup build >/dev/null
+	status=0
+	ninja -C build -j2 || status=$?
+	if [ -n "$services" ]; then
+		sudo systemctl start $services
 		echo "services pycam redémarrés"
 	fi
+	exit $status
 '
