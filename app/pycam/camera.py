@@ -12,7 +12,7 @@ from . import drive as drives
 from . import exposure as exp
 from . import lenses, looks, meter, picture, timelapse, video
 from .engine_client import EngineError, call_blocking
-from .menu import Menu
+from .menu import Item, Menu
 from .playback import PIXEL_SCALES, Playback, describe, describe_video, poster
 from .settings import DISPLAY_MODES, save_settings
 from .storage import Storage
@@ -131,6 +131,8 @@ class Camera:
         self.last_shot = None
         self.review = None  # photo shown after the shot
         self.menu = None  # Menu while open
+        self.menu_stack = []  # the menus it was opened from (MENU goes back)
+        self.apps = []  # the applications (apps/), started with the camera
         self.playback = None  # Playback while open (the LECTURE button)
         self._shown = None  # Review of the photo shown in playback, once loaded
         self._delete_armed_until = 0.0  # deleting takes two presses of Q
@@ -161,7 +163,8 @@ class Camera:
         self._snapshots = {}  # path -> future, until the engine has written it
 
     async def run(self, inputs):
-        await asyncio.gather(self.engine.run(), inputs.run(), self.hud_loop(), self.screen_loop())
+        apps = [app.run() for app in self.apps]
+        await asyncio.gather(self.engine.run(), inputs.run(), self.hud_loop(), self.screen_loop(), *apps)
 
     def shutdown(self):
         """Settings saved, and the engine's default HUD back on the screen."""
@@ -258,6 +261,7 @@ class Camera:
         elif kind == "capture_done":
             self.writing = msg.get("write_queue", 0)
             log.info("saved %s", " ".join(os.path.basename(f) for f in msg.get("files", [])))
+            self.wake_apps()
             self.redraw()
         elif kind == "capture_error":
             self.writing = max(0, self.writing - 1)
@@ -502,7 +506,7 @@ class Camera:
         if action in ("q", "menu") and not (action == "menu" and self.loupe > 1):
             looks.refresh()  # a preset copied to the camera shows up in the menu
         if action == "q":
-            self.menu = Menu(s, quick=True)
+            self.menu, self.menu_stack = Menu(s, quick=True), []
             self.redraw()
             return
         if action == "menu":  # leaves the loupe first, as the camera's MENU button goes back
@@ -510,7 +514,7 @@ class Camera:
                 self.loupe = 1
                 self.spawn(self.apply_loupe())
             else:
-                self.menu = Menu(s, quick=False)
+                self.menu, self.menu_stack = Menu(s, quick=False, context=self), []
                 self.redraw()
             return
         if s.mode == "video" and self.on_video_action(action):
@@ -590,16 +594,29 @@ class Camera:
 
     def on_menu_action(self, action):
         """While a menu is open: the dials move in it. Returns True if handled."""
-        if action in ("q", "menu"):
+        if action == "menu" and self.menu_stack:  # back to the menu this one was opened from
+            self.menu = self.menu_stack.pop()
+        elif action in ("q", "menu"):
             # Each button closes its menu; Q goes from the full menu to the quick one.
-            self.menu = Menu(self.settings, quick=True) if action == "q" and not self.menu.quick else None
+            top = self.menu_stack[0] if self.menu_stack else self.menu
+            self.menu_stack = []
+            self.menu = Menu(self.settings, quick=True) if action == "q" and not top.quick else None
         elif action == "shutter":
-            self.menu = None
+            self.menu, self.menu_stack = None, []
             return False  # and shoot
         elif action in ("rear_dial_plus", "rear_dial_minus"):  # rear dial: choose a line
             self.menu.move(-1 if action == "rear_dial_plus" else +1)
         elif action in ("front_dial_plus", "front_dial_minus"):  # front dial: change the value
-            self.change_setting(+1 if action == "front_dial_plus" else -1)
+            item = self.menu.item
+            if item.kind == "open":
+                if action == "front_dial_plus":
+                    self.menu_stack.append(self.menu)
+                    self.menu = item.target(self)
+            elif item.kind == "run":
+                if action == "front_dial_plus":
+                    item.target(self)
+            else:
+                self.change_setting(+1 if action == "front_dial_plus" else -1)
         # Any other key does nothing while a menu is open.
         self.redraw()
         return True
@@ -732,6 +749,24 @@ class Camera:
         except (EngineError, ConnectionError, TimeoutError) as e:
             log.warning("%s: %s", command, e)
 
+    # --- Applications (apps/)
+
+    def apps_menu(self):
+        """The Applications menu: one line per application, opening its own menu."""
+        items = [Item(app.title, kind="open", target=app.menu, text=app.summary) for app in self.apps]
+        if not items:
+            items = [Item("Aucune application", kind="info")]
+        return Menu(self.settings, items=items, title="Applications", context=self)
+
+    def wake_apps(self):
+        """New files on the card, or an application's setting changed."""
+        for app in self.apps:
+            app.wake()
+
+    def apps_hud(self):
+        """What the applications at work show on the HUD ("CLOUD 40 %")."""
+        return " · ".join(text for text in (app.hud() for app in self.apps) if text)
+
     # --- Video mode (video.py; the engine's video_mode and Recorder)
 
     def set_mode(self, mode):
@@ -823,6 +858,7 @@ class Camera:
         if self._video_setup_deferred:
             self._video_setup_deferred = False
             self.spawn(self.apply_mode())
+        self.wake_apps()
         self.redraw()
 
     def _video_view(self, message, warning):
@@ -852,7 +888,7 @@ class Camera:
             menu_title=self.menu.title if self.menu else "",
             menu_index=self.menu.index if self.menu else 0,
             writing=self.writing,
-            task=self.task_status,
+            task=self.task_status or self.apps_hud(),
             **self._histograms(self.stats.get("histogram", ()), self.stats.get("histogram_rgb", ()), live=False),
             message=message,
             warning=warning,
@@ -939,6 +975,8 @@ class Camera:
         elif item.push == "mode":
             self.show_message("Vidéo" if s.mode == "video" else "Photo")
             self.spawn(self.apply_mode())
+        elif item.push == "apps":
+            self.wake_apps()
         elif item.push == "video":
             if self.recording:
                 self._video_setup_deferred = True
@@ -1035,6 +1073,7 @@ class Camera:
         if ok:
             log.info("timelapse: %s, %d frames", out, len(frames))
             self.show_message(f"Vidéo : {os.path.basename(out)}")
+            self.wake_apps()
         else:
             self.show_message("Vidéo impossible", warning=True)
 
@@ -1253,7 +1292,7 @@ class Camera:
             drive=self.drive.status if self.drive.active else drives.short_label(s),
             drive_running=self.drive.active,
             countdown=self.drive.countdown,
-            task=self.task_status,
+            task=self.task_status or self.apps_hud(),
             exposure_timer=timer,
             exposure_label=timer_label,
             viewfinder_auto=self.stats.get("viewfinder") == "auto",

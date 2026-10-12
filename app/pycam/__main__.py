@@ -35,6 +35,12 @@ async def run(args):
     settings = load_settings(args.settings)
     camera = Camera(settings, args.settings, EngineClient(args.socket), hud_factory=Hud)
     inputs = Inputs(camera.on_action)
+    try:
+        from .apps import make_apps
+
+        camera.apps = make_apps(camera)
+    except ImportError as e:  # no aiohttp
+        log.warning("no applications: %s", e)
 
     main_task = asyncio.current_task()
     loop = asyncio.get_running_loop()

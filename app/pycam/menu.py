@@ -6,6 +6,9 @@ Two menus, as on the camera (docs/hardware.md §2):
 
 The rear dial (up / down) chooses a line, the front dial (left / right) changes its value.
 Q, MENU or the shutter close them; the shutter also shoots.
+
+Besides settings, a line may open another menu (the applications: apps/), run an action,
+or only inform. MENU goes back from a menu opened in another one.
 """
 
 from dataclasses import dataclass
@@ -21,6 +24,16 @@ class Item:
     values: tuple = ()  # or settings -> ((value, shown), ...) for lists that depend on other settings
     shown: tuple = ()  # how each value is shown
     push: str = ""  # what the engine must be told: "exposure", "picture", "look", "config", "focus" or nothing
+    # Not a setting: "open" (target(context) gives the menu to open), "run" (target(context)
+    # runs, with the front dial forward), "info" (only shown). text(context): what is shown
+    # on the right.
+    kind: str = ""
+    target: object = None
+    text: object = None
+
+    @property
+    def selectable(self):
+        return bool(self.attr) or self.kind in ("open", "run")
 
     def options(self, settings):
         """((value, shown), ...)"""
@@ -198,7 +211,10 @@ QUICK_VIDEO = (
     PEAKING,
     ZEBRA,
 )
+APPLICATIONS = Item("Applications", kind="open", target=lambda camera: camera.apps_menu(), text=lambda camera: "›")
 FULL = (
+    Item("Applications"),
+    APPLICATIONS,
     Item("Exposition"),
     METERING,
     WHITE_BALANCE,
@@ -262,13 +278,19 @@ FULL = (
 
 
 class Menu:
-    def __init__(self, settings, quick=True):
+    """Q or MENU; or, with `items`, another menu (an application's). context: what the
+    lines that are not settings need (the camera)."""
+
+    def __init__(self, settings, quick=True, items=None, title="", context=None):
         self.settings = settings
-        self.quick = quick
-        self.title = "Réglages rapides" if quick else "Menu"
-        if quick and settings.mode == "video":
+        self.quick = quick and items is None
+        self.context = context
+        if items is not None:
+            self.title, self.items = title, tuple(items)
+        elif quick and settings.mode == "video":
             self.title, self.items = "Réglages vidéo", QUICK_VIDEO
         else:
+            self.title = "Réglages rapides" if quick else "Menu"
             self.items = QUICK if quick else FULL
         self.index = 0
         self.move(0)  # past a section title
@@ -294,12 +316,14 @@ class Menu:
 
     def move(self, steps):
         """steps lines down (up if negative), around the list, past the section titles."""
+        if not any(item.selectable for item in self.items):
+            return
         direction = 1 if steps >= 0 else -1
         for _ in range(abs(steps)):
             self.index = (self.index + direction) % len(self.items)
-            while not self.item.attr:
+            while not self.item.selectable:
                 self.index = (self.index + direction) % len(self.items)
-        while not self.item.attr:
+        while not self.item.selectable:
             self.index = (self.index + direction) % len(self.items)
 
     def next_value(self, steps):
@@ -314,6 +338,9 @@ class Menu:
         stats: the engine's last measures."""
         rows = []
         for item in self.items:
+            if item.kind:
+                rows.append((item.label, item.text(self.context) if item.text else ""))
+                continue
             if not item.attr:
                 rows.append((item.label, None))
                 continue
