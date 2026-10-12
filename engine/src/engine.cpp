@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <stdexcept>
 
@@ -56,6 +58,28 @@ double ms_between(std::chrono::steady_clock::time_point from, std::chrono::stead
 	return std::chrono::duration<double, std::milli>(to - from).count();
 }
 
+bool valid_tuning_name(std::string const &name)
+{
+	return !name.empty() && name.size() < 64 &&
+		   std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_'; });
+}
+
+// libcamera reads the tuning file when the camera manager starts, from this variable.
+// Returns the name of the tuning in use: empty for libcamera's own.
+std::string export_tuning(std::string const &dir, std::string const &name)
+{
+	std::filesystem::path path = std::filesystem::path(dir) / (name + ".json");
+	if (dir.empty() || name.empty() || !std::filesystem::exists(path))
+	{
+		if (!name.empty())
+			std::cerr << "pycam-engine: no tuning file " << path << ", using libcamera's" << std::endl;
+		unsetenv("LIBCAMERA_RPI_TUNING_FILE");
+		return "";
+	}
+	setenv("LIBCAMERA_RPI_TUNING_FILE", path.c_str(), 1);
+	return name;
+}
+
 std::string control_name(unsigned int id)
 {
 	auto it = controls::controls.find(id);
@@ -64,7 +88,9 @@ std::string control_name(unsigned int id)
 
 } // namespace
 
-Engine::Engine(EngineConfig cfg) : cfg_(std::move(cfg)), zsl_(cfg_.zsl), still_denoise_(cfg_.still_denoise)
+Engine::Engine(EngineConfig cfg)
+	: cfg_(std::move(cfg)), tuning_(export_tuning(cfg_.tuning_dir, cfg_.tuning)), zsl_(cfg_.zsl),
+	  still_denoise_(cfg_.still_denoise)
 {
 	if (cfg_.verbose < 2)
 		setenv("LIBCAMERA_LOG_LEVELS", "*:ERROR", 0);
@@ -105,9 +131,7 @@ int Engine::Run()
 	TryDisplay();
 
 	app_.OpenCamera();
-	for (auto const &camera : app_.GetCameras())
-		if (camera->id() == app_.CameraId())
-			camera_controls_ = &camera->controls();
+	FindCameraControls();
 	Start(Phase::Viewfinder);
 
 	std::cerr << "pycam-engine: ready, " << (zsl_ ? "zsl" : "switch") << " strategy, socket " << cfg_.socket_path
@@ -147,7 +171,13 @@ int Engine::Run()
 		DrainCommands();
 		TryDisplay();
 
-		if (next_phase_ && may_stop_camera())
+		if (reopen_ && may_stop_camera())
+		{
+			reopen_ = false;
+			next_phase_.reset(); // Reopen() starts the viewfinder anyway
+			Reopen();
+		}
+		else if (next_phase_ && may_stop_camera())
 		{
 			Phase phase = *next_phase_;
 			next_phase_.reset();
@@ -173,8 +203,8 @@ int Engine::Run()
 	}
 
 	std::cerr << "pycam-engine: stopping\n";
+	display_.reset(); // planes off, frames given back before the camera stops (see ReleaseFrames)
 	app_.StopCamera();
-	display_.reset(); // planes off, frames given back, before the buffers are freed
 	app_.Teardown();
 	app_.CloseCamera();
 	writer_.Stop(); // finish writing the photos already taken
@@ -211,14 +241,19 @@ void Engine::BeforeShow(CompletedRequestPtr const &request, Stream *stream, Stre
 	// Display thread. The viewfinder buffer only feeds the screen: drawing into it leaves
 	// the photos untouched.
 	std::string snapshot;
+	std::shared_ptr<const Preview> preview;
 	{
 		std::lock_guard<std::mutex> lock(snapshot_mutex_);
 		snapshot.swap(snapshot_path_);
+		preview = preview_;
 	}
-	if (!focus_aids_.Active() && snapshot.empty())
+	if (!preview && !focus_aids_.Active() && snapshot.empty())
 		return;
 
 	BufferWriteSync sync(&app_, request->buffers.at(stream));
+	// The look first: the peaking and the zebras show on what the photo will look like.
+	if (preview)
+		apply_preview(*preview, sync.Get()[0].data(), info.width, info.height, info.stride);
 	focus_aids_.Apply(sync.Get()[0].data(), info);
 
 	if (!snapshot.empty())
@@ -252,21 +287,12 @@ void Engine::PostToCameraLoop(RPiCamApp::MsgType type)
 void Engine::Start(Phase phase)
 {
 	StillOptions *options = app_.GetOptions();
-
-	// A manual exposure longer than the viewfinder frame must still be honoured.
-	int64_t manual_exposure = 0;
-	if (user_controls_.get(controls::ExposureTimeMode).value_or(controls::ExposureTimeModeAuto) ==
-		controls::ExposureTimeModeManual)
-		manual_exposure = user_controls_.get(controls::ExposureTime).value_or(0);
-
-	std::optional<std::array<int64_t, 2>> frame_limits;
 	bool const loupe = phase == Phase::Viewfinder && loupe_zoom_ > 1;
 	if (loupe)
 	{
 		// A plain viewfinder, even in ZSL: the crop would also apply to the still stream.
 		options->Set().viewfinder_mode = Mode(kLoupeMode);
 		app_.ConfigureViewfinder();
-		frame_limits = { kViewfinderMinFrameUs, std::max(kViewfinderMaxFrameUs, manual_exposure) };
 	}
 	else if (zsl_)
 	{
@@ -277,7 +303,6 @@ void Engine::Start(Phase phase)
 		options->Set().height = still_size_ ? (*still_size_)[1] : 0;
 		app_.ConfigureZsl(RPiCamApp::FLAG_STILL_RAW);
 		options->Set().denoise = "auto";
-		frame_limits = { kViewfinderMinFrameUs, std::max(kZslMaxFrameUs, manual_exposure) };
 	}
 	else if (phase == Phase::Still)
 	{
@@ -287,21 +312,19 @@ void Engine::Start(Phase phase)
 		options->Set().height = still_size_ ? (*still_size_)[1] : 0;
 		app_.ConfigureStill(RPiCamApp::FLAG_STILL_RAW);
 		options->Set().denoise = "auto";
-		// No frame limits: rpicam lets a still exposure last as long as needed.
 	}
 	else
 	{
 		options->Set().viewfinder_mode = Mode(kViewfinderMode);
 		app_.ConfigureViewfinder();
-		frame_limits = { kViewfinderMinFrameUs, std::max(kViewfinderMaxFrameUs, manual_exposure) };
 	}
 
 	app_.SetControls(user_controls_);
-	if (frame_limits)
+	if (auto limits = FrameLimits(phase))
 	{
-		libcamera::ControlList limits;
-		limits.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(*frame_limits));
-		app_.SetControls(limits);
+		libcamera::ControlList list;
+		list.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(*limits));
+		app_.SetControls(list);
 	}
 	if (loupe)
 		app_.SetControls(LoupeCrop()); // otherwise rpicam sets the full field of view
@@ -311,15 +334,73 @@ void Engine::Start(Phase phase)
 	frames_since_start_ = 0;
 }
 
+std::optional<std::array<int64_t, 2>> Engine::FrameLimits(Phase phase) const
+{
+	if (phase == Phase::Still)
+		return std::nullopt; // rpicam lets a still exposure last as long as needed
+	// A manual exposure longer than the usual frame must still be honoured.
+	int64_t manual_exposure = 0;
+	if (user_controls_.get(controls::ExposureTimeMode).value_or(controls::ExposureTimeModeAuto) ==
+		controls::ExposureTimeModeManual)
+		manual_exposure = user_controls_.get(controls::ExposureTime).value_or(0);
+	// The loupe is a plain viewfinder, even in ZSL.
+	int64_t const longest = zsl_ && loupe_zoom_ <= 1 ? kZslMaxFrameUs : kViewfinderMaxFrameUs;
+	return std::array<int64_t, 2> { kViewfinderMinFrameUs, std::max(longest, manual_exposure) };
+}
+
+void Engine::ReleaseFrames()
+{
+	// The display thread gives its frames back to the camera *before* it stops: a frame
+	// given back goes through RPiCamApp::queueRequest(), which edits a set of requests
+	// that StopCamera() clears without a lock (rpicam-apps 1.13). Both at once corrupted
+	// the heap ("double free or corruption", 2026-10-12, a capture in switch mode while
+	// the display thread was finishing a frame). It is the only other thread holding
+	// frames, and this one hands it none until the camera starts again.
+	if (display_)
+		display_->Reset(); // the last image stays on the screen during the reconfiguration
+}
+
 void Engine::Restart(Phase phase)
 {
 	Clock::time_point t = Clock::now();
+	ReleaseFrames();
 	app_.StopCamera();
-	if (display_)
-		display_->Reset(); // the last image stays on the screen during the reconfiguration
 	app_.Teardown();
 	Start(phase);
 	reconfigure_ms_ = ms_between(t, started_);
+}
+
+void Engine::SetTuning()
+{
+	tuning_ = export_tuning(cfg_.tuning_dir, tuning_);
+}
+
+void Engine::FindCameraControls()
+{
+	camera_controls_ = nullptr;
+	for (auto const &camera : app_.GetCameras())
+		if (camera->id() == app_.CameraId())
+			camera_controls_ = &camera->controls();
+}
+
+void Engine::Reopen()
+{
+	// A new tuning file: the camera manager must start again (CloseCamera() drops it).
+	Clock::time_point t = Clock::now();
+	ReleaseFrames();
+	app_.StopCamera();
+	app_.Teardown();
+	app_.CloseCamera();
+	SetTuning();
+	app_.OpenCamera();
+	FindCameraControls();
+	Start(Phase::Viewfinder);
+	reconfigure_ms_ = ms_between(t, started_);
+	std::cerr << "pycam-engine: tuning " << (tuning_.empty() ? std::string("libcamera") : tuning_)
+			  << ", camera reopened in " << int(reconfigure_ms_) << " ms\n";
+	ipc_.Broadcast({ { "event", "tuning" },
+					 { "tuning", tuning_.empty() ? json(nullptr) : json(tuning_) },
+					 { "reopen_ms", reconfigure_ms_ } });
 }
 
 void Engine::OnFrame(CompletedRequestPtr &request)
@@ -386,6 +467,8 @@ void Engine::GrabStill(CompletedRequestPtr &request)
 	job->options->Set().quality = capture.quality;
 	job->options->Set().exif = capture.exif;
 	job->camera_model = app_.CameraModel();
+	job->look = look_;
+	job->base_jpeg_path = capture.base_jpeg_path;
 
 	FrameInfo info(request);
 	json event = {
@@ -479,8 +562,12 @@ void Engine::HandleCommand(int client, json const &command, Clock::time_point re
 			for (auto const &[id, value] : list)
 				if (camera_controls_ && camera_controls_->find(id) == camera_controls_->end())
 					throw CommandError("unsupported", control_name(id) + " is not supported by this camera");
-			for (auto const &[id, value] : list)
-				user_controls_.set(id, value);
+			remember_controls(user_controls_, list);
+			// A manual exposure longer than the frames now (or the automatic one back)
+			// needs other frame limits: until the next start, it would be cut short.
+			auto limits = FrameLimits(phase_);
+			if (limits && (list.contains(controls::ExposureTime.id()) || list.contains(controls::ExposureTimeMode.id())))
+				list.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(*limits));
 			app_.SetControls(list);
 		}
 		else if (name == "capture")
@@ -489,6 +576,11 @@ void Engine::HandleCommand(int client, json const &command, Clock::time_point re
 			Configure(command);
 		else if (name == "focus_aids")
 			focus_aids_.Configure(command);
+		else if (name == "look")
+		{
+			SetLook(command);
+			reply["look"] = LookState();
+		}
 		else if (name == "loupe")
 		{
 			Loupe(command);
@@ -555,6 +647,7 @@ json Engine::Capture(json const &command, Clock::time_point received)
 	capture.compress_dng = command.value("dng_compression", false);
 	capture.quality = command.value("quality", 93);
 	capture.exif = command.value("exif", std::vector<std::string> {});
+	capture.base_jpeg_path = command.value("base_jpeg", "");
 	capture.t_command = received;
 
 	uint64_t id = capture.id;
@@ -614,8 +707,93 @@ void Engine::Configure(json const &command)
 		restart |= zsl_ && still_size != still_size_;
 		still_size_ = still_size;
 	}
+	if (command.contains("tuning"))
+	{
+		// A file name (without .json) in the tuning folder, or null for libcamera's own.
+		json const &value = command["tuning"];
+		std::string tuning = value.is_null() ? "" : value.get<std::string>();
+		if (!tuning.empty() &&
+			(!valid_tuning_name(tuning) || cfg_.tuning_dir.empty() ||
+			 !std::filesystem::exists(std::filesystem::path(cfg_.tuning_dir) / (tuning + ".json"))))
+			throw CommandError("bad_request", "tuning: unknown tuning file " + tuning);
+		if (tuning != tuning_)
+		{
+			tuning_ = tuning;
+			reopen_ = true; // a few seconds without viewfinder
+		}
+	}
 	if (restart)
 		next_phase_ = Phase::Viewfinder;
+}
+
+void Engine::SetLook(json const &command)
+{
+	// The whole look at once: what is not given is off. Photos already taken keep theirs.
+	auto look = std::make_shared<Look>();
+	look->name = command.value("name", "");
+	if (command.contains("lut") && !command["lut"].is_null())
+	{
+		try
+		{
+			look->lut = Lut3D::Load(command["lut"].get<std::string>());
+		}
+		catch (std::exception const &e)
+		{
+			throw CommandError("bad_request", e.what());
+		}
+	}
+	look->vignette = std::clamp(command.value("vignette", 0.0f), 0.0f, 1.0f);
+	look->grain = std::clamp(command.value("grain", 0.0f), 0.0f, 1.0f);
+	look->grain_size = std::clamp(command.value("grain_size", 1.0f), 0.5f, 8.0f);
+	look->grain_colour = std::clamp(command.value("grain_colour", 0.0f), 0.0f, 1.0f);
+	look->grain_shadows = std::clamp(command.value("grain_shadows", 0.0f), 0.0f, 1.0f);
+	look->grain_clumps = std::clamp(command.value("grain_clumps", 0.0f), 0.0f, 1.0f);
+	look->halation = std::clamp(command.value("halation", 0.0f), 0.0f, 1.0f);
+	look->halation_radius = std::clamp(command.value("halation_radius", 24.0f), 2.0f, 200.0f);
+	look->halation_threshold = std::clamp(command.value("halation_threshold", 0.8f), 0.0f, 0.99f);
+	if (command.contains("halation_colour"))
+	{
+		auto colour = command["halation_colour"].get<std::vector<float>>();
+		if (colour.size() != 3)
+			throw CommandError("bad_request", "halation_colour: [r, g, b], 0..1");
+		for (unsigned i = 0; i < 3; i++)
+			look->halation_colour[i] = std::clamp(colour[i], 0.0f, 1.0f);
+	}
+	std::shared_ptr<Preview> preview;
+	if (command.contains("preview") && !command["preview"].is_null())
+	{
+		json const &p = command["preview"];
+		auto luma = p.value("luma", std::vector<int> {});
+		auto mix = p.value("luma_mix", std::vector<float> { 0, 0 });
+		auto chroma = p.value("chroma", std::vector<float> { 1, 0, 0, 1 });
+		if (luma.size() != 256 || mix.size() != 2 || chroma.size() != 4)
+			throw CommandError("bad_request", "preview: luma (256 values), luma_mix [cb, cr], chroma [4 values]");
+		preview = std::make_shared<Preview>();
+		for (unsigned i = 0; i < 256; i++)
+			preview->luma[i] = static_cast<uint8_t>(std::clamp(luma[i], 0, 255));
+		preview->mix_cb = std::clamp(mix[0], -4.0f, 4.0f);
+		preview->mix_cr = std::clamp(mix[1], -4.0f, 4.0f);
+		for (unsigned i = 0; i < 4; i++)
+			preview->chroma[i] = std::clamp(chroma[i], -4.0f, 4.0f);
+	}
+	look_ = std::move(look);
+	std::lock_guard<std::mutex> lock(snapshot_mutex_); // the display thread reads it
+	preview_ = std::move(preview);
+}
+
+json Engine::LookState() const
+{
+	return { { "name", look_->name },
+			 { "lut", look_->lut ? json(look_->lut->size) : json(nullptr) },
+			 { "vignette", look_->vignette },
+			 { "grain", look_->grain },
+			 { "grain_size", look_->grain_size },
+			 { "grain_colour", look_->grain_colour },
+			 { "grain_shadows", look_->grain_shadows },
+			 { "grain_clumps", look_->grain_clumps },
+			 { "halation", look_->halation },
+			 { "halation_radius", look_->halation_radius },
+			 { "preview", preview_ != nullptr } };
 }
 
 void Engine::Loupe(json const &command)
@@ -688,6 +866,8 @@ json Engine::State() const
 		{ "loupe", LoupeState() },
 		{ "still_denoise", still_denoise_ },
 		{ "still_size", still_size_ ? json(*still_size_) : json(nullptr) },
+		{ "tuning", tuning_.empty() ? json(nullptr) : json(tuning_) },
+		{ "look", LookState() },
 	};
 }
 

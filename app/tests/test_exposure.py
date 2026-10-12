@@ -101,6 +101,16 @@ class ExposureTest(unittest.TestCase):
         e.next_awb()
         self.assertEqual(e.awb, "Auto")
 
+    def test_film_white_balance(self):
+        e = Exposure(awb="Film")
+        controls = e.controls(film_kelvin=3200)  # a tungsten film
+        self.assertEqual((controls["AwbEnable"], controls["ColourTemperature"]), (False, 3200))
+        self.assertEqual(e.awb_label(3200), "Film 3200 K")
+        controls = e.controls()  # a film without its own balance (black and white): auto
+        self.assertEqual((controls["AwbEnable"], controls["AwbMode"]), (True, "Auto"))
+        self.assertEqual(e.awb_label(), "Film AWB")
+        self.assertEqual(Exposure.from_dict(e.to_dict()).awb, "Film")
+
     def test_metering(self):
         self.assertEqual(Exposure().controls()["AeMeteringMode"], "MeteringCentreWeighted")
         e = Exposure.from_dict({"metering": "spot"})

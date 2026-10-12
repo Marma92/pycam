@@ -428,7 +428,7 @@ void Display::Loop()
 
 		if (reset_requested_)
 		{
-			// The camera is stopped and its buffers are about to be freed (and their fd
+			// The camera is about to stop and its buffers to be freed (and their fd
 			// numbers reused): forget them. The image on the screen stays, its memory is
 			// kept alive by the DRM framebuffer until the next frame replaces it.
 			for (auto const &[dmabuf, frame] : frame_fbs_)

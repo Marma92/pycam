@@ -1,0 +1,7 @@
+# La base pycam telle quelle : courbe Rec.709, sans effet. Les JPEG pris avec ce preset
+# servent à créer les siens (docs/presets.md §5) : c'est l'entrée de toutes les LUT.
+format = 1
+base = "pycam-1"
+name = "Base (neutre)"
+short = "BASE"
+description = "Le rendu neutre de l'ISP, l'entrée des presets."

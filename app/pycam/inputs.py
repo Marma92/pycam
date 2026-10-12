@@ -14,43 +14,35 @@ from evdev import ecodes
 
 log = logging.getLogger(__name__)
 
-# Key -> action. Letters chosen to sit at the same place on QWERTY and AZERTY keyboards.
+# Key -> action. One key per control of the camera (docs/hardware.md §2): the other
+# settings are in the menus. Keys chosen to sit at the same place on QWERTY and AZERTY.
 KEYMAP = {
     ecodes.KEY_SPACE: "shutter",
     ecodes.KEY_ENTER: "shutter",
     ecodes.KEY_KPENTER: "shutter",
-    ecodes.KEY_RIGHT: "shutter_faster",  # front dial
-    ecodes.KEY_LEFT: "shutter_slower",
-    ecodes.KEY_UP: "iso_up",  # rear dial
-    ecodes.KEY_DOWN: "iso_down",
-    ecodes.KEY_PAGEUP: "ev_up",
-    ecodes.KEY_KPPLUS: "ev_up",
-    ecodes.KEY_PAGEDOWN: "ev_down",
-    ecodes.KEY_KPMINUS: "ev_down",
-    ecodes.KEY_S: "shutter_auto",  # S: back to automatic speed (or manual from the measure)
-    ecodes.KEY_I: "iso_auto",
-    ecodes.KEY_B: "awb",  # balance des blancs: presets, Kelvin
-    ecodes.KEY_U: "kelvin_up",  # U above J: warmer / cooler, in Kelvin
-    ecodes.KEY_J: "kelvin_down",
-    ecodes.KEY_H: "awb_lock",  # hold the balance measured on a grey card
+    ecodes.KEY_RIGHT: "front_dial_plus",  # front dial
+    ecodes.KEY_LEFT: "front_dial_minus",
+    ecodes.KEY_UP: "rear_dial_plus",  # rear dial
+    ecodes.KEY_DOWN: "rear_dial_minus",
+    ecodes.KEY_S: "shutter_auto",  # front dial press: automatic speed, or manual from the measure
+    ecodes.KEY_I: "iso_auto",  # rear dial press: the same for the ISO
+    ecodes.KEY_TAB: "q",  # quick menu
+    ecodes.KEY_ESC: "menu",  # full menu; closes a menu, leaves the loupe
     ecodes.KEY_D: "disp",
-    ecodes.KEY_G: "grid",
-    ecodes.KEY_R: "raw",
-    ecodes.KEY_K: "dng_compression",
-    ecodes.KEY_X: "strategy",  # ZSL on/off
-    ecodes.KEY_P: "peaking",
-    ecodes.KEY_C: "peaking_color",
-    ecodes.KEY_V: "peaking_sensitivity",
-    ecodes.KEY_E: "zebra",
     ecodes.KEY_L: "loupe",  # x5, x10, off; in the loupe, the arrows move it
-    ecodes.KEY_T: "review",  # review time after the shot: off, 1, 2, 4 s
-    ecodes.KEY_N: "lens",  # next lens profile
-    ecodes.KEY_F: "aperture",  # aperture set on the ring, for the EXIF
-    ecodes.KEY_TAB: "menu",  # quick menu (the Q button)
-    ecodes.KEY_ESC: "back",  # closes the menu, leaves the loupe
+    ecodes.KEY_P: "play",  # LECTURE: the photos on the card
+    ecodes.KEY_1: "fn1",  # what they do is chosen in the menu
+    ecodes.KEY_2: "fn2",
+}
+# The camera's dials (docs/hardware.md, "Câblage"): the kernel's rotary-encoder driver, one
+# relative axis each; one step per detent. Only devices named "rotary...": a mouse moves
+# the same axes and must not turn the dials.
+DIALS = {
+    ecodes.REL_X: ("front_dial_plus", "front_dial_minus"),
+    ecodes.REL_Y: ("rear_dial_plus", "rear_dial_minus"),
 }
 # Actions that repeat while the key is held, like turning a dial.
-REPEATABLE = {"shutter_faster", "shutter_slower", "iso_up", "iso_down", "ev_up", "ev_down", "kelvin_up", "kelvin_down"}
+REPEATABLE = {"front_dial_plus", "front_dial_minus", "rear_dial_plus", "rear_dial_minus"}
 
 RESCAN_SECONDS = 2
 
@@ -75,8 +67,10 @@ class Inputs:
             device = evdev.InputDevice(path)
         except OSError:
             return
-        keys = device.capabilities().get(ecodes.EV_KEY, [])
-        if not any(code in KEYMAP for code in keys):
+        capabilities = device.capabilities()
+        keys = capabilities.get(ecodes.EV_KEY, [])
+        dial = "rotary" in device.name.lower() and any(axis in DIALS for axis in capabilities.get(ecodes.EV_REL, []))
+        if not dial and not any(code in KEYMAP for code in keys):
             device.close()
             self._devices[path] = None
             return
@@ -87,13 +81,26 @@ class Inputs:
         log.info("input: %s (%s)", device.name, path)
         self._devices[path] = asyncio.create_task(self._read(path, device))
 
+    @staticmethod
+    def _actions(event, dial):
+        """The actions an input event stands for: a key pressed (or repeating), or the
+        detents a dial turned."""
+        if event.type == ecodes.EV_KEY:
+            action = KEYMAP.get(event.code)
+            if action == "shutter" and event.value == 0:  # released: ends a burst
+                return ["shutter_release"]
+            if action and (event.value == 1 or action in REPEATABLE and event.value == 2):  # 2: auto-repeat
+                return [action]
+        elif dial and event.type == ecodes.EV_REL and event.code in DIALS:
+            plus, minus = DIALS[event.code]
+            return [plus if event.value > 0 else minus] * min(abs(event.value), 10)
+        return []
+
     async def _read(self, path, device):
         try:
+            dial = "rotary" in device.name.lower()
             async for event in device.async_read_loop():
-                if event.type != ecodes.EV_KEY or event.value == 0:  # 0: key released
-                    continue
-                action = KEYMAP.get(event.code)
-                if action and (event.value == 1 or action in REPEATABLE):  # 2: auto-repeat
+                for action in self._actions(event, dial):
                     try:
                         self.on_action(action)
                     except Exception:

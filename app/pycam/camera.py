@@ -4,13 +4,16 @@ import asyncio
 import logging
 import os
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 
+from . import drive as drives
 from . import exposure as exp
-from . import lenses, meter, picture
+from . import lenses, looks, meter, picture
 from .engine_client import EngineError, call_blocking
-from .menu import QuickMenu
-from .settings import DISPLAY_MODES, PEAKING_COLORS, PEAKING_SENSITIVITIES, REVIEW_SECONDS, save_settings
+from .menu import Menu
+from .playback import PIXEL_SCALES, Playback, describe
+from .settings import DISPLAY_MODES, save_settings
 from .storage import Storage
 from .view import HudView
 
@@ -21,31 +24,27 @@ MESSAGE_SECONDS = 1.5
 SAVE_DELAY = 1.0  # settings are written once the dials stop turning
 
 EXPOSURE_ACTIONS = {
-    "shutter_faster",
-    "shutter_slower",
-    "iso_up",
-    "iso_down",
-    "ev_up",
-    "ev_down",
+    "front_dial_plus",
+    "front_dial_minus",
+    "rear_dial_plus",
+    "rear_dial_minus",
     "shutter_auto",
     "iso_auto",
-    "awb",
-    "kelvin_up",
-    "kelvin_down",
     "awb_lock",
 }
-FOCUS_AID_ACTIONS = {"peaking", "peaking_color", "peaking_sensitivity", "zebra"}
+FOCUS_AID_ACTIONS = {"peaking", "zebra"}
 LOUPE_LEVELS = (1, 5, 10)
+CAPTURED_TIMEOUT = 10.0  # seconds, beyond the exposure time
+# Playback: the rear dial goes from one photo to the next, the front dial jumps ten.
+PLAYBACK_STEPS = {"rear_dial_plus": 1, "rear_dial_minus": -1, "front_dial_plus": 10, "front_dial_minus": -10}
+DELETE_CONFIRM_SECONDS = 3
 # In the loupe, the dials move it (until the camera has a joystick): action -> (dx, dy).
 LOUPE_MOVES = {
-    "shutter_faster": (1, 0),
-    "shutter_slower": (-1, 0),
-    "iso_up": (0, -1),
-    "iso_down": (0, 1),
+    "front_dial_plus": (1, 0),
+    "front_dial_minus": (-1, 0),
+    "rear_dial_plus": (0, -1),
+    "rear_dial_minus": (0, 1),
 }
-
-COLOR_LABELS = {"red": "rouge", "yellow": "jaune", "green": "vert", "blue": "bleu", "white": "blanc"}
-SENSITIVITY_LABELS = {"low": "faible", "medium": "moyenne", "high": "forte"}
 
 
 def _next(values, current):
@@ -68,6 +67,7 @@ class Review:
     info: str
     histogram: tuple
     histogram_rgb: tuple
+    size: tuple | None = None  # of the photo, in pixels (playback: for the loupe)
 
 
 class Camera:
@@ -89,14 +89,25 @@ class Camera:
         self.loupe_center = (0.5, 0.5)
         self.last_shot = None
         self.review = None  # photo shown after the shot
-        self.menu = None  # QuickMenu while open
+        self.menu = None  # Menu while open
+        self.playback = None  # Playback while open (the LECTURE button)
+        self._shown = None  # Review of the photo shown in playback, once loaded
+        self._delete_armed_until = 0.0  # deleting takes two presses of Q
+        self._look_version = 0  # the last look asked for: only that one is sent
+        self._look = None  # looks.Compiled sent to the engine: its curves correct the histograms
+        self._look_lock = asyncio.Lock()
         self.slowest_shutter = exp.SHUTTER_SPEEDS[-1]
         self._message = ("", False, 0.0)
         self._review_handle = None
         self._redraw = asyncio.Event()
         self._capture_lock = asyncio.Lock()
+        self.capture_error = None  # why the last capture() was refused: "busy", "unavailable"...
+        self._captured = OrderedDict()  # capture id -> taken (True) or failed (False), the last ones
+        self._capture_waits = {}  # capture id -> future, for wait_captured
+        self.drive = drives.Drive(self)
         self._save_handle = None
         self._tasks = set()
+        self._snapshots = {}  # path -> future, until the engine has written it
 
     async def run(self, inputs):
         await asyncio.gather(self.engine.run(), inputs.run(), self.hud_loop())
@@ -123,6 +134,7 @@ class Camera:
         await self.engine.call("configure", strategy=self.settings.strategy, **picture.engine_config(self.settings))
         await self.apply_exposure()
         await self.apply_picture()
+        await self.apply_look()
         await self.apply_focus_aids()
         self.loupe = 1
         await self.apply_loupe()
@@ -151,18 +163,27 @@ class Camera:
         if kind == "stats":
             self.stats = msg
             e = self.settings.exposure
-            if e.mode == "P":  # fully automatic: learn the meter constant (saved with the settings)
-                self.settings.meter_k = meter.calibrate(self.settings.meter_k, msg, e.ev)
+            if e.mode == "P" and not self.drive.freezes_exposure:
+                # Fully automatic: learn the meter constant (saved with the settings).
+                self.settings.meter_k = meter.calibrate(self.settings.meter_k, msg, e.ev + self.preset().exposure_bias)
             self.redraw()
         elif kind == "captured":
             shot = self.last_shot
             if shot and shot.capture_id == msg.get("capture_id"):
                 shot.exposure_us = msg.get("exposure_us", 0)
                 shot.iso = msg.get("analogue_gain", 0) * msg.get("digital_gain", 1) * 100
+            self._capture_taken(msg.get("capture_id"), True)
         elif kind == "file_saved":
-            # The JPEG is written first: review it without waiting for the DNG.
+            # The JPEG is written first: review it without waiting for the DNG. Not during a
+            # burst or a bracketing: the last photo is reviewed once it is over.
             path, shot = msg.get("path", ""), self.last_shot
-            if path.endswith(".JPG") and shot and shot.capture_id == msg.get("capture_id") and self.settings.review_seconds:
+            if (
+                path.endswith(".JPG")
+                and shot
+                and shot.capture_id == msg.get("capture_id")
+                and self.settings.review_seconds
+                and not self.drive.quiet
+            ):
                 self.spawn(self.show_review(shot, path))
         elif kind == "capture_done":
             self.writing = msg.get("write_queue", 0)
@@ -170,11 +191,18 @@ class Camera:
             self.redraw()
         elif kind == "capture_error":
             self.writing = max(0, self.writing - 1)
+            self._capture_taken(msg.get("capture_id"), False)
             log.error("capture %s failed: %s", msg.get("capture_id"), msg.get("error"))
             self.show_message("Erreur d'enregistrement", warning=True)
         elif kind == "loupe":
             self.loupe = msg.get("loupe", {}).get("zoom", 1)
             self.redraw()
+        elif kind in ("snapshot_done", "snapshot_error"):
+            future = self._snapshots.pop(msg.get("path"), None)
+            if future and not future.done():
+                future.set_result(kind == "snapshot_done")
+        elif kind == "tuning":
+            log.info("ISP tuning %s (camera reopened in %.0f ms)", msg.get("tuning"), msg.get("reopen_ms", 0))
         elif kind == "display_ready":
             log.info("the engine got the screen")
             self.spawn(self.setup_hud())
@@ -182,8 +210,12 @@ class Camera:
             log.error("engine: %s", msg.get("error"))
 
     async def apply_exposure(self):
+        if self.drive.freezes_exposure:
+            return  # the bracketing sets it, and gives it back when it is over
         try:
-            await self.engine.call("set_controls", controls=self.settings.exposure.controls())
+            preset = self.preset()
+            controls = self.settings.exposure.controls(preset.exposure_bias, preset.white_balance)
+            await self.engine.call("set_controls", controls=controls)
         except ConnectionError:
             pass  # pushed again on reconnection
         except EngineError as e:
@@ -196,6 +228,36 @@ class Camera:
             pass  # pushed again on reconnection
         except EngineError as e:
             log.error("picture settings refused: %s", e)
+
+    async def apply_look(self):
+        """Compiles the preset with the contrast and the saturation (off the event loop, and
+        once: kept in a cache), then hands it to the engine. Turning a dial asks for several
+        looks in a row: only the last one is sent."""
+        self._look_version += 1
+        version = self._look_version
+        async with self._look_lock:
+            if version != self._look_version:
+                return  # a newer look is waiting for the lock
+            s, preset = self.settings, self.preset()
+            try:
+                compiled = await asyncio.to_thread(looks.compiled_look, preset, s.contrast, s.saturation)
+            except (looks.PresetError, OSError) as e:
+                log.error("cannot compile the preset %s: %s", preset.id, e)
+                self.show_message(f"Preset illisible : {preset.name}", warning=True)
+                return
+            if version != self._look_version:
+                return
+            try:
+                # "Simuler le grain" off: the look without its grain.
+                params = looks.engine_look(preset, grain=s.grain)
+                await self.engine.call("look", lut=compiled.lut, preview=compiled.preview, **params)
+            except ConnectionError:
+                return  # pushed again on reconnection
+            except EngineError as e:
+                log.error("look refused: %s", e)
+                return
+            self._look = compiled
+            self.redraw()
 
     async def apply_still_config(self):
         try:
@@ -272,27 +334,51 @@ class Camera:
     def on_action(self, action):
         log.debug("action %s", action)
         s, e = self.settings, self.settings.exposure
+        if action == "shutter_release":  # nothing else: it ends no review, closes no menu
+            self.drive.release()
+            return
         if self.review:
             # Any key ends the review; the shutter also shoots: never miss a photo.
             self.end_review()
             if action != "shutter":
                 return
+        if self.playback and self.on_playback_action(action):
+            return
         if self.menu and self.on_menu_action(action):
             return
-        if action == "menu":
-            self.menu = QuickMenu(s)
+        if action == "play":
+            self.open_playback()
+            return
+        if action in ("fn1", "fn2"):  # the action they are given in the menu
+            action = getattr(s, action)
+        if action in ("q", "menu") and not (action == "menu" and self.loupe > 1):
+            looks.refresh()  # a preset copied to the camera shows up in the menu
+        if action == "q":
+            self.menu = Menu(s, quick=True)
             self.redraw()
             return
-        if action == "back":
+        if action == "menu":  # leaves the loupe first, as the camera's MENU button goes back
             if self.loupe > 1:
                 self.loupe = 1
                 self.spawn(self.apply_loupe())
+            else:
+                self.menu = Menu(s, quick=False)
+                self.redraw()
             return
         if action == "shutter":
-            self.spawn(self.capture())
+            self.drive.shutter()
+            return
+        if action in EXPOSURE_ACTIONS and self.drive.freezes_exposure:
+            self.show_message("Bracketing en cours", warning=True)
+            return
+        if action == "drive":
+            self.drive.stop()
+            s.drive = _next(drives.MODES, s.drive) if s.drive in drives.MODES else drives.MODES[0]
+            self.show_message(drives.LABELS[s.drive])
+            self.save_soon()
             return
         if action == "strategy":
-            self.spawn(self.toggle_strategy())
+            self.spawn(self.set_strategy("zsl" if s.strategy == "switch" else "switch"))
             return
         if action == "loupe":
             self.loupe = _next(LOUPE_LEVELS, self.loupe) if self.loupe in LOUPE_LEVELS else 1
@@ -304,27 +390,25 @@ class Camera:
             self.spawn(self.apply_loupe())
             self.redraw()
             return
-        if action == "shutter_faster":
-            e.step_shutter(-1, self.measured_shutter(), self.slowest_shutter)
-        elif action == "shutter_slower":
-            e.step_shutter(+1, self.measured_shutter(), self.slowest_shutter)
-        elif action == "iso_up":
-            e.step_iso(+1, self.measured_iso())
-        elif action == "iso_down":
-            e.step_iso(-1, self.measured_iso())
-        elif action == "ev_up":
-            e.step_ev(+1)
-        elif action == "ev_down":
-            e.step_ev(-1)
+        if action in ("front_dial_plus", "front_dial_minus"):
+            # The speed when it is manual (S, M), else the exposure compensation (P, A), as
+            # in docs/hardware.md §2. Turning a dial never changes the mode: pressing it does.
+            step = +1 if action == "front_dial_plus" else -1
+            if e.shutter is None:
+                e.step_ev(step)
+            else:
+                e.step_shutter(-step, self.measured_shutter(), self.slowest_shutter)  # plus: faster
+        elif action in ("rear_dial_plus", "rear_dial_minus"):
+            # The ISO when it is manual (A, M), else the exposure compensation (P, S).
+            step = +1 if action == "rear_dial_plus" else -1
+            if e.iso is None:
+                e.step_ev(step)
+            else:
+                e.step_iso(step, self.measured_iso())
         elif action == "shutter_auto":
             e.toggle_shutter_auto(self.measured_shutter())
         elif action == "iso_auto":
             e.toggle_iso_auto(self.measured_iso())
-        elif action == "awb":
-            e.next_awb()
-            self.show_message(f"Balance des blancs : {e.awb_label()}")
-        elif action in ("kelvin_up", "kelvin_down"):
-            e.step_kelvin(+1 if action == "kelvin_up" else -1, self.stats.get("colour_temp"))
         elif action == "awb_lock":
             if not e.lock_awb(self.stats.get("colour_gains")):
                 self.show_message("Pas de mesure de balance des blancs", warning=True)
@@ -334,44 +418,16 @@ class Camera:
             s.display = DISPLAY_MODES[(DISPLAY_MODES.index(s.display) + 1) % len(DISPLAY_MODES)]
         elif action == "grid":
             s.grid = not s.grid
+            self.show_message("Grille" if s.grid else "Grille masquée")
         elif action == "raw":
             s.formats = ["jpeg"] if "dng" in s.formats else ["jpeg", "dng"]
             self.show_message("RAW + JPEG" if "dng" in s.formats else "JPEG seul")
-        elif action == "dng_compression":
-            s.dng_compression = not s.dng_compression
-            self.show_message("RAW compressé (sans perte)" if s.dng_compression else "RAW non compressé")
         elif action == "peaking":
             s.peaking = not s.peaking
             self.show_message("Peaking" if s.peaking else "Peaking coupé")
-        elif action == "peaking_color":
-            s.peaking = True
-            s.peaking_color = _next(PEAKING_COLORS, s.peaking_color)
-            self.show_message(f"Peaking {COLOR_LABELS[s.peaking_color]}")
-        elif action == "peaking_sensitivity":
-            s.peaking = True
-            s.peaking_sensitivity = _next(PEAKING_SENSITIVITIES, s.peaking_sensitivity)
-            self.show_message(f"Peaking : sensibilité {SENSITIVITY_LABELS[s.peaking_sensitivity]}")
         elif action == "zebra":
             s.zebra = not s.zebra
             self.show_message("Zébras" if s.zebra else "Zébras coupés")
-        elif action == "review":
-            s.review_seconds = _next(REVIEW_SECONDS, s.review_seconds)
-            self.show_message(f"Revue : {s.review_seconds} s" if s.review_seconds else "Revue coupée")
-        elif action == "lens":
-            # none -> each profile -> none; the aperture belongs to the previous lens
-            s.lens = s.lens + 1 if s.lens + 1 < len(s.lenses) else -1
-            s.aperture = None
-            lens = self.lens()
-            self.show_message(lens["name"] if lens else "Objectif non précisé")
-        elif action == "aperture":
-            lens = self.lens()
-            if not lens:
-                self.show_message("Choisir d'abord l'objectif (N)", warning=True)
-                return
-            stops = [None] + lenses.aperture_stops(lens)  # None: not told
-            current = s.aperture if s.aperture in stops else None
-            s.aperture = _next(stops, current)
-            self.show_message(lenses.format_aperture(s.aperture) if s.aperture else "Ouverture non précisée")
         else:
             log.warning("unknown action %s", action)
             return
@@ -383,59 +439,219 @@ class Camera:
         self.redraw()
 
     def on_menu_action(self, action):
-        """While the quick menu is open: the dials move in it. Returns True if handled."""
-        if action in ("menu", "back"):
-            self.menu = None
+        """While a menu is open: the dials move in it. Returns True if handled."""
+        if action in ("q", "menu"):
+            # Each button closes its menu; Q goes from the full menu to the quick one.
+            self.menu = Menu(self.settings, quick=True) if action == "q" and not self.menu.quick else None
         elif action == "shutter":
             self.menu = None
             return False  # and shoot
-        elif action in ("iso_up", "iso_down"):  # rear dial: choose a line
-            self.menu.move(-1 if action == "iso_up" else +1)
-        elif action in ("shutter_faster", "shutter_slower"):  # front dial: change the value
-            item = self.menu.change(+1 if action == "shutter_faster" else -1)
-            if item.push == "exposure":
-                self.spawn(self.apply_exposure())
-            elif item.push == "picture":
-                self.spawn(self.apply_picture())
-            elif item.push == "config":
-                self.spawn(self.apply_still_config())
-            self.save_soon()
-        # Any other key does nothing while the menu is open.
+        elif action in ("rear_dial_plus", "rear_dial_minus"):  # rear dial: choose a line
+            self.menu.move(-1 if action == "rear_dial_plus" else +1)
+        elif action in ("front_dial_plus", "front_dial_minus"):  # front dial: change the value
+            self.change_setting(+1 if action == "front_dial_plus" else -1)
+        # Any other key does nothing while a menu is open.
         self.redraw()
         return True
 
-    async def capture(self):
-        async with self._capture_lock:  # two quick presses must not get the same name
-            if not self.engine.connected:
-                self.show_message("Moteur indisponible", warning=True)
+    # --- Playback (playback.py)
+
+    def open_playback(self):
+        playback = Playback(self.storage.root)
+        if not playback.photos:
+            self.show_message("Aucune photo sur la carte")
+            return
+        self.playback, self._shown = playback, None
+        self._delete_armed_until = 0.0
+        self.spawn(self.load_shown())
+        self.redraw()
+
+    def close_playback(self):
+        self.playback = self._shown = None
+        self.redraw()
+
+    def on_playback_action(self, action):
+        """While in playback. Returns True if handled (the shutter leaves and shoots)."""
+        p = self.playback
+        if action in ("play", "menu"):
+            self.close_playback()
+            return True
+        if action == "shutter":
+            self.close_playback()
+            return False  # and shoot: never miss a photo
+        if action == "q":
+            self.delete_shown()
+            return True
+        self._delete_armed_until = 0.0
+        if action == "loupe":
+            p.cycle_zoom()
+        elif action == "disp":
+            s = self.settings
+            s.display = DISPLAY_MODES[(DISPLAY_MODES.index(s.display) + 1) % len(DISPLAY_MODES)]
+            self.save_soon()
+        elif p.scale and action in LOUPE_MOVES:
+            p.pan(*LOUPE_MOVES[action], self.playback_zoom())
+        elif action in PLAYBACK_STEPS:
+            if p.step(PLAYBACK_STEPS[action]):
+                self.spawn(self.load_shown())
+        self.redraw()
+        return True
+
+    def delete_shown(self):
+        """Q once asks, Q again within 3 s deletes the shot (JPEG, DNG, base copy)."""
+        p = self.playback
+        name = os.path.basename(p.current)[:-4]
+        now = time.monotonic()
+        if now > self._delete_armed_until:
+            self._delete_armed_until = now + DELETE_CONFIRM_SECONDS
+            self.show_message(f"Supprimer {name} ? Q pour confirmer", warning=True)
+            return
+        self._delete_armed_until = 0.0
+        try:
+            removed = p.delete_current()
+        except OSError as e:
+            log.error("cannot delete %s: %s", name, e)
+            self.show_message("Suppression impossible", warning=True)
+            return
+        log.info("deleted %s", " ".join(os.path.basename(f) for f in removed))
+        if not p.photos:
+            self.close_playback()
+            self.show_message("Plus aucune photo sur la carte")
+            return
+        self.show_message(f"{name} supprimée")
+        self.spawn(self.load_shown())
+
+    async def load_shown(self):
+        """Decodes the photo shown in playback, off the event loop (~0.3 s)."""
+        p, hud = self.playback, self.hud
+        path = p.current if p else None
+        if not path:
+            return
+
+        def load():
+            info, size = describe(path)
+            luma, rgb = hud.load_review(path) if hud else ((), ())
+            return Review(path, info, tuple(luma), tuple(tuple(c) for c in rgb), size)
+
+        shown = await asyncio.to_thread(load)
+        if self.playback is p and p.current == path:  # not moved on meanwhile
+            self._shown = shown
+            self.redraw()
+
+    def playback_zoom(self):
+        """The playback loupe's magnification against the fitted photo."""
+        p, shown = self.playback, self._shown
+        if not p.scale or not shown or not shown.size:
+            return 1.0
+        _, _, w, h = getattr(self.hud, "rect", (0, 0, 1440, 1080))
+        return p.zoom(min(w / shown.size[0], h / shown.size[1]))
+
+    def change_setting(self, steps):
+        """Turns the value of the chosen menu line, and tells the engine."""
+        s, e, menu = self.settings, self.settings.exposure, self.menu
+        item = menu.item
+        if item.attr == "exposure.kelvin":  # from another balance, starts at the measured temperature
+            e.step_kelvin(steps, self.stats.get("colour_temp"))
+        else:
+            value = menu.next_value(steps)
+            if value == menu.get(item.attr):
                 return
+            if item.attr == "strategy":  # kept only if the engine accepts it
+                self.spawn(self.set_strategy(value))
+                return
+            if item.attr == "exposure.awb" and value == "Locked":
+                if not e.lock_awb(self.stats.get("colour_gains")):
+                    self.show_message("Pas de mesure de balance des blancs", warning=True)
+                    return
+            else:
+                menu.set(item.attr, value)
+            if item.attr == "lens":
+                s.aperture = None  # it belonged to the previous lens
+            if item.attr == "drive":
+                self.drive.stop()  # the sequence of the previous mode
+        if item.attr == "preset":
+            self.spawn(self.apply_exposure())  # its exposure shift
+        if item.attr == "lens_shading":
+            self.show_message("Correction de l'ombrage" if s.lens_shading else "Sans correction de l'ombrage")
+        if item.push == "exposure":
+            self.spawn(self.apply_exposure())
+        elif item.push == "look":
+            self.spawn(self.apply_look())
+        elif item.push == "picture":
+            self.spawn(self.apply_picture())
+        elif item.push == "config":
+            self.spawn(self.apply_still_config())
+        elif item.push == "focus":
+            self.spawn(self.apply_focus_aids())
+        self.save_soon()
+
+    async def capture(self, quiet=False):
+        """One photo: its capture id, or None (why in self.capture_error). quiet: no
+        "busy" message (a sequence waits for the engine)."""
+        async with self._capture_lock:  # two quick presses must not get the same name
+            self.capture_error = None
+            if not self.engine.connected:
+                self.capture_error = "unavailable"
+                self.show_message("Moteur indisponible", warning=True)
+                return None
             base, folder, number = self.storage.next_photo()
+            s, preset = self.settings, self.preset()
+            extra = {"base_jpeg": Storage.base_copy(base)} if s.keep_base and "jpeg" in s.formats else {}
             try:
                 reply = await self.engine.call(
                     "capture",
                     path=base,
-                    formats=self.settings.formats,
-                    dng_compression=self.settings.dng_compression,
-                    quality=self.settings.jpeg_quality,
-                    exif=lenses.lens_exif(self.lens(), self.settings.aperture),
+                    formats=s.formats,
+                    dng_compression=s.dng_compression,
+                    quality=s.jpeg_quality,
+                    exif=lenses.lens_exif(self.lens(), s.aperture) + [f"IFD0.Software=pycam, {preset.name}"],
+                    **extra,
                 )
             except EngineError as e:
+                self.capture_error = e.code
                 if e.code != "busy":
                     log.error("capture refused: %s", e)
-                self.show_message("Occupé…" if e.code == "busy" else "Déclenchement refusé", warning=True)
-                return
+                    self.show_message("Déclenchement refusé", warning=True)
+                elif not quiet:
+                    self.show_message("Occupé…", warning=True)
+                return None
             except ConnectionError:
+                self.capture_error = "unavailable"
                 self.show_message("Moteur indisponible", warning=True)
-                return
+                return None
             self.storage.commit(folder, number)
             self.save_now()  # never give the same number twice, even after a crash
             self.writing += 1
             self.loupe = 1  # the engine leaves the loupe to shoot the full frame
             self.last_shot = Shot(reply.get("capture_id"), os.path.basename(base))
             self.show_message(os.path.basename(base))
+            return self.last_shot.capture_id
 
-    async def toggle_strategy(self):
-        new = "zsl" if self.settings.strategy == "switch" else "switch"
+    async def wait_captured(self, capture_id, timeout=None):
+        """Until the engine has taken that photo ("captured"): True, or False if it failed
+        or took too long. The event may have come already."""
+        if capture_id in self._captured:
+            return self._captured[capture_id]
+        future = self._capture_waits.setdefault(capture_id, asyncio.get_running_loop().create_future())
+        if timeout is None:
+            timeout = CAPTURED_TIMEOUT + max(self.measured_shutter(), self.settings.exposure.shutter or 0)
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), timeout)
+        except asyncio.TimeoutError:
+            log.warning("capture %s: not taken after %.0f s", capture_id, timeout)
+            return False
+        finally:
+            self._capture_waits.pop(capture_id, None)
+
+    def _capture_taken(self, capture_id, ok):
+        self._captured[capture_id] = ok
+        while len(self._captured) > 32:
+            self._captured.popitem(last=False)
+        future = self._capture_waits.get(capture_id)
+        if future and not future.done():
+            future.set_result(ok)
+
+    async def set_strategy(self, new):
         try:
             await self.engine.call("configure", strategy=new)
         except (EngineError, ConnectionError) as e:
@@ -447,6 +663,47 @@ class Camera:
         self.show_message("Réactivité (ZSL)" if new == "zsl" else "Fluidité (bascule)")
 
     # --- Measures
+
+    # --- For the web interface (web.py)
+
+    async def snapshot(self, path, timeout=3.0):
+        """The next viewfinder frame shown, as a JPEG at `path` (aids and look included, no
+        HUD); False if the engine could not (no screen: it is taken on the way to it)."""
+        future = self._snapshots.get(path)
+        if future is None:
+            future = self._snapshots[path] = asyncio.get_running_loop().create_future()
+            try:
+                await self.engine.call("snapshot", path=path)
+            except (EngineError, ConnectionError):
+                self._snapshots.pop(path, None)
+                return False
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), timeout)
+        except asyncio.TimeoutError:
+            self._snapshots.pop(path, None)
+            return False
+
+    def set_preset(self, preset_id):
+        """As if chosen in the menu; False if there is no such preset."""
+        if preset_id not in looks.registry():
+            return False
+        self.settings.preset = preset_id
+        self.spawn(self.apply_exposure())  # its exposure shift, its film balance
+        self.spawn(self.apply_look())
+        self.save_soon()
+        self.redraw()
+        return True
+
+    def set_grain(self, on):
+        self.settings.grain = bool(on)
+        self.spawn(self.apply_look())
+        self.save_soon()
+        self.redraw()
+
+    def preset(self):
+        """The chosen preset; the default one if it is gone (a deleted folder)."""
+        presets = looks.registry()
+        return presets.get(self.settings.preset) or presets.get(looks.DEFAULT) or next(iter(presets.values()))
 
     def lens(self):
         """The chosen lens profile, or None."""
@@ -465,6 +722,22 @@ class Camera:
         s, e = self.settings, self.settings.exposure
         text, warning, until = self._message
         message = text if time.monotonic() < until else ""
+        if self.playback:
+            p, shown = self.playback, self._shown
+            if not shown or shown.path != p.current:  # being decoded
+                return HudView(display=s.display, review=p.current, playback=p.position, message=message, warning=warning)
+            return HudView(
+                display=s.display,
+                review=shown.path,
+                review_info=shown.info,
+                playback=p.position,
+                loupe=self.playback_zoom(),
+                loupe_center=p.center,
+                loupe_label=f"{PIXEL_SCALES[p.scale] * 100:g} %" if p.scale else "",
+                **self._histograms(shown.histogram, shown.histogram_rgb, live=False),
+                message=message,
+                warning=warning,
+            )
         if self.review:
             # Nothing live in it: it is drawn once, not at every stats event.
             r = self.review
@@ -472,7 +745,7 @@ class Camera:
                 display=s.display,
                 review=r.path,
                 review_info=r.info,
-                **self._histograms(r.histogram, r.histogram_rgb),
+                **self._histograms(r.histogram, r.histogram_rgb, live=False),
                 message=message,
                 warning=warning,
             )
@@ -482,11 +755,12 @@ class Camera:
         # cannot reach its aim (out of range), as a warning.
         meter_value, meter_warning = None, False
         stops = meter.offset(s.meter_k, self.stats)
+        bias = self.preset().exposure_bias  # the preset wants this much: that is the aim
         if stops is not None:
             if e.mode == "M":
-                meter_value = meter.to_thirds(stops)
-            elif abs(stops - e.ev) >= 2 / 3:
-                meter_value, meter_warning = meter.to_thirds(stops - e.ev), True
+                meter_value = meter.to_thirds(stops - bias)
+            elif abs(stops - e.ev - bias) >= 2 / 3:
+                meter_value, meter_warning = meter.to_thirds(stops - e.ev - bias), True
         return HudView(
             display=s.display,
             grid=s.grid and self.loupe == 1,  # the rule of thirds means nothing in the loupe
@@ -499,28 +773,44 @@ class Camera:
             ev=exp.format_ev(e.ev) if e.mode != "M" else "",
             meter=meter_value,
             meter_warning=meter_warning,
-            awb=e.awb_label(),
+            awb=e.awb_label(self.preset().white_balance),
             formats="RAW+JPEG" if "dng" in s.formats else "JPEG",
             lens=lenses.format_lens(self.lens(), s.aperture),
-            shots=self.storage.shots_remaining(s.formats, s.dng_compression),
+            shots=self.storage.shots_remaining(s.formats, s.dng_compression, s.keep_base),
+            look=self.preset().short,
             zsl=s.strategy == "zsl",
             peaking=s.peaking_color if s.peaking else "",
             zebra=s.zebra,
             loupe=self.loupe,
             loupe_center=self.loupe_center,
-            menu=self.menu.rows() if self.menu else (),
+            menu=self.menu.rows(self.stats) if self.menu else (),
+            menu_title=self.menu.title if self.menu else "",
             menu_index=self.menu.index if self.menu else 0,
             writing=self.writing,
+            drive=self.drive.status if self.drive.active else drives.short_label(s),
+            drive_running=self.drive.active,
+            countdown=self.drive.countdown,
             **self._histograms(self.stats.get("histogram", ()), self.stats.get("histogram_rgb", ())),
             message=message,
             warning=warning,
         )
 
-    def _histograms(self, luma, rgb):
-        """The one histogram the HUD draws: in the detailed display, RGB when chosen and known."""
+    def _histograms(self, luma, rgb, live=True):
+        """The one histogram the HUD draws: in the detailed display, RGB when chosen and known.
+        Live, the engine measures the base: it is corrected with the look's curves of the
+        greys, to show roughly what the JPEG will be (the review measures the JPEG itself)."""
         if self.settings.display != "detailed":
             return {}
+        curves = self._look.curves if live and self._look else None
+        if curves and luma:
+            luma = looks.remap_histogram(luma, curves["luma"])
         if self.settings.histogram == "rgb" and len(rgb) == 3:
+            if curves:
+                rgb = (
+                    [luma] * 3
+                    if self._look.monochrome
+                    else [looks.remap_histogram(c, curves[name]) for c, name in zip(rgb, ("red", "green", "blue"))]
+                )
             return {"histogram_rgb": tuple(tuple(c) for c in rgb)}
         return {"histogram": tuple(luma)}
 

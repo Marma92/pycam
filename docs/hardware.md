@@ -57,8 +57,8 @@ Comme il n'y a pas de tactile, les commandes doivent couvrir trois choses : **le
 | # | Commande | Composant possible | Rôle principal |
 |---|---|---|---|
 | 1 | **Déclencheur 2 crans** | Interrupteur deux étages type ALPS SPPH4 | Mi-course : mémorisation AE / sortie de menu ou de loupe. Fond : déclenchement. |
-| 2 | **Molette avant** (avec appui) | Encodeur EC11 ou Bourns PEC11R | Vitesse (S/M) ou correction d'exposition (P/A). En menu : changer la valeur. |
-| 3 | **Molette arrière** (avec appui) | Encodeur EC11 ou PEC11R | ISO (A/M). En menu : faire défiler. En lecture : image suivante/précédente. |
+| 2 | **Molette avant** (avec appui) | Encodeur EC11 ou Bourns PEC11R | Vitesse (S/M) ou correction d'exposition (P/A). Appui : vitesse auto ⇄ manuelle. En menu : changer la valeur. |
+| 3 | **Molette arrière** (avec appui) | Encodeur EC11 ou PEC11R | ISO (A/M) ou correction d'exposition (P/S). Appui : ISO auto ⇄ manuel. En menu : faire défiler. En lecture : image suivante/précédente. |
 | 4 | **Joystick 5 directions** | Commutateur de navigation 5 voies (type ALPS SKRH) | Menus : naviguer, valider (appui central). Visée : déplacer la loupe ou le point de mesure spot. |
 | 5 | **Q** (menu rapide) | Bouton tactile | Grille des ~12 réglages les plus utilisés ; on navigue au joystick et on change la valeur à la molette. |
 | 6 | **MENU** | Bouton tactile | Ouvrir le menu complet / revenir en arrière. |
@@ -114,6 +114,61 @@ L'écran se branche sur un port USB du Pi. Les ports USB du Pi 3B partagent une 
 - **Dissipateur**. Le Pi 3B réduit sa fréquence vers 80 °C, et un boîtier fermé avec la visée continue peut l'y amener : à mesurer avec `vcgencmd measure_temp`. Au repos, on mesure 38,6 °C.
 - **GPS** UART (u-blox) pour le géomarquage, en option.
 - **Boîtier** imprimé en 3D. Les CAO de CinePI V2 peuvent servir d'inspiration, et on prévoit des filetages 1/4″.
+
+## Liste d'achats (chiffrée le 2026-10-12)
+
+Prix relevés chez les fabricants et distributeurs, à l'unité, hors port et TVA : ils changent souvent, **à vérifier au moment de commander**. Fournisseurs pratiques depuis la France : Mouser, Digi-Key, RS (pro, port offert au-delà d'un seuil), Kubii (Raspberry Pi), The Pi Hut (Royaume-Uni : droits de douane), LCSC ou AliExpress (moins cher, plus lent).
+
+| Poste | Référence | Qté | Prix relevé | Remarque |
+|---|---|---|---|---|
+| **Écran** (au choix) | Newhaven **NHD-5.0-HDMI-N-RSXP** (5″, 800×480, IPS, ~1100 cd/m², sans tactile) | 1 | ~128 $ | Le seul lisible en plein soleil trouvé. Vérifier le stock de la version **sans** « -CTU » (tactile). |
+| | ou Waveshare 5″ HDMI LCD (B) ou (H), 800×480 | 1 | 44 à 53 $ | Bien moins cher, mais luminosité non publiée (sans doute ~300–500 cd/m²) : juste en plein soleil. Le tactile s'ignore. |
+| Nappe HDMI plate | Kit « DIY HDMI » Adafruit : nappe 20 cm + 2 adaptateurs (HDMI coudé côté Pi, selon l'écran de l'autre côté) | 1 | ~4 $ la nappe, adaptateurs en plus | Pour replier l'écran dans le boîtier. |
+| **Batterie + horloge** | **PiSugar 3 Plus**, 5000 mAh, RTC, niveau en I2C | 1 | 49,99 $ | Annoncé « 3B/3B+/4B » sur Tindie, mais la page officielle cite 3B+ et 3A+ : **confirmer le Pi 3B** avant d'acheter. Adresses I2C 0x57 et 0x68. |
+| **Molettes** | Bourns **PEC11R-4220F-S0024** (24 crans, avec appui) | 2 | ~2,2 $ | Ou des EC11 génériques (~1 €). Plus deux boutons de molette. |
+| **Joystick 5 voies** | ALPS **SKRHABE010** | 1 | ~2,6 $ (LCSC ~0,8 $) | Composant CMS 7×7 mm : le prendre **sur une petite carte de connexion**, ou prévoir un adaptateur. |
+| **Déclencheur 2 crans** | ALPS **SPPH410200** (momentané) | 1 | non trouvé en stock | Introuvable chez les distributeurs consultés : boutique d'ALPS, ou un **poussoir simple** pour le premier prototype (la mi-course n'est pas encore utilisée). |
+| Boutons | Poussoirs tactiles 6×6 mm (type Omron B3F) | 8 | ~0,3 $ | Q, MENU, LECTURE, DISP, LOUPE, Fn1, Fn2, un de rechange. |
+| **Centrale inertielle** | Adafruit **LSM6DSOX** (STEMMA QT / Qwiic), réf. 4438 | 1 | 11,95 $ | Adresse 0x6A : pas de conflit avec le PiSugar. Plus un câble STEMMA QT vers broches (~1 $). |
+| Divers | Plaque à pastilles, fils, connecteurs JST, dissipateur pour le Pi | — | ~10 $ | Prototype avant le boîtier imprimé. |
+
+**Budget** : ~225 $ avec l'écran Newhaven, ~145 $ avec un Waveshare, hors port, TVA et boîtier.
+
+Sources : [Newhaven chez Mouser](https://www.mouser.com/ProductDetail/Newhaven-Display/NHD-5.0-HDMI-N-RSXP-CTU?qs=IPgv5n7u5QbxjiYXvPRX3A%3D%3D), [chez Digi-Key](https://www.digikey.com/en/products/detail/newhaven-display-intl/NHD-5-0-HDMI-N-RSXP-CTU/16704913), [Waveshare 5″ (H)](https://www.waveshare.com/5inch-hdmi-lcd-h.htm), [Waveshare 5″ (B)](https://www.waveshare.com/5inch-hdmi-lcd-b.htm), [PiSugar 3 Plus](https://www.pisugar.com/products/pisugar-3-plus-raspberry-pi-ups), [sur Tindie](https://www.tindie.com/products/pisugar/pisugar-3-plus-battery-for-raspberry-pi-3b3b4b/), [ALPS SKRHABE010 chez Mouser](https://www.mouser.com/ProductDetail/Alps-Alpine/SKRHABE010?qs=seHrhfPpLDxEOwRqoDvYHw%3D%3D), [chez LCSC](https://lcsc.com/product-detail/5-way-Tactile-Switches_ALPS-Electric_SKRHABE010_ALPS-Electric-SKRHABE010_C139794.html), [ALPS SPPH4](https://tech.alpsalpine.com/prod/e/html/switch/push/spph4/spph4_list.html), [Bourns PEC11R chez RS](https://fr.rs-online.com/web/p/encodeurs-rotatifs-mecaniques/1674660), [Adafruit LSM6DSOX](https://www.adafruit.com/products/4438), [nappe HDMI Adafruit](https://www.jameco.com/z/3561-Adafruit-Industries-Diy-USB-or-HDMI-Cable-Parts-20-cm-Ribbon-Cable_2514111.html).
+
+## Câblage : du bouton à la touche
+
+Chaque bouton est déclaré dans `/boot/firmware/config.txt` avec l'overlay `gpio-key`, qui lui fait produire **le code de la touche que l'application connaît déjà** (`app/pycam/inputs.py`) : rien d'autre à changer pour les boutons. Les molettes passent par l'overlay `rotary-encoder`, en axes relatifs, que l'application lit aussi.
+
+```ini
+# Boutons : active_low=1 (le bouton relie à la masse), gpio_pull=2 (tirage interne vers le haut)
+dtoverlay=gpio-key,gpio=6,keycode=57,label="declencheur",active_low=1,gpio_pull=2
+dtoverlay=gpio-key,gpio=4,keycode=15,label="q",active_low=1,gpio_pull=2
+dtoverlay=gpio-key,gpio=20,keycode=1,label="menu",active_low=1,gpio_pull=2
+dtoverlay=gpio-key,gpio=21,keycode=25,label="lecture",active_low=1,gpio_pull=2
+dtoverlay=gpio-key,gpio=18,keycode=32,label="disp",active_low=1,gpio_pull=2
+dtoverlay=gpio-key,gpio=7,keycode=38,label="loupe",active_low=1,gpio_pull=2
+dtoverlay=gpio-key,gpio=8,keycode=2,label="fn1",active_low=1,gpio_pull=2
+dtoverlay=gpio-key,gpio=9,keycode=3,label="fn2",active_low=1,gpio_pull=2
+dtoverlay=gpio-key,gpio=22,keycode=31,label="appui-avant",active_low=1,gpio_pull=2
+dtoverlay=gpio-key,gpio=25,keycode=23,label="appui-arriere",active_low=1,gpio_pull=2
+# Molettes : un axe relatif chacune (0 : REL_X, avant ; 1 : REL_Y, arrière)
+dtoverlay=rotary-encoder,pin_a=17,pin_b=27,relative_axis=1,linux_axis=0,steps-per-period=4
+dtoverlay=rotary-encoder,pin_a=23,pin_b=24,relative_axis=1,linux_axis=1,steps-per-period=4
+```
+
+| Commande | GPIO | Code de touche | Action dans l'application |
+|---|---|---|---|
+| Déclencheur (fond) | 6 | 57 `KEY_SPACE` | déclencher |
+| Q / MENU / LECTURE | 4 / 20 / 21 | 15 `KEY_TAB` / 1 `KEY_ESC` / 25 `KEY_P` | menus, lecture |
+| DISP / LOUPE | 18 / 7 | 32 `KEY_D` / 38 `KEY_L` | affichage, loupe |
+| Fn1 / Fn2 | 8 / 9 | 2 `KEY_1` / 3 `KEY_2` | fonctions attribuées |
+| Appui molette avant / arrière | 22 / 25 | 31 `KEY_S` / 23 `KEY_I` | vitesse / ISO auto ⇄ manuel |
+| Molette avant / arrière | 17-27 / 23-24 | axe `REL_X` / `REL_Y` | comme ← → / ↑ ↓ |
+
+- **Le joystick** et **la mi-course** du déclencheur (GPIO 12, 13, 16, 19, 26 et 5) seront branchés plus tard : l'application ne s'en sert pas encore. Le joystick produira les codes du pavé numérique (8, 2, 4, 6 et 5), pour ne pas se confondre avec les molettes.
+- **À vérifier au montage** : le sens de chaque molette (inverser `pin_a` et `pin_b` au besoin) et `steps-per-period`, selon l'encodeur (un cran = un pas).
+- Un clavier USB branché en même temps continue de fonctionner, ce qui aide pendant le montage.
 
 ## Plan de brochage GPIO (brouillon)
 

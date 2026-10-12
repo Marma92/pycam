@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pycam</title>
+<style>
+  :root {
+    --bg: #111214; --panel: #1c1d21; --line: #2c2e33; --text: #e9e9ec; --muted: #9a9ca3;
+    --accent: #ffbe3c; --danger: #ff5a46; --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 12px;
+           padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: .5px; }
+  nav { display: flex; gap: 4px; margin-left: auto; }
+  nav button { background: none; border: 0; color: var(--muted); padding: 8px 10px; border-radius: 8px; font: inherit; cursor: pointer; }
+  nav button.on { color: var(--text); background: var(--panel); }
+  main { max-width: 960px; margin: 0 auto; padding: 16px; }
+  section { display: none; } section.on { display: block; }
+  .panel { background: var(--panel); border-radius: var(--radius); padding: 14px; margin-bottom: 14px; }
+  #viewfinder { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #000; border-radius: var(--radius); display: block; }
+  .status { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 12px 2px; color: var(--muted); }
+  .status b { color: var(--text); font-weight: 600; }
+  #shutter { display: block; width: 100%; padding: 16px; border: 0; border-radius: var(--radius);
+             background: var(--accent); color: #111; font: 600 18px system-ui, sans-serif; cursor: pointer; }
+  #shutter:active { transform: scale(.99); }
+  label { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; }
+  select, input[type=file] { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; max-width: 60%; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .grid figure { margin: 0; cursor: pointer; }
+  .grid img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; background: #000; display: block; }
+  .grid figcaption { font-size: 12px; color: var(--muted); padding: 3px 2px; }
+  .muted { color: var(--muted); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font: inherit; cursor: pointer; text-decoration: none; }
+  .btn.danger { color: var(--danger); border-color: var(--danger); }
+  .preset { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .preset:last-child { border-bottom: 0; }
+  .badge { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; margin-left: 6px; }
+  #viewer { position: fixed; inset: 0; z-index: 5; background: rgba(0, 0, 0, .94); display: none; flex-direction: column; padding: 12px; }
+  #viewer.on { display: flex; }
+  #viewer img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
+  #viewer .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 10px; }
+  #viewer .bar span { margin-right: auto; }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line);
+           padding: 10px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 9; }
+  #toast.on { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>pycam</h1>
+  <nav>
+    <button data-tab="shoot" class="on">Visée</button>
+    <button data-tab="photos">Photos</button>
+    <button data-tab="presets">Presets</button>
+  </nav>
+</header>
+<main>
+  <section id="shoot" class="on">
+    <img id="viewfinder" alt="Visée">
+    <div class="status" id="status">Connexion…</div>
+    <button id="shutter">Déclencher</button>
+    <div class="panel" style="margin-top:14px">
+      <label>Simulation <select id="preset"></select></label>
+      <label>Simuler le grain <select id="grain"><option value="1">Oui</option><option value="0">Non</option></select></label>
+    </div>
+  </section>
+
+  <section id="photos">
+    <p class="muted" id="photos-count"></p>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <section id="presets">
+    <div class="panel" id="preset-list"></div>
+    <div class="panel">
+      <p style="margin-top:0">Ajouter un preset : un <b>.zip</b> de son dossier, ou ses fichiers (<b>preset.toml</b> et sa LUT .cube ou .png). Il apparaît aussitôt dans les menus de l'appareil.</p>
+      <div class="row"><input type="file" id="upload" multiple accept=".zip,.toml,.cube,.png"><button class="btn" id="send">Installer</button></div>
+    </div>
+  </section>
+</main>
+
+<div id="viewer">
+  <img id="viewer-img" alt="">
+  <div class="bar">
+    <span id="viewer-info"></span>
+    <a class="btn" id="dl-jpg">JPEG</a>
+    <a class="btn" id="dl-dng">DNG</a>
+    <button class="btn danger" id="delete">Supprimer</button>
+    <button class="btn" id="close">Fermer</button>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+// Preset names and descriptions come from files anyone can write: never as HTML.
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+let tab = "shoot", photos = [], current = null;
+
+function toast(text) {
+  const t = $("toast"); t.textContent = text; t.classList.add("on");
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.classList.remove("on"), 2500);
+}
+
+async function api(path, options = {}) {
+  const r = await fetch(path, options);
+  if (!r.ok) throw new Error(await r.text() || r.statusText);
+  return r.headers.get("content-type")?.includes("json") ? r.json() : r;
+}
+const post = (path, body) => api(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+
+document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
+  tab = b.dataset.tab;
+  document.querySelectorAll("nav button").forEach((x) => x.classList.toggle("on", x === b));
+  document.querySelectorAll("section").forEach((s) => s.classList.toggle("on", s.id === tab));
+  if (tab === "photos") loadPhotos();
+  if (tab === "presets") loadPresets();
+});
+
+// --- Viewfinder and state
+
+let running = false;  // a drive sequence: the state is followed every second
+
+async function refreshState() {
+  try {
+    const s = await api("/api/state");
+    running = s.drive_running;
+    const parts = [["Mode", s.mode], ["Vitesse", s.shutter], ["", s.iso], ["Correction", s.ev || "—"], ["Balance", s.awb],
+                   ["Format", s.formats], ["Vues restantes", s.shots]];
+    if (s.writing) parts.push(["Écriture", s.writing]);
+    if (s.drive) parts.unshift(["", s.countdown ? `${s.drive} · ${s.countdown}` : s.drive]);
+    $("shutter").textContent = s.drive_running ? "Arrêter la séquence" : "Déclencher";
+    $("status").innerHTML = (s.connected ? "" : "<b>Moteur indisponible</b> ") +
+      parts.map(([k, v]) => `<span>${k ? k + " " : ""}<b>${esc(v)}</b></span>`).join("");
+    const select = $("preset");
+    if (select.options.length !== s.presets.length) {
+      select.innerHTML = s.presets.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+    }
+    if (document.activeElement !== select) select.value = s.preset;
+    $("grain").value = s.grain ? "1" : "0";
+    $("grain").options[0].textContent = `Oui · ${s.grain_label}`;
+  } catch (e) { $("status").textContent = "Appareil injoignable."; }
+}
+
+function refreshViewfinder() {
+  if (tab !== "shoot" || document.hidden) return setTimeout(refreshViewfinder, 1000);
+  const img = new Image();
+  const next = () => setTimeout(refreshViewfinder, 700);
+  img.onload = () => { $("viewfinder").src = img.src; next(); };
+  img.onerror = next;
+  img.src = "/api/preview.jpg?t=" + Date.now();
+}
+
+$("shutter").onclick = async () => {
+  try { await post("/api/shutter", {}); toast("Déclenché"); setTimeout(refreshState, 300); }
+  catch (e) { toast(e.message); }
+};
+$("preset").onchange = async (e) => {
+  try { await post("/api/preset", {id: e.target.value}); toast("Simulation : " + e.target.selectedOptions[0].textContent); refreshState(); }
+  catch (err) { toast(err.message); }
+};
+$("grain").onchange = async (e) => { await post("/api/grain", {on: e.target.value === "1"}); refreshState(); };
+
+// --- Photos
+
+async function loadPhotos() {
+  photos = await api("/api/photos");
+  $("photos-count").textContent = photos.length ? `${photos.length} photo${photos.length > 1 ? "s" : ""}, la plus récente d'abord.` : "Aucune photo sur la carte.";
+  $("grid").innerHTML = photos.map((p, i) =>
+    `<figure data-i="${i}"><img loading="lazy" src="/api/thumb/${p.folder}/${p.name}.JPG" alt="${p.name}">` +
+    `<figcaption>${p.name}${p.dng ? " · DNG" : ""}</figcaption></figure>`).join("");
+  $("grid").querySelectorAll("figure").forEach((f) => f.onclick = () => openPhoto(photos[+f.dataset.i]));
+}
+
+async function openPhoto(p) {
+  current = p;
+  const base = `/api/photo/${p.folder}/${p.name}`;
+  $("viewer-img").src = base + ".JPG";
+  $("viewer-info").textContent = p.name;
+  $("dl-jpg").href = base + ".JPG?download=1";
+  $("dl-dng").href = base + ".DNG?download=1";
+  $("dl-dng").style.display = p.dng ? "" : "none";
+  $("viewer").classList.add("on");
+  try { $("viewer-info").textContent = (await api(base + ".JPG?info=1")).info; } catch (e) {}
+}
+$("close").onclick = () => $("viewer").classList.remove("on");
+$("delete").onclick = async () => {
+  if (!current || !confirm(`Supprimer ${current.name} (JPEG${current.dng ? ", DNG" : ""}) ? C'est définitif.`)) return;
+  try {
+    await api(`/api/photo/${current.folder}/${current.name}.JPG`, {method: "DELETE"});
+    $("viewer").classList.remove("on"); toast(current.name + " supprimée"); loadPhotos();
+  } catch (e) { toast(e.message); }
+};
+
+// --- Presets
+
+async function loadPresets() {
+  const list = await api("/api/presets");
+  $("preset-list").innerHTML = list.map((p) =>
+    `<div class="preset"><div><b>${esc(p.name)}</b><span class="badge">${esc(p.short)}</span>` +
+    (p.builtin ? '<span class="badge">intégré</span>' : "") +
+    `<div class="muted">${esc(p.description)}</div><div class="muted">Grain ${esc(p.grain)}` +
+    (p.white_balance ? ` · balance ${p.white_balance} K` : "") + `</div></div>` +
+    (p.builtin ? "" : `<button class="btn danger" data-id="${esc(p.id)}">Supprimer</button>`) + `</div>`).join("");
+  $("preset-list").querySelectorAll("button[data-id]").forEach((b) => b.onclick = async () => {
+    if (!confirm("Supprimer ce preset de l'appareil ?")) return;
+    try { await api("/api/presets/" + b.dataset.id, {method: "DELETE"}); toast("Preset supprimé"); loadPresets(); }
+    catch (e) { toast(e.message); }
+  });
+}
+$("send").onclick = async () => {
+  const files = $("upload").files;
+  if (!files.length) return toast("Choisir un .zip ou les fichiers du preset.");
+  const form = new FormData();
+  for (const f of files) form.append("file", f, f.name);
+  try {
+    const r = await api("/api/presets", {method: "POST", body: form});
+    toast("Installé : " + r.name); $("upload").value = ""; loadPresets(); refreshState();
+  } catch (e) { toast(e.message); }
+};
+
+async function followState() { await refreshState(); setTimeout(followState, running ? 1000 : 3000); }
+followState(); refreshViewfinder();
+</script>
+</body>
+</html>

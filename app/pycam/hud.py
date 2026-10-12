@@ -57,8 +57,10 @@ class Hud:
         self.font = ImageFont.truetype(FONT, max(11, round(32 * self.s)))
         self.font_bold = ImageFont.truetype(FONT_BOLD, max(12, round(40 * self.s)))
         self.font_message = ImageFont.truetype(FONT_BOLD, max(14, round(52 * self.s)))
+        self.font_countdown = ImageFont.truetype(FONT_BOLD, max(40, round(300 * self.s)))
         self._backgrounds = {}
         self._review = (None, None)  # (path, image fitted to the image area)
+        self._full = (None, None)  # (path, full resolution image), for the playback loupe
 
     def close(self):
         self.shm.close()
@@ -101,8 +103,10 @@ class Hud:
             self._histogram(d, view)
         if view.loupe > 1:  # whatever the display: you must know the image is magnified
             self._loupe(d, view)
+        if view.countdown:  # whatever the display: the self-timer is running
+            self._countdown(d, view.countdown)
         if view.menu:
-            self._menu(d, view.menu, view.menu_index)
+            self._menu(d, view)
         if view.message:
             self._message(d, view.message, view.warning)
         self.shm[:] = img.tobytes()
@@ -112,21 +116,45 @@ class Hud:
         self.shm[:] = self._background(False).tobytes()
 
     def _draw_review(self, view):
-        """The photo just taken, opaque over the viewfinder, with what it was shot at."""
+        """A photo (just taken, or in playback), opaque over the viewfinder, with what it was
+        shot at. In playback, maybe magnified (view.loupe: against the fitted photo)."""
         img = self._background(False).copy()
         path, photo = self._review
         x, y, w, h = self.rect
+        if path == view.review and view.loupe > 1:
+            photo = self._magnified(path, view.loupe, view.loupe_center)
         if path == view.review and photo is not None:
             img.paste(photo, (x + (w - photo.width) // 2, y + (h - photo.height) // 2))
         d = ImageDraw.Draw(img)
-        bar_h = self.px(68)
-        d.rectangle([x, y + h - bar_h, x + w, y + h], fill=BAR)
-        d.text((x + self.px(24), y + h - bar_h // 2), view.review_info, font=self.font_bold, fill=WHITE, anchor="lm")
+        if view.display != "clean":
+            bar_h = self.px(68)
+            d.rectangle([x, y + h - bar_h, x + w, y + h], fill=BAR)
+            d.text((x + self.px(24), y + h - bar_h // 2), view.review_info, font=self.font_bold, fill=WHITE, anchor="lm")
+            if view.playback:
+                d.text((x + w - self.px(24), y + h - bar_h // 2), view.playback, font=self.font_bold, fill=AMBER, anchor="rm")
         if view.display == "detailed":
             self._histogram(d, view)
+        if view.loupe > 1:
+            self._loupe(d, view)
         if view.message:
             self._message(d, view.message, view.warning)
         self.shm[:] = img.tobytes()
+
+    def _magnified(self, path, zoom, center):
+        """The part of the photo shown at `zoom` times the fitted size, around `center`. The
+        full resolution photo is decoded once (~1 s for 12 MP), then only cropped."""
+        if self._full[0] != path:
+            with Image.open(path) as im:
+                self._full = (path, im.convert("RGB"))
+        full = self._full[1]
+        x, y, w, h = self.rect
+        scale = min(w / full.width, h / full.height) * zoom  # screen pixels per photo pixel
+        cw, ch = min(full.width, w / scale), min(full.height, h / scale)
+        left = min(max(center[0] * full.width - cw / 2, 0), full.width - cw)
+        top = min(max(center[1] * full.height - ch / 2, 0), full.height - ch)
+        crop = full.crop((round(left), round(top), round(left + cw), round(top + ch)))
+        # Beyond 100 %, the pixels as squares: that is what one looks for.
+        return crop.resize((round(cw * scale), round(ch * scale)), Image.NEAREST if scale > 1 else Image.BILINEAR)
 
     def _background(self, grid):
         """Black margins, transparent image, maybe the rule of thirds: drawn once, then copied."""
@@ -173,6 +201,8 @@ class Hud:
             text(view.ev, self.font, WHITE)
         text(view.awb, self.font, WHITE)
         text(view.formats, self.font, WHITE)
+        if view.look:
+            text(view.look, self.font_bold, WHITE)
         if view.lens:
             text(view.lens, self.font, WHITE)
 
@@ -226,7 +256,8 @@ class Hud:
         return width
 
     def _status(self, d, view):
-        """Top left: what is switched on (ZSL, peaking, zebras) and the photos being written."""
+        """Top left: the drive mode (amber while its sequence runs), what is switched on (ZSL,
+        peaking, zebras) and the photos being written."""
         x, y, w, h = self.rect
         cx, cy = x + self.px(24), y + self.px(24)
         badge_h = self.font.size + self.px(14)
@@ -238,6 +269,8 @@ class Hud:
             d.text((cx + self.px(10), cy + self.px(5)), label, font=self.font, fill=colour)
             cx += tw + self.px(32)
 
+        if view.drive:
+            badge(view.drive, AMBER if view.drive_running else WHITE)
         if view.zsl:
             badge("ZSL", AMBER)
         if view.peaking:
@@ -289,20 +322,44 @@ class Hud:
         lx = mx + min(max(cx * mw - lw / 2, 0), mw - lw)
         ly = my + min(max(cy * mh - lh / 2, 0), mh - lh)
         d.rectangle([lx, ly, lx + lw, ly + lh], fill=AMBER)
-        d.text((mx - self.px(16), my + mh / 2), f"×{view.loupe:g}", font=self.font_bold, fill=AMBER, anchor="rm")
+        label = view.loupe_label or f"×{view.loupe:g}"
+        d.text((mx - self.px(16), my + mh / 2), label, font=self.font_bold, fill=AMBER, anchor="rm")
 
-    def _menu(self, d, rows, index):
-        """The quick menu, over the left part of the image; the chosen line in amber."""
+    def _menu(self, d, view):
+        """A menu, over the left part of the image; the chosen line in amber, section titles
+        in blue. A long menu scrolls to keep the chosen line in view."""
+        rows, index = view.menu, view.menu_index
         x, y, w, h = self.rect
         row_h = self.px(58)
-        width = self.px(720)
-        px, py = x + self.px(40), y + self.px(40)
         title_h = self.px(64)
-        height = title_h + row_h * len(rows) + self.px(16)
+        px, py = x + self.px(40), y + self.px(40)
+        # Wide enough for the longest line with its arrows, up to the image width.
+        longest = max(
+            d.textlength(label, font=self.font) + (d.textlength(f"◀  {value}  ▶", font=self.font) if value else 0)
+            for label, value in rows
+        )
+        width = min(w - self.px(80), max(self.px(720), round(longest) + self.px(100)))
+        visible = max(3, (h - self.px(40) - self.px(110) - title_h - self.px(16)) // row_h)  # above the info bar
+        first = 0
+        if len(rows) > visible:
+            first = max(0, min(len(rows) - visible, index - visible // 2))
+        shown_rows = rows[first : first + visible]
+        height = title_h + row_h * len(shown_rows) + self.px(16)
         d.rounded_rectangle([px, py, px + width, py + height], radius=self.px(14), fill=(0, 0, 0, 190))
-        d.text((px + self.px(24), py + title_h // 2), "Réglages rapides", font=self.font_bold, fill=WHITE, anchor="lm")
-        for i, (label, value) in enumerate(rows):
-            ry = py + title_h + i * row_h
+        d.text((px + self.px(24), py + title_h // 2), view.menu_title, font=self.font_bold, fill=WHITE, anchor="lm")
+        if len(rows) > visible:  # where we are in the list
+            track = row_h * visible
+            top = py + title_h
+            bar_x = px + width - self.px(8)
+            d.rectangle([bar_x, top, bar_x + self.px(3), top + track], fill=(80, 80, 80, 230))  # nearly opaque, like the chosen line
+            thumb = track * visible / len(rows)
+            ty = top + track * first / len(rows)
+            d.rectangle([bar_x, ty, bar_x + self.px(3), ty + thumb], fill=WHITE)
+        for i, (label, value) in enumerate(shown_rows, start=first):
+            ry = py + title_h + (i - first) * row_h
+            if value is None:  # section title
+                d.text((px + self.px(24), ry + row_h // 2), label.upper(), font=self.font, fill=AUTO, anchor="lm")
+                continue
             chosen = i == index
             if chosen:
                 d.rounded_rectangle(
@@ -316,6 +373,19 @@ class Hud:
             d.text((px + self.px(28), ry + row_h // 2), label, font=self.font, fill=colour, anchor="lm")
             shown = f"◀  {value}  ▶" if chosen else value
             d.text((px + width - self.px(28), ry + row_h // 2), shown, font=self.font, fill=colour, anchor="rm")
+
+    def _countdown(self, d, seconds):
+        """The self-timer's seconds left, big in the middle, outlined to read on any scene."""
+        x, y, w, h = self.rect
+        d.text(
+            (x + w / 2, y + h / 2),
+            str(seconds),
+            font=self.font_countdown,
+            fill=(255, 255, 255, 230),
+            anchor="mm",
+            stroke_width=self.px(6),
+            stroke_fill=(0, 0, 0, 160),
+        )
 
     def _message(self, d, message, warning):
         x, y, w, h = self.rect

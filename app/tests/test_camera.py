@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 
+from pycam import looks
 from pycam.camera import Camera
 from pycam.engine_client import EngineError
 from pycam.settings import Settings, load_settings
@@ -52,60 +53,158 @@ class FakeHud:
 class CameraTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        # Compiled looks and user presets: in the test folder, not in the home directory.
+        self.env = {k: os.environ.get(k) for k in ("XDG_CACHE_HOME", "XDG_CONFIG_HOME")}
+        os.environ["XDG_CACHE_HOME"] = os.environ["XDG_CONFIG_HOME"] = self.tmp.name
+        looks.refresh()
         self.settings_path = os.path.join(self.tmp.name, "settings.json")
         self.settings = Settings(dcim=os.path.join(self.tmp.name, "DCIM"))
         self.engine = FakeEngine()
         self.camera = Camera(self.settings, self.settings_path, self.engine)
 
     async def asyncTearDown(self):
+        # Looks compile in a thread: let them finish before removing their folder.
+        await asyncio.gather(*self.camera._tasks, return_exceptions=True)
+        for key, value in self.env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        looks.refresh()
         self.tmp.cleanup()
 
     async def settle(self):
         for _ in range(5):
             await asyncio.sleep(0)
 
+    def menu_line(self, label, quick=False):
+        """Opens a menu (unless one is open) and turns the rear dial down to the line `label`."""
+        if not self.camera.menu:
+            self.camera.on_action("q" if quick else "menu")
+        for _ in range(len(self.camera.menu.items)):
+            if self.camera.menu.item.label == label:
+                return
+            self.camera.on_action("rear_dial_minus")
+        self.fail(f"no line {label}")
+
     async def test_sync_pushes_the_whole_state(self):
         await self.camera.sync_engine()
         names = [name for name, _ in self.engine.calls]
-        self.assertEqual(names, ["list_controls", "configure", "set_controls", "set_controls", "focus_aids", "loupe"])
+        self.assertEqual(
+            names, ["list_controls", "configure", "set_controls", "set_controls", "look", "focus_aids", "loupe"]
+        )
         self.assertEqual(self.engine.last("loupe")["zoom"], 1)
         configure = self.engine.last("configure")
-        self.assertEqual((configure["still_denoise"], configure["still_size"]), ("cdn_hq", None))
+        self.assertEqual(
+            (configure["still_denoise"], configure["still_size"], configure["tuning"]), ("cdn_hq", None, "pycam-imx477")
+        )
+        look = self.engine.last("look")
+        self.assertEqual(look["name"], "Standard")
+        self.assertTrue(look["lut"].endswith(".lut") and os.path.exists(look["lut"]))
         self.assertEqual(self.engine.last("set_controls")["controls"]["Contrast"], 1.0)
         exposure = next(p["controls"] for n, p in self.engine.calls if n == "set_controls" and "ExposureValue" in p["controls"])
         self.assertEqual(exposure["AeMeteringMode"], "MeteringCentreWeighted")
         self.assertEqual(self.camera.slowest_shutter, 10)
 
     async def test_quick_menu(self):
-        self.camera.on_action("menu")
-        self.assertTrue(self.camera.view().menu)
-        self.camera.on_action("shutter_faster")  # line 1, metering: spot
+        self.camera.on_action("q")
+        view = self.camera.view()
+        self.assertEqual((view.menu_title, view.menu_index, view.menu[0]), ("Réglages rapides", 0, ("Simulation", "Standard")))
+        self.menu_line("Mesure de la lumière")
+        self.camera.on_action("front_dial_plus")  # spot
         await self.settle()
         self.assertEqual(self.engine.last("set_controls")["controls"]["AeMeteringMode"], "MeteringSpot")
         self.assertEqual(self.camera.view().metering, "spot")
-        self.assertEqual(self.camera.view().menu[0], ("Mesure de la lumière", "Spot"))
-        self.camera.on_action("iso_down")  # sharpness: +1
-        self.camera.on_action("shutter_faster")
+        self.assertEqual(dict(self.camera.view().menu)["Mesure de la lumière"], "Spot")
+        self.menu_line("Netteté")
+        self.camera.on_action("front_dial_plus")
         await self.settle()
         self.assertEqual(self.engine.last("set_controls")["controls"]["Sharpness"], 1.5)
-        self.camera.on_action("iso_down")  # contrast
-        self.camera.on_action("iso_down")  # saturation
+        self.camera.on_action("rear_dial_minus")  # contrast
+        self.camera.on_action("rear_dial_minus")  # saturation
         for _ in range(5):
-            self.camera.on_action("shutter_slower")  # down to black and white, and stays there
-        await self.settle()
-        self.assertEqual(self.engine.last("set_controls")["controls"]["Saturation"], 0.0)
-        self.assertEqual(self.camera.view().menu[3], ("Saturation", "N&B"))
-        self.camera.on_action("iso_down")  # denoise: an engine setting
-        self.camera.on_action("shutter_slower")
-        await self.settle()
-        self.assertEqual(self.engine.last("configure")["still_denoise"], "cdn_fast")
-        self.camera.on_action("iso_up")  # the arrows stay in the menu: exposure untouched
+            self.camera.on_action("front_dial_minus")  # down to black and white, and stays there
+        self.assertEqual(self.settings.saturation, -3)  # compiled into the look
+        self.assertEqual(dict(self.camera.view().menu)["Saturation"], "N&B")
+        self.camera.on_action("rear_dial_minus")  # format
+        self.camera.on_action("rear_dial_minus")  # drive mode
+        self.camera.on_action("front_dial_plus")
+        self.assertEqual(self.settings.drive, "burst")
+        self.camera.on_action("rear_dial_plus")  # the arrows stay in the menu: exposure untouched
         self.assertIsNone(self.settings.exposure.iso)
-        self.camera.on_action("menu")  # closes
+        self.camera.on_action("q")  # closes
         self.assertEqual(self.camera.view().menu, ())
 
-    async def test_shutter_closes_the_menu_and_shoots(self):
+    async def test_denoise_is_an_engine_setting(self):
+        self.menu_line("Réduction du bruit")  # in MENU only
+        self.camera.on_action("front_dial_minus")
+        await self.settle()
+        self.assertEqual(self.engine.last("configure")["still_denoise"], "cdn_fast")
+
+    async def test_full_menu(self):
         self.camera.on_action("menu")
+        view = self.camera.view()
+        self.assertEqual((view.menu_title, view.menu[0]), ("Menu", ("Exposition", None)))
+        self.assertEqual(view.menu_index, 1)  # the first setting, not its section title
+        self.camera.on_action("rear_dial_plus")  # around, to the last line
+        self.assertEqual(self.camera.menu.item.label, "Bouton Fn2")
+        self.camera.on_action("rear_dial_minus")
+        self.assertEqual(self.camera.menu.item.label, "Mesure de la lumière")
+        self.menu_line("Zébras")
+        self.camera.on_action("rear_dial_minus")  # past the "Image" title
+        self.assertEqual(self.camera.menu.item.label, "Netteté")
+        self.camera.on_action("q")  # from the full menu to the quick one
+        self.assertTrue(self.camera.menu.quick)
+        self.camera.on_action("menu")  # closes it
+        self.assertIsNone(self.camera.menu)
+
+    async def test_menu_button_leaves_the_loupe_first(self):
+        self.camera.on_action("loupe")
+        self.camera.on_action("menu")
+        await self.settle()
+        self.assertEqual((self.camera.loupe, self.camera.menu), (1, None))
+        self.camera.on_action("menu")
+        self.assertFalse(self.camera.menu.quick)
+
+    async def test_fn_buttons(self):
+        self.camera.on_action("fn1")  # peaking, by default
+        await self.settle()
+        self.assertTrue(self.engine.last("focus_aids")["peaking"])
+        self.menu_line("Bouton Fn2")
+        self.camera.on_action("front_dial_plus")  # zebras -> lock the white balance
+        self.assertEqual(self.camera.view().menu[-1], ("Bouton Fn2", "Mémoriser la balance"))
+        self.camera.on_action("menu")
+        self.camera.on_event({"event": "stats", "colour_gains": [2.0, 1.5]})
+        self.camera.on_action("fn2")
+        await self.settle()
+        self.assertEqual((self.settings.exposure.awb, self.settings.exposure.wb_gains), ("Locked", [2.0, 1.5]))
+        self.assertEqual(self.engine.last("set_controls")["controls"]["ColourGains"], [2.0, 1.5])
+
+    async def test_white_balance_in_the_menu(self):
+        e = self.settings.exposure
+        self.camera.on_event({"event": "stats", "colour_temp": 4480, "colour_gains": [2.5, 1.6]})
+        self.menu_line("Température", quick=True)
+        self.assertEqual(dict(self.camera.view().menu)["Température"], "≈ 4500 K")  # measured: not in use
+        self.camera.on_action("front_dial_plus")  # from the auto balance: the measured temperature first
+        await self.settle()
+        self.assertEqual((e.awb, e.kelvin), ("Kelvin", 4500))
+        self.assertEqual(self.engine.last("set_controls")["controls"]["ColourTemperature"], 4500)
+        self.camera.on_action("front_dial_plus")
+        self.assertEqual(e.kelvin, 4800)
+        self.camera.on_action("rear_dial_plus")  # the white balance line
+        self.assertEqual(dict(self.camera.view().menu)["Balance des blancs"], "Température")
+        self.camera.on_action("front_dial_plus")  # Kelvin -> Locked: keeps the gains measured now
+        await self.settle()
+        self.assertEqual((e.awb, e.wb_gains), ("Locked", [2.5, 1.6]))
+        self.assertEqual(dict(self.camera.view().menu)["Balance des blancs"], "Mémorisée")
+        self.camera.on_action("front_dial_minus")
+        self.camera.stats = {}
+        self.camera.on_action("front_dial_plus")  # nothing measured: stays where it was
+        self.assertEqual(e.awb, "Kelvin")
+        self.assertIn("Pas de mesure", self.camera.view().message)
+
+    async def test_shutter_closes_the_menu_and_shoots(self):
+        self.camera.on_action("q")
         self.camera.on_action("shutter")
         await self.settle()
         self.assertIsNone(self.camera.menu)
@@ -116,9 +215,12 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertTrue(self.engine.last("focus_aids")["peaking"])
         self.assertEqual(self.camera.view().peaking, "red")
-        self.camera.on_action("peaking_color")
-        self.camera.on_action("peaking_sensitivity")
-        self.camera.on_action("zebra")
+        self.menu_line("Peaking")
+        self.camera.on_action("front_dial_plus")  # red -> yellow
+        self.camera.on_action("rear_dial_minus")  # sensitivity
+        self.camera.on_action("front_dial_plus")  # medium -> high
+        self.camera.on_action("rear_dial_minus")  # zebras
+        self.camera.on_action("front_dial_plus")
         await self.settle()
         sent = self.engine.last("focus_aids")
         self.assertEqual((sent["peaking_color"], sent["peaking_sensitivity"], sent["zebra"]), ("yellow", "high", True))
@@ -127,12 +229,12 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.camera.on_action("loupe")
         await self.settle()
         self.assertEqual(self.engine.last("loupe")["zoom"], 5)
-        self.camera.on_action("shutter_faster")  # right arrow: moves the loupe, not the speed
+        self.camera.on_action("front_dial_plus")  # right arrow: moves the loupe, not the speed
         await self.settle()
         self.assertEqual(self.engine.last("loupe")["center"], [0.6, 0.5])
         self.assertIsNone(self.settings.exposure.shutter)
         for _ in range(10):  # never past the edge of the image
-            self.camera.on_action("shutter_faster")
+            self.camera.on_action("front_dial_plus")
         await self.settle()
         self.assertAlmostEqual(self.engine.last("loupe")["center"][0], 0.9)
         self.camera.on_action("loupe")
@@ -191,7 +293,7 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
     async def test_any_key_ends_the_review_but_the_shutter_still_shoots(self):
         self.camera.hud = FakeHud()
         await self.shoot_and_save()
-        self.camera.on_action("iso_up")
+        self.camera.on_action("rear_dial_plus")
         self.assertIsNone(self.camera.review)
         self.assertIsNone(self.settings.exposure.iso)  # the key only ended the review
         await self.shoot_and_save()
@@ -226,13 +328,15 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
     async def test_lens_and_aperture_go_into_the_exif(self):
         self.camera.on_action("shutter")
         await self.settle()
-        self.assertEqual(self.engine.last("capture")["exif"], [])  # no lens chosen
-        self.camera.on_action("lens")  # first default profile: 6 mm f/1.2
-        self.camera.on_action("lens")  # 16 mm f/1.4
-        self.camera.on_action("aperture")  # f/1.4
-        self.camera.on_action("aperture")  # f/2
-        self.camera.on_action("aperture")  # f/2.8
-        self.camera.on_action("shutter")
+        exif = self.engine.last("capture")["exif"]
+        self.assertEqual(exif, ["IFD0.Software=pycam, Standard"])  # no lens chosen: only the preset
+        self.menu_line("Objectif")
+        self.camera.on_action("front_dial_plus")  # first default profile: 6 mm f/1.2
+        self.camera.on_action("front_dial_plus")  # 16 mm f/1.4
+        self.camera.on_action("rear_dial_minus")  # aperture
+        for _ in range(3):  # f/1.4, f/2, f/2.8
+            self.camera.on_action("front_dial_plus")
+        self.camera.on_action("shutter")  # closes the menu and shoots
         await self.settle()
         exif = self.engine.last("capture")["exif"]
         self.assertIn("EXIF.FocalLength=1600/100", exif)
@@ -240,19 +344,28 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.camera.view().lens, "16 mm f/2.8")
 
     async def test_changing_lens_forgets_the_aperture(self):
-        self.camera.on_action("lens")
-        self.camera.on_action("aperture")
-        self.camera.on_action("lens")
+        self.menu_line("Objectif")
+        self.camera.on_action("front_dial_plus")
+        self.camera.on_action("rear_dial_minus")
+        self.camera.on_action("front_dial_plus")
+        self.assertEqual(self.settings.aperture, 1.2)
+        self.camera.on_action("rear_dial_plus")
+        self.camera.on_action("front_dial_plus")  # another lens
         self.assertIsNone(self.settings.aperture)
-        self.camera.on_action("lens")  # back to no lens
+        self.camera.on_action("front_dial_minus")
+        self.camera.on_action("front_dial_minus")  # back to no lens
         self.assertEqual(self.camera.view().lens, "")
-        self.camera.on_action("aperture")  # refused without a lens
+        self.camera.on_action("rear_dial_minus")
+        self.camera.on_action("front_dial_plus")  # nothing to choose without a lens
         self.assertIsNone(self.settings.aperture)
+        self.assertIn(("Ouverture", "Choisir l'objectif"), self.camera.view().menu)
 
-    async def test_changing_the_peaking_colour_turns_it_on(self):
-        self.camera.on_action("peaking_color")
+    async def test_choosing_a_peaking_colour_turns_it_on(self):
+        self.menu_line("Peaking", quick=True)
+        self.camera.on_action("front_dial_plus")
         await self.settle()
         self.assertTrue(self.engine.last("focus_aids")["peaking"])
+        self.assertEqual(self.engine.last("focus_aids")["peaking_color"], "red")
 
     async def test_hud_set_up_when_the_engine_gets_the_screen_later(self):
         made = []
@@ -266,16 +379,35 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.camera.hud)
         self.assertEqual(len(made), 1)
 
-    async def test_dial_goes_manual_from_the_measure(self):
+    async def test_dials_set_their_value_when_manual_else_the_compensation(self):
         self.camera.on_event({"event": "stats", "exposure_us": 16667, "analogue_gain": 2.0, "digital_gain": 1.0})
-        self.camera.on_action("shutter_faster")
+        self.camera.on_action("front_dial_plus")  # P: the compensation
+        await self.settle()
+        controls = self.engine.last("set_controls")["controls"]
+        self.assertAlmostEqual(controls["ExposureValue"], 1 / 3)
+        self.assertEqual(controls["ExposureTimeMode"], "Auto")
+        self.assertEqual((self.camera.view().mode, self.camera.view().ev), ("P", "+0.3"))
+        self.camera.on_action("shutter_auto")  # the dial press: manual speed, from the measure (1/60)
+        self.camera.on_action("front_dial_plus")  # S: the speed, faster
         await self.settle()
         self.assertEqual(self.engine.last("set_controls")["controls"]["ExposureTime"], 12500)  # 1/80
         self.assertEqual(self.camera.view().mode, "S")
-        self.camera.on_action("iso_up")
+        self.assertAlmostEqual(self.settings.exposure.ev, 1 / 3)  # kept for the automatic ISO
+        self.camera.on_action("rear_dial_plus")  # S: the rear dial is the compensation
+        self.assertAlmostEqual(self.settings.exposure.ev, 2 / 3)
+        self.camera.on_action("iso_auto")  # its press: manual ISO, from the measure (200)
+        self.camera.on_action("rear_dial_plus")  # M: the ISO
         await self.settle()
         self.assertEqual(self.engine.last("set_controls")["controls"]["AnalogueGain"], 2.5)  # ISO 250
         self.assertEqual(self.camera.view().mode, "M")
+        self.camera.on_action("shutter_auto")  # A: the front dial is the compensation again
+        self.camera.on_action("front_dial_minus")
+        self.camera.on_action("front_dial_minus")
+        self.assertEqual((self.camera.view().mode, self.settings.exposure.ev), ("A", 0))
+        self.camera.on_action("iso_auto")  # P: both dials are the compensation
+        self.camera.on_action("rear_dial_minus")
+        self.assertEqual(self.camera.view().mode, "P")
+        self.assertAlmostEqual(self.settings.exposure.ev, -1 / 3)
 
     async def test_captures_are_numbered_and_the_number_is_saved(self):
         self.camera.on_action("shutter")
@@ -304,7 +436,8 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertTrue(self.engine.last("capture")["dng_compression"])
         shots_compressed = self.camera.view().shots
-        self.camera.on_action("dng_compression")
+        self.menu_line("RAW compressé")
+        self.camera.on_action("front_dial_plus")
         self.camera.on_action("shutter")
         await self.settle()
         self.assertFalse(self.engine.last("capture")["dng_compression"])
@@ -320,6 +453,141 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.settings.strategy, "zsl")
         self.assertTrue(self.camera.view().zsl)
+
+    async def look_settled(self):
+        """apply_look compiles in a thread: wait for it."""
+        for _ in range(200):
+            await asyncio.sleep(0.02)
+            if not self.camera._look_lock.locked() and self.engine.calls and self.engine.calls[-1][0] == "look":
+                return self.engine.last("look")
+        self.fail("no look sent")
+
+    async def test_preset_from_the_menu(self):
+        self.menu_line("Simulation", quick=True)
+        self.camera.on_action("front_dial_plus")  # Standard -> Base (neutre)
+        look = await self.look_settled()
+        self.assertEqual((look["name"], look["lut"]), ("Base (neutre)", None))  # nothing to apply
+        self.assertEqual(self.camera.view().look, "BASE")
+        self.camera.on_action("front_dial_minus")
+        look = await self.look_settled()
+        self.assertEqual(look["name"], "Standard")
+        self.assertIsNotNone(look["lut"])
+
+    async def test_user_preset_with_exposure_bias(self):
+        folder = os.path.join(self.tmp.name, "pycam", "presets", "dense")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "preset.toml"), "w", encoding="utf-8") as f:
+            f.write('format = 1\nname = "Dense"\n[shooting]\nexposure_bias = -0.7\n[grain]\namount = 0.2\n')
+        self.camera.on_action("q")  # opening a menu looks for new presets
+        self.assertEqual(looks.registry()["dense"].name, "Dense")
+        self.settings.preset = "dense"
+        await self.camera.apply_exposure()
+        await self.camera.apply_look()
+        self.assertAlmostEqual(self.engine.last("set_controls")["controls"]["ExposureValue"], -0.7)
+        self.assertEqual(self.engine.last("look")["grain"], 0.2)
+        self.settings.preset = "gone"  # a deleted preset: back to the default one
+        self.assertEqual(self.camera.preset().id, "standard")
+
+    async def test_film_white_balance(self):
+        self.settings.preset = "cinema-800t"
+        self.menu_line("Balance des blancs", quick=True)
+        self.camera.on_action("front_dial_plus")  # Auto -> Pellicule, next to it
+        await self.settle()
+        self.assertEqual(dict(self.camera.view().menu)["Balance des blancs"], "Pellicule")
+        controls = self.engine.last("set_controls")["controls"]
+        self.assertEqual((controls["AwbEnable"], controls["ColourTemperature"]), (False, 3200))
+        self.assertEqual(self.camera.view().awb, "Film 3200 K")
+        self.settings.preset = "standard"  # no film balance: automatic
+        await self.camera.apply_exposure()
+        self.assertTrue(self.engine.last("set_controls")["controls"]["AwbEnable"])
+
+    async def test_grain_can_be_switched_off(self):
+        self.settings.preset = "portrait-400"
+        await self.camera.apply_look()
+        look = self.engine.last("look")
+        self.assertGreater(look["grain"], 0)
+        self.assertGreater(look["grain_colour"], 0)  # a colour film
+        self.menu_line("Simuler le grain", quick=True)
+        self.assertEqual(dict(self.camera.view().menu)["Simuler le grain"], "Oui · fin")
+        self.camera.on_action("front_dial_minus")
+        look = await self.look_settled()
+        self.assertEqual(look["grain"], 0)  # the look stays, without its grain
+        self.assertEqual(look["name"], "Portrait 400")
+
+    async def test_keep_base_writes_a_neutral_jpeg(self):
+        self.settings.keep_base = True
+        self.camera.on_action("shutter")
+        await self.settle()
+        capture = self.engine.last("capture")
+        self.assertEqual(os.path.basename(capture["base_jpeg"]), "PYB_0001")
+        self.assertEqual(os.path.dirname(capture["base_jpeg"]), os.path.dirname(capture["path"]))
+
+    async def test_lens_shading_is_another_tuning(self):
+        self.menu_line("Correction de l'ombrage")
+        self.camera.on_action("front_dial_plus")
+        await self.settle()
+        self.assertEqual(self.engine.last("configure")["tuning"], "pycam-imx477-alsc")
+
+    def photos(self, *numbers):
+        folder = os.path.join(self.settings.dcim, "100PYCAM")
+        os.makedirs(folder, exist_ok=True)
+        for n in numbers:
+            for ext in (".JPG", ".DNG"):
+                open(os.path.join(folder, f"PYC_{n:04d}{ext}"), "w").close()
+        return folder
+
+    async def test_playback_browses_and_deletes(self):
+        self.camera.hud = FakeHud()
+        self.camera.on_action("play")
+        self.assertIsNone(self.camera.playback)  # nothing to show
+        self.assertIn("Aucune photo", self.camera.view().message)
+        folder = self.photos(1, 2, 3)
+        self.camera.on_action("play")
+        await self.settle()
+        view = self.camera.view()
+        self.assertEqual((os.path.basename(view.review), view.playback), ("PYC_0003.JPG", "3/3"))
+        self.camera.on_action("rear_dial_minus")  # the previous one
+        for _ in range(3):
+            await asyncio.sleep(0.02)
+        self.assertEqual(self.camera.view().playback, "2/3")
+        self.assertEqual(self.camera.view().review_info, "PYC_0002")
+        self.camera.on_action("loupe")
+        self.assertEqual(self.camera.view().loupe_label, "100 %")
+        self.camera.on_action("q")  # asks first
+        self.assertTrue(os.path.exists(os.path.join(folder, "PYC_0002.JPG")))
+        self.assertIn("Q pour confirmer", self.camera.view().message)
+        self.camera.on_action("q")
+        self.assertFalse(os.path.exists(os.path.join(folder, "PYC_0002.JPG")))
+        self.assertFalse(os.path.exists(os.path.join(folder, "PYC_0002.DNG")))
+        self.assertEqual(self.camera.view().playback, "2/2")
+
+    async def test_another_key_cancels_the_delete(self):
+        folder = self.photos(1)
+        self.camera.on_action("play")
+        self.camera.on_action("q")
+        self.camera.on_action("disp")
+        self.camera.on_action("q")  # asks again, does not delete
+        self.assertTrue(os.path.exists(os.path.join(folder, "PYC_0001.JPG")))
+
+    async def test_shutter_leaves_playback_and_shoots(self):
+        self.photos(1)
+        self.camera.on_action("play")
+        self.camera.on_action("shutter")
+        await self.settle()
+        self.assertIsNone(self.camera.playback)
+        self.assertEqual(os.path.basename(self.engine.last("capture")["path"]), "PYC_0002")  # 0001 is taken
+
+    async def test_strategy_from_the_menu(self):
+        self.engine.refuse["configure"] = "busy"
+        self.menu_line("Réactivité")  # in MENU only
+        self.camera.on_action("front_dial_plus")
+        await self.settle()
+        self.assertEqual(self.settings.strategy, "switch")
+        del self.engine.refuse["configure"]
+        self.camera.on_action("front_dial_plus")
+        await self.settle()
+        self.assertEqual(self.engine.last("configure")["strategy"], "zsl")
+        self.assertIn(("Réactivité", "ZSL · sans latence"), self.camera.view().menu)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,44 @@
+# Inspiré de la CineStill 800T poussée de deux diaphragmes (docs/presets.md §6).
+# Première version (méthode A), réglée sur les scans de l'auteur à Las Vegas et Los
+# Angeles (10), mesurés le 2026-10-12 : noirs profonds (~0,03), contraste fort, hautes
+# lumières plafonnées (~0,89), couleurs très saturées (0,59) : bleus cyan (~207°), rouges
+# des néons. Le grain fort de la poussée, et la halation (dessinée par le moteur).
+format = 1
+base = "pycam-1"
+name = "Cinéma 800T +2"
+short = "C800+2"
+description = "Cinéma tungstène poussée : néons saturés, ombres canard, grain marqué."
+
+[shooting]
+white_balance = 3200  # tungstène : la balance du film, avec la balance des blancs « Pellicule »
+
+[look]
+tone_curve = [
+    [0.0, 0.0], [0.06, 0.02], [0.2, 0.13], [0.4, 0.33], [0.6, 0.56],
+    [0.8, 0.79], [0.92, 0.88], [1.0, 0.92],
+]
+saturation = 1.25
+split_toning = { shadows = [195, 0.06], highlights = [35, 0.04] }
+
+[look.colours]  # [teinte en degrés, saturation, luminosité]
+red = [0, 1.1, 0.0]
+orange = [0, 1.0, 0.0]
+yellow = [-4, 1.0, 0.0]
+green = [10, 0.9, 0.0]
+aqua = [0, 1.1, 0.0]
+blue = [-12, 1.08, 0.0]
+purple = [0, 1.0, 0.0]
+magenta = [0, 1.05, 0.0]
+
+[halation]  # plus marqué : la poussée fait monter les lumières, le halo avec
+amount = 0.6
+radius = 26  # en pixels de l'image pleine résolution
+threshold = 0.78  # à partir de quel niveau de la base la lumière s'étale
+hue = 10  # la teinte du halo, en degrés (rouge orangé)
+
+[grain]  # marqué : la poussée de deux diaphragmes grossit le grain, surtout dans les ombres
+amount = 0.42
+size = 1.7
+colour = 0.55
+shadows = 0.7
+clumps = 0.4

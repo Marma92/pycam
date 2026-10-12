@@ -52,6 +52,20 @@ Il réécrit l'image du DNG donné, en version non compressée puis compressée,
 
 darktable lit les DNG avec son propre décodeur, rawspeed, plus strict que LibRaw. En cas de changement de format, le vérifier aussi : `sudo apt install darktable` (~40 Mo), puis `darktable-cli photo.DNG photo.jpg --core`.
 
+## Créer un preset
+
+Sur un ordinateur, avec Python 3.11+ et Pillow : `tools/pycam_preset.py` (voir `presets.md` §5). Puis copier le dossier du preset dans `~/.config/pycam/presets/` sur le Pi : il apparaît à la prochaine ouverture d'un menu.
+
+```bash
+scp -r mon-preset ael@192.168.1.165:.config/pycam/presets/
+```
+
+Pour régler un preset avec ce que seul le moteur dessine (grain, vignettage, halation), sur le Pi, avec le moteur compilé :
+
+```bash
+python3 tools/look_apply.py app/pycam/presets/cinema-800t-plus2 photo.jpg essai.png
+```
+
 ## Tests unitaires du moteur
 
 L'analyse d'image (histogrammes YUV → RVB) est testée sur des images synthétiques de couleur connue, sur le Pi après une compilation :
@@ -87,7 +101,7 @@ cd ~/pycam/engine && meson test -C build --print-errorlogs
    cd ~/pycam/app && nohup python3 -m pycam -v > /tmp/pycam-app.log 2>&1 < /dev/null &
    ```
    - Elle prend la main sur les claviers branchés au Pi : voir les touches dans `architecture.md` §5.
-   - Sans clavier, on simule des appuis : `sudo python3 tools/press.py right up space`.
+   - Sans clavier, on simule des appuis : `sudo python3 tools/press.py right up space` ; `space:3` tient la touche 3 s (rafale).
    - Ses réglages sont dans `~/.config/pycam/settings.json`, et les photos dans `~/DCIM/100PYCAM/`.
    - Tests de la logique, sans Pi ni Pillow ni evdev : `cd app && python3 -m unittest discover -s tests -t .`
 6. On rapatrie les images (`scp`) pour les inspecter.

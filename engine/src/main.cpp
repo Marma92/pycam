@@ -7,6 +7,7 @@
 
 #include <csignal>
 #include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -16,7 +17,8 @@
 static void usage()
 {
 	std::cerr << "usage: pycam-engine [--socket PATH] [--zsl] [--viewfinder WxH] [--lores WxH] [--queue N]\n"
-				 "                    [--zsl-buffers N] [--zsl-denoise D] [--still-denoise D] [--no-display] [-v]\n"
+				 "                    [--zsl-buffers N] [--zsl-denoise D] [--still-denoise D]\n"
+				 "                    [--tuning-dir DIR] [--tuning NAME] [--no-display] [-v]\n"
 				 "  --socket PATH     Unix socket to listen on (default /run/pycam/engine.sock)\n"
 				 "  --zsl             zero shutter lag: sensor at full resolution all the time\n"
 				 "  --viewfinder WxH  viewfinder stream size (default 1024x768)\n"
@@ -25,6 +27,9 @@ static void usage()
 				 "  --zsl-buffers N   full resolution buffers in ZSL, ~37 MB of CMA each (default 3)\n"
 				 "  --zsl-denoise D   colour denoise in ZSL: cdn_off, cdn_fast (default), cdn_hq\n"
 				 "  --still-denoise D colour denoise of switch captures (default cdn_hq)\n"
+				 "  --tuning-dir DIR  ISP tuning files (default: ../tuning next to the executable)\n"
+				 "  --tuning NAME     tuning file at startup, without .json (default pycam-imx477);\n"
+				 "                    an empty name: libcamera's own tuning\n"
 				 "  --no-display      do not use the screen, even if there is one\n"
 				 "  -v               more logs (repeat for libcamera logs)\n";
 }
@@ -37,6 +42,13 @@ static bool parse_size(std::string const &s, unsigned &w, unsigned &h)
 int main(int argc, char *argv[])
 {
 	pycam::EngineConfig cfg;
+	{
+		// The repository layout: engine/build/pycam-engine and engine/tuning.
+		std::error_code ec;
+		auto dir = std::filesystem::read_symlink("/proc/self/exe", ec).parent_path().parent_path() / "tuning";
+		if (!ec && std::filesystem::is_directory(dir))
+			cfg.tuning_dir = dir;
+	}
 	for (int i = 1; i < argc; i++)
 	{
 		std::string arg = argv[i];
@@ -70,6 +82,10 @@ int main(int argc, char *argv[])
 				cfg.zsl_denoise = value();
 			else if (arg == "--still-denoise")
 				cfg.still_denoise = value();
+			else if (arg == "--tuning-dir")
+				cfg.tuning_dir = value();
+			else if (arg == "--tuning")
+				cfg.tuning = value();
 			else if (arg == "--no-display")
 				cfg.display = false;
 			else if (arg == "-v")

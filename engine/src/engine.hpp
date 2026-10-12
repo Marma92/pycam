@@ -21,6 +21,7 @@
 #include "display.hpp"
 #include "focus_aids.hpp"
 #include "ipc_server.hpp"
+#include "look.hpp"
 
 namespace pycam
 {
@@ -37,6 +38,10 @@ struct EngineConfig
 	std::string still_denoise = "cdn_hq"; // switch strategy: denoise of the full resolution frame
 	bool display = true; // show the viewfinder on the screen (DRM), if there is one
 	std::string hud_shm = "/pycam-hud"; // shared memory for the HUD, in /dev/shm
+	// ISP tuning: the "pycam base" (engine/tuning, docs/presets.md). An empty folder or
+	// name: libcamera's own tuning for the sensor.
+	std::string tuning_dir;
+	std::string tuning = "pycam-imx477";
 	unsigned verbose = 0;
 };
 
@@ -82,6 +87,7 @@ private:
 		bool compress_dng;
 		int quality;
 		std::vector<std::string> exif;
+		std::string base_jpeg_path;
 		Clock::time_point t_command;
 	};
 
@@ -89,6 +95,11 @@ private:
 	void BeforeShow(CompletedRequestPtr const &request, libcamera::Stream *stream, StreamInfo const &info);
 	void Start(Phase phase);
 	void Restart(Phase phase);
+	void Reopen();
+	void SetTuning();
+	void FindCameraControls();
+	void ReleaseFrames();
+	std::optional<std::array<int64_t, 2>> FrameLimits(Phase phase) const;
 	void OnFrame(CompletedRequestPtr &request);
 	void GrabStill(CompletedRequestPtr &request);
 	void PublishStats(CompletedRequestPtr &request);
@@ -97,6 +108,8 @@ private:
 	json Capture(json const &command, Clock::time_point received);
 	void Configure(json const &command);
 	void Loupe(json const &command);
+	void SetLook(json const &command);
+	json LookState() const;
 	libcamera::ControlList LoupeCrop() const;
 	json LoupeState() const;
 	json State() const;
@@ -104,6 +117,8 @@ private:
 	void PostToCameraLoop(RPiCamApp::MsgType type);
 
 	EngineConfig cfg_;
+	// Before app_: rpicam starts libcamera, which reads the tuning file, as soon as it is built.
+	std::string tuning_; // name of the tuning file in use; empty: libcamera's
 	PycamApp app_;
 	IpcServer ipc_;
 	CaptureWriter writer_;
@@ -111,8 +126,9 @@ private:
 	Clock::time_point next_display_try_ {};
 	bool display_failure_logged_ = false;
 	FocusAids focus_aids_; // drawn into the viewfinder frames, on the display thread
-	std::mutex snapshot_mutex_;
+	std::mutex snapshot_mutex_; // also guards preview_
 	std::string snapshot_path_; // next shown frame to save as JPEG ("snapshot" command)
+	std::shared_ptr<const Preview> preview_; // the look on the viewfinder, roughly; none: the base
 	libcamera::ControlInfoMap const *camera_controls_ = nullptr;
 
 	std::mutex commands_mutex_;
@@ -124,7 +140,9 @@ private:
 	std::optional<std::array<unsigned, 2>> still_size_; // JPEG size; none: the full sensor
 	Phase phase_ = Phase::Viewfinder;
 	std::optional<Phase> next_phase_; // reconfiguration to do once the current frame is released
+	bool reopen_ = false; // the tuning changed: close and reopen the camera
 	std::optional<PendingCapture> pending_;
+	std::shared_ptr<const Look> look_ = std::make_shared<Look>(); // given to each capture
 	uint64_t next_capture_id_ = 1;
 	// Loupe: zoom 1 = off. Above 1, the viewfinder runs the sensor at full resolution and
 	// crops around the centre (a fraction of the image), whatever the capture strategy.

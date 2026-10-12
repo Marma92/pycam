@@ -1,0 +1,25 @@
+# Inspiré du noir et blanc Kodak Tri-X 400 (docs/presets.md §6).
+# Première version (méthode A), réglée sur les scans d'un ami photographe, avec son accord (5), mesurés le
+# 2026-10-12 : noirs profonds (~0,03), tons moyens contrastés (médiane ~0,44), épaule
+# douce (~0,92). Émulsion panchromatique, plus sensible au bleu que l'oeil : les ciels
+# sortent un peu plus clairs, les peaux un peu plus sombres qu'en simple luminance.
+format = 1
+base = "pycam-1"
+name = "Triple-X 400"
+short = "TX400"
+description = "Noir et blanc : contraste franc, noirs profonds, grain présent."
+
+[look]
+monochrome = true
+mixer = [0.26, 0.54, 0.20]
+tone_curve = [
+    [0.0, 0.025], [0.05, 0.05], [0.2, 0.16], [0.4, 0.37], [0.6, 0.60],
+    [0.8, 0.80], [0.92, 0.88], [1.0, 0.93],
+]
+
+[grain]  # marqué et net, en amas : le grain classique de la Tri-X ; neutre (noir et blanc)
+amount = 0.35
+size = 1.4
+colour = 0.0
+shadows = 0.3
+clumps = 0.35
