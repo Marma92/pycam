@@ -91,6 +91,18 @@ def describe_video(path):
     return "   ".join(parts), (stream["width"], stream["height"]), duration
 
 
+def exif_text(value):
+    """An EXIF text as written: the engine writes UTF-8 in ASCII fields, which Pillow reads
+    as Latin-1 ("CinÃ©ma 800T")."""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", "replace")
+    value = str(value).replace("\x00", "").strip()
+    try:
+        return value.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
+
+
 def describe(path):
     """(One line for the info bar: what the photo was shot at, from its EXIF; its size in
     pixels, or None if it cannot be read.)"""
@@ -112,7 +124,7 @@ def describe(path):
         parts.append(f"ISO {iso}")
     if f_number:
         parts.append(f"f/{float(f_number):g}")
-    software = exif.get(305, "")  # "pycam, Portrait 400"
+    software = exif_text(exif.get(305, ""))  # "pycam, Portrait 400"
     if software.startswith("pycam, "):
         parts.append(software[len("pycam, ") :])
     return "   ".join(parts), size

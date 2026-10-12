@@ -48,6 +48,16 @@
   #viewer img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
   #viewer .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 10px; }
   #viewer .bar span { margin-right: auto; }
+  #share { position: fixed; inset: 0; z-index: 6; background: var(--bg); display: none; overflow-y: auto; padding: 16px; }
+  #share.on { display: block; }
+  #share .inner { max-width: 960px; margin: 0 auto; }
+  #share img { max-height: 30vh; max-width: 100%; border-radius: 6px; display: block; margin-bottom: 10px; }
+  textarea { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px; font: inherit; width: 60%; min-height: 4em; }
+  .caption { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 6px 0 12px; }
+  .caption s { color: var(--danger); }
+  .over { color: var(--danger); }
+  .done { color: #6fcf73; }
+  .platform h3 { margin: 6px 0 2px; font-size: 15px; }
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line);
            padding: 10px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 9; }
   #toast.on { opacity: 1; }
@@ -61,6 +71,7 @@
     <button data-tab="photos">Photos</button>
     <button data-tab="presets">Presets</button>
     <button data-tab="cloud">Cloud</button>
+    <button data-tab="sharing">Partage</button>
   </nav>
 </header>
 <main>
@@ -141,6 +152,51 @@
       <div class="row"><button class="btn" id="cloud-connect">Connecter</button><button class="btn danger" id="cloud-disconnect" hidden>Déconnecter</button></div>
     </div>
   </section>
+
+  <section id="sharing">
+    <div class="panel">
+      <b>Publications</b> <span class="muted" id="share-state"></span>
+      <p class="muted" style="margin:4px 0 0">Depuis la galerie (bouton Partager d'une photo), ou sur l'appareil : en lecture, MENU › Partager.
+        Une publication attend que l'appareil soit en ligne, puis part sur chaque plateforme.</p>
+      <div id="share-queue"></div>
+    </div>
+    <div class="panel">
+      <b>Par défaut</b>
+      <label>Hashtags <input type="text" id="share-tags"></label>
+      <label>Langue des légendes <input type="text" id="share-lang" maxlength="3" style="width:5em"></label>
+      <button class="btn" id="share-defaults">Enregistrer</button>
+    </div>
+    <div class="panel">
+      <b>Bluesky</b> <span class="muted" id="acct-bluesky"></span>
+      <label>Identifiant <input type="text" id="bs-handle" placeholder="vous.bsky.social" autocomplete="username"></label>
+      <label>Mot de passe d'application <input type="password" id="bs-password" autocomplete="new-password"></label>
+      <p class="muted">Jamais celui du compte : Réglages › Confidentialité et sécurité › Mots de passe d'application.</p>
+      <div class="row"><button class="btn" data-connect="bluesky">Connecter</button><button class="btn danger" data-forget="bluesky">Déconnecter</button></div>
+    </div>
+    <div class="panel">
+      <b>Flickr</b> <span class="muted" id="acct-flickr"></span>
+      <p class="muted">Votre propre clé d'API : <a href="https://www.flickr.com/services/apps/create/apply/" target="_blank" rel="noopener">flickr.com/services/apps/create</a> (non commerciale).</p>
+      <label>Clé <input type="text" id="fl-key" autocomplete="off"></label>
+      <label>Secret <input type="password" id="fl-secret" autocomplete="off"></label>
+      <div class="steps" id="fl-steps" hidden>
+        1. Ouvrir <a id="fl-link" target="_blank" rel="noopener">la page d'autorisation Flickr</a> et accepter.<br>
+        2. Recopier ici le code que Flickr affiche :
+        <label>Code <input type="text" id="fl-code" autocomplete="off"></label>
+      </div>
+      <div class="row"><button class="btn" data-connect="flickr">Connecter</button><button class="btn danger" data-forget="flickr">Déconnecter</button></div>
+    </div>
+    <div class="panel">
+      <b>Instagram</b> <span class="muted" id="acct-instagram"></span>
+      <p class="muted" id="ig-missing" hidden></p>
+      <label>Identifiant <input type="text" id="ig-user" autocomplete="username"></label>
+      <label>sessionid <input type="password" id="ig-session" autocomplete="off"></label>
+      <label>ou mot de passe <input type="password" id="ig-password" autocomplete="current-password"></label>
+      <p class="muted">Comme SPP : l'API privée d'Instagram (les comptes personnels n'en ont pas d'officielle). Un nouvel appareil se voit souvent
+        demander une vérification : mieux vaut donner le <b>sessionid</b> d'un navigateur déjà connecté (Firefox : F12 › Stockage › Cookies ›
+        instagram.com › sessionid). Il expire, et se déconnecter de ce navigateur le révoque.</p>
+      <div class="row"><button class="btn" data-connect="instagram">Connecter</button><button class="btn danger" data-forget="instagram">Déconnecter</button></div>
+    </div>
+  </section>
 </main>
 
 <div id="viewer">
@@ -149,8 +205,27 @@
     <span id="viewer-info"></span>
     <a class="btn" id="dl-jpg">JPEG</a>
     <a class="btn" id="dl-dng">DNG</a>
+    <button class="btn" id="share-open">Partager</button>
     <button class="btn danger" id="delete">Supprimer</button>
     <button class="btn" id="close">Fermer</button>
+  </div>
+</div>
+<div id="share">
+  <div class="inner">
+    <div class="row" style="align-items:center;margin-bottom:10px"><b id="share-title" style="margin-right:auto"></b><button class="btn" id="share-close">Fermer</button></div>
+    <img id="share-img" alt="">
+    <div class="panel">
+      <label>Titre <input type="text" id="sf-title" data-field="title"></label>
+      <label>Description <textarea id="sf-description" data-field="description"></textarea></label>
+      <label>Texte alternatif <textarea id="sf-alt" data-field="alt" placeholder="Ce que montre la photo, pour qui ne la voit pas"></textarea></label>
+      <label>Hashtags <input type="text" id="sf-tags" data-field="tags"></label>
+      <label>Appareil <input type="text" id="sf-camera" data-field="camera"></label>
+      <label>Objectif <input type="text" id="sf-lens" data-field="lens"></label>
+      <label>Pellicule <input type="text" id="sf-film" data-field="film"></label>
+      <label>Date <input type="text" id="sf-date" data-field="date"></label>
+    </div>
+    <div class="panel" id="share-platforms"></div>
+    <button id="share-send" class="btn" style="width:100%;padding:14px;background:var(--accent);color:#111;font-weight:600">Publier</button>
   </div>
 </div>
 <div id="toast"></div>
@@ -180,6 +255,7 @@ document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
   if (tab === "photos") loadPhotos();
   if (tab === "presets") loadPresets();
   if (tab === "cloud") followCloud();
+  if (tab === "sharing") followShare();
 });
 
 // --- Viewfinder and state
@@ -407,6 +483,130 @@ $("cloud-disconnect").onclick = async () => {
   if (!confirm("Déconnecter ce compte ? Les fichiers déjà envoyés restent dans le cloud.")) return;
   try { await api("/api/cloud", {method: "DELETE"}); toast("Compte déconnecté"); } catch (e) { toast(e.message); }
   loadCloud();
+};
+
+// --- Partage
+
+let sharing = null, sharePhoto = null, shareChosen = null;
+
+async function loadSharing() {
+  sharing = await api("/api/share");
+  const st = [];
+  if (sharing.working) st.push("publication sur " + sharing.labels[sharing.working] + "…");
+  else if (!sharing.online && sharing.queue.some((q) => Object.values(q.platforms).some((e) => e.status === "pending"))) st.push("en attente de connexion");
+  $("share-state").textContent = st.join(" · ");
+  const status = {pending: "en attente", sending: "en cours", done: "publiée", failed: "échec"};
+  $("share-queue").innerHTML = sharing.queue.length ? sharing.queue.map((q) => {
+    const rows = Object.entries(q.platforms).map(([p, e]) =>
+      `<div>${esc(sharing.labels[p])} : ` + (e.url ? `<a class="done" href="${esc(e.url)}" target="_blank" rel="noopener">publiée</a>`
+        : `<span class="${e.status === "failed" ? "over" : "muted"}">${status[e.status]}</span>`) +
+      (e.error && e.status !== "done" ? ` <span class="muted">· ${esc(e.error)}</span>` : "") + "</div>").join("");
+    const failed = Object.values(q.platforms).some((e) => e.status === "failed");
+    return `<div class="preset"><div><b>${esc(q.photo.replace(".JPG", ""))}</b> ${esc(q.title)}` +
+      `<div class="muted">${new Date(q.created * 1000).toLocaleString("fr-FR")}</div>${rows}</div><div class="row">` +
+      (failed ? `<button class="btn" data-retry="${q.id}">Réessayer</button>` : "") +
+      `<button class="btn" data-remove="${q.id}">Retirer</button></div></div>`;
+  }).join("") : '<p class="muted">Aucune publication.</p>';
+  $("share-queue").querySelectorAll("[data-retry]").forEach((b) => b.onclick = async () => {
+    toast((await post(`/api/share/queue/${b.dataset.retry}/retry`, {})).message); loadSharing();
+  });
+  $("share-queue").querySelectorAll("[data-remove]").forEach((b) => b.onclick = async () => {
+    try { await api(`/api/share/queue/${b.dataset.remove}`, {method: "DELETE"}); loadSharing(); } catch (e) { toast(e.message); }
+  });
+  for (const p of ["bluesky", "flickr", "instagram"]) {
+    const a = sharing.accounts[p];
+    $("acct-" + p).textContent = a.ready ? "· connecté : " + a.account : "· non connecté";
+    document.querySelector(`[data-forget="${p}"]`).hidden = !a.ready;
+  }
+  $("ig-missing").hidden = !sharing.instagrapi;
+  $("ig-missing").textContent = sharing.instagrapi;
+  if (document.activeElement !== $("share-tags")) $("share-tags").value = sharing.tags;
+  if (document.activeElement !== $("share-lang")) $("share-lang").value = sharing.lang;
+}
+
+async function followShare() {
+  if (tab !== "sharing") return;
+  try { await loadSharing(); } catch (e) { $("share-state").textContent = e.message; }
+  clearTimeout(followShare.timer);
+  followShare.timer = setTimeout(followShare, 3000);
+}
+
+$("share-defaults").onclick = async () => {
+  try { await post("/api/share/defaults", {tags: $("share-tags").value, lang: $("share-lang").value}); toast("Enregistré"); }
+  catch (e) { toast(e.message); }
+};
+document.querySelectorAll("[data-forget]").forEach((b) => b.onclick = async () => {
+  if (!confirm("Déconnecter ce compte de l'appareil ?")) return;
+  await api("/api/share/account/" + b.dataset.forget, {method: "DELETE"}); toast("Compte déconnecté"); loadSharing();
+});
+document.querySelectorAll("[data-connect]").forEach((b) => b.onclick = async () => {
+  const p = b.dataset.connect;
+  b.disabled = true;
+  try {
+    if (p === "bluesky") {
+      const r = await post("/api/share/bluesky", {handle: $("bs-handle").value, password: $("bs-password").value});
+      $("bs-password").value = ""; toast("Connecté : " + r.account);
+    } else if (p === "flickr" && $("fl-steps").hidden) {
+      const r = await post("/api/share/flickr/start", {key: $("fl-key").value, secret: $("fl-secret").value});
+      $("fl-link").href = r.url; $("fl-steps").hidden = false; b.textContent = "Valider le code"; window.open(r.url, "_blank", "noopener");
+    } else if (p === "flickr") {
+      const r = await post("/api/share/flickr/finish", {code: $("fl-code").value});
+      $("fl-steps").hidden = true; $("fl-code").value = ""; $("fl-secret").value = ""; b.textContent = "Connecter"; toast("Connecté : " + r.account);
+    } else {
+      toast("Connexion à Instagram…");
+      const r = await post("/api/share/instagram", {user: $("ig-user").value, sessionid: $("ig-session").value, password: $("ig-password").value});
+      $("ig-session").value = $("ig-password").value = ""; toast("Connecté : " + r.account);
+    }
+  } catch (e) { toast(e.message); }
+  b.disabled = false;
+  loadSharing();
+});
+
+// The share screen, from the gallery: the form, and what each platform will publish.
+async function openShare(p) {
+  sharePhoto = p; shareChosen = null;
+  $("share-title").textContent = "Partager " + p.name;
+  $("share-img").src = `/api/thumb/${p.folder}/${p.name}.JPG`;
+  document.querySelectorAll("#share [data-field]").forEach((el) => el.value = "");
+  $("share").classList.add("on");
+  try { sharing = await api("/api/share"); } catch (e) { return toast(e.message); }
+  await previewShare(true);
+}
+
+async function previewShare(fill) {
+  const fields = {};
+  if (!fill) document.querySelectorAll("#share [data-field]").forEach((el) => fields[el.dataset.field] = el.value);
+  const r = await post("/api/share/preview", {folder: sharePhoto.folder, name: sharePhoto.name, fields});
+  if (fill) document.querySelectorAll("#share [data-field]").forEach((el) => el.value = r.post[el.dataset.field] || "");
+  if (!shareChosen) {
+    const ready = r.platforms.filter((x) => x.ready).map((x) => x.platform);
+    shareChosen = new Set(sharing.selected.filter((x) => ready.includes(x)).length ? sharing.selected.filter((x) => ready.includes(x)) : ready);
+  }
+  $("share-platforms").innerHTML = r.platforms.map((x) => {
+    const count = x.limit ? ` <span class="${x.length > x.limit ? "over" : "muted"}">${x.length}/${x.limit}</span>` : "";
+    return `<div class="platform"><h3><label style="justify-content:flex-start;padding:0">` +
+      `<input type="checkbox" data-platform="${x.platform}" ${shareChosen.has(x.platform) ? "checked" : ""} ${x.ready ? "" : "disabled"}> ` +
+      `${esc(x.label)}</label></h3><div class="muted">${esc(x.image)}${count}${x.ready ? "" : " · non connecté (onglet Partage)"}</div>` +
+      `<div class="caption">${esc(x.text)}${x.cut ? `<s>${esc(x.cut)}</s>` : ""}</div></div>`;
+  }).join("");
+  $("share-platforms").querySelectorAll("[data-platform]").forEach((c) => c.onchange = () => {
+    c.checked ? shareChosen.add(c.dataset.platform) : shareChosen.delete(c.dataset.platform);
+  });
+}
+
+let previewTimer = null;
+document.querySelectorAll("#share [data-field]").forEach((el) => el.oninput = () => {
+  clearTimeout(previewTimer); previewTimer = setTimeout(() => previewShare(false).catch((e) => toast(e.message)), 300);
+});
+$("share-open").onclick = () => current && openShare(current);
+$("share-close").onclick = () => $("share").classList.remove("on");
+$("share-send").onclick = async () => {
+  const fields = {};
+  document.querySelectorAll("#share [data-field]").forEach((el) => fields[el.dataset.field] = el.value);
+  try {
+    const r = await post("/api/share/post", {folder: sharePhoto.folder, name: sharePhoto.name, fields, platforms: [...shareChosen]});
+    toast(r.message); $("share").classList.remove("on");
+  } catch (e) { toast(e.message); }
 };
 
 async function followState() { await refreshState(); setTimeout(followState, running ? 1000 : 3000); }

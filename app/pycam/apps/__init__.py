@@ -7,11 +7,13 @@ An application is an object made with the camera, with:
 - menu(camera): its own menu (menu.Menu with items of any kind);
 - run(): a coroutine started with the camera (its background work);
 - wake(): new files on the card (a shot, a video), or one of its settings changed;
-- hud(): a few characters for the HUD while it works, or "".
+- hud(): a few characters for the HUD while it works, or "";
+- photo_items(camera, path): the menu lines it adds to a shot's menu (MENU in playback).
 """
 
 
 def make_apps(camera):
     from .cloudsync import CloudSync
+    from .share import Share
 
-    return [CloudSync(camera)]
+    return [CloudSync(camera), Share(camera)]

@@ -27,8 +27,8 @@ Ce que l'appareil fait aujourd'hui :
 - **Simulations de pellicules** : presets ouverts (une recette TOML, éventuellement une LUT), appliqués au JPEG avec grain, halation et vignettage, aperçus en visée ; le DNG reste neutre. Livrés : Standard, Base, Portrait 400, Velours 50, Cinéma 800T (+2), Triple-X 400. On peut écrire les siens (`docs/presets.md`).
 - **Menus** Q (12 réglages de prise de vue) et MENU (tout le reste), **lecture** des photos (loupe, suppression) et des vidéos (décodeur matériel).
 - **Économie d'énergie** : l'écran se met en veille pendant les longues prises.
-- **Applications** (MENU › Applications), dont **Cloud sync** : la carte envoyée vers ownCloud / Nextcloud, Dropbox ou Google Drive dès que le Wi-Fi trouve Internet, puis après chaque prise ; en gardant tout, en libérant la carte (seulement ce qui est vérifié dans le cloud), ou à la demande.
-- **Interface web** sur le réseau local (port 8080) : visée, déclencheur, choix du preset, galerie et téléchargement (photos et vidéos), installation de presets, connexion des comptes cloud.
+- **Applications** (MENU › Applications), dont **Cloud sync** : la carte envoyée vers ownCloud / Nextcloud, Dropbox ou Google Drive dès que le Wi-Fi trouve Internet, puis après chaque prise ; en gardant tout, en libérant la carte (seulement ce qui est vérifié dans le cloud), ou à la demande. Et **Partage** : une photo publiée sur Instagram, Flickr et Bluesky depuis la galerie, avec une légende tirée de la photo (le preset y devient la pellicule) et l'aperçu de ce que chaque plateforme publiera, à la manière de [SPP](https://github.com/Marma92/SPP).
+- **Interface web** sur le réseau local (port 8080) : visée, déclencheur, choix du preset, galerie et téléchargement (photos et vidéos), installation de presets, connexion des comptes cloud et des réseaux, partage d'une photo.
 
 ## Comment c'est fait
 
