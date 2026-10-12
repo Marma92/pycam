@@ -16,7 +16,9 @@ Statut : **orientations décidées le 2026-10-11** (§10). Les mesures datent du
 
 - la balance du film (`[shooting] white_balance`) : 5500 K pour Portrait 400 et Velours 50, 3200 K pour les Cinéma 800T, appliquée avec la balance des blancs « Pellicule ».
 
-**Reste** : affiner les pellicules sur de vraies photos de l'appareil ; la halation ; `pycam_preset.py fit` pour la méthode B.
+- la halation des CineStill (`[halation]`), dessinée par le moteur avant la LUT, à partir du canal rouge des lumières vives ; `tools/look_apply.py` applique un preset complet (grain et halation compris) à n'importe quelle image, sur le Pi, pour régler.
+
+**Reste** : affiner les pellicules sur de vraies photos de l'appareil ; la halation en visée ; `pycam_preset.py fit` pour la méthode B.
 
 **Ajouter un preset** : copier son dossier dans `~/.config/pycam/presets/`. Il apparaît à la prochaine ouverture d'un menu, et un preset du même nom de dossier qu'un preset intégré le remplace. Un preset illisible est ignoré, avec un avertissement dans le journal (`journalctl -u pycam`).
 
@@ -124,6 +126,12 @@ colour = 0.35                    # grain coloré (les trois couches d'un film co
 shadows = 0.5                    # 0 : surtout dans les tons moyens (diapositive) ; 1 : dans les ombres (négatif)
 clumps = 0.15                    # part des amas, plus gros que le grain fin
 
+[halation]                       # le halo rouge des films sans couche anti-halo (CineStill)
+amount = 0.45                    # intensité, 0-1
+radius = 22                      # étalement, en pixels de l'image pleine résolution
+threshold = 0.82                 # à partir de quel niveau de la base la lumière s'étale
+hue = 8                          # teinte du halo, en degrés (rouge orangé)
+
 [vignette]
 amount = 0.1
 ```
@@ -209,7 +217,7 @@ Les références : les publications Instagram de l'auteur et d'un ami photograph
 | CineStill 800T poussée +2 | 10 | 0,03 | 0,25 | 0,89 | 0,59 | bleus ~207° et rouges très saturés |
 | Tri-X 400 | 5 | 0,03 | 0,44 | 0,92 | — | contraste franc, épaule douce |
 
-Les presets correspondants (`app/pycam/presets/`) en reprennent les courbes et les couleurs, complétées par le caractère connu de chaque film. Ils ont été vérifiés sur une mire de synthèse et une photo de l'appareil : les premières versions de Velours 50 et Cinéma 800T +2, trop saturées, écrasaient les couleurs vives en aplats ; elles ont été atténuées. La CineStill 800T a deux presets, développement normal et poussé, parce que les deux rendus diffèrent nettement. Ce qui manque encore : la halation des CineStill, la balance tungstène fixe, et le réglage fin sur de vraies scènes (peaux, végétation, nuit).
+Les presets correspondants (`app/pycam/presets/`) en reprennent les courbes et les couleurs, complétées par le caractère connu de chaque film. Ils ont été vérifiés sur une mire de synthèse et une photo de l'appareil : les premières versions de Velours 50 et Cinéma 800T +2, trop saturées, écrasaient les couleurs vives en aplats ; elles ont été atténuées. La CineStill 800T a deux presets, développement normal et poussé, parce que les deux rendus diffèrent nettement. Depuis : la halation des CineStill et la balance tungstène (« Pellicule ») ; reste le réglage fin sur de vraies scènes (peaux, végétation, nuit).
 
 ### Protocole de prise de vue pour la méthode B
 

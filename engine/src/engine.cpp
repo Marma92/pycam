@@ -732,6 +732,17 @@ void Engine::SetLook(json const &command)
 	look->grain_colour = std::clamp(command.value("grain_colour", 0.0f), 0.0f, 1.0f);
 	look->grain_shadows = std::clamp(command.value("grain_shadows", 0.0f), 0.0f, 1.0f);
 	look->grain_clumps = std::clamp(command.value("grain_clumps", 0.0f), 0.0f, 1.0f);
+	look->halation = std::clamp(command.value("halation", 0.0f), 0.0f, 1.0f);
+	look->halation_radius = std::clamp(command.value("halation_radius", 24.0f), 2.0f, 200.0f);
+	look->halation_threshold = std::clamp(command.value("halation_threshold", 0.8f), 0.0f, 0.99f);
+	if (command.contains("halation_colour"))
+	{
+		auto colour = command["halation_colour"].get<std::vector<float>>();
+		if (colour.size() != 3)
+			throw CommandError("bad_request", "halation_colour: [r, g, b], 0..1");
+		for (unsigned i = 0; i < 3; i++)
+			look->halation_colour[i] = std::clamp(colour[i], 0.0f, 1.0f);
+	}
 	std::shared_ptr<Preview> preview;
 	if (command.contains("preview") && !command["preview"].is_null())
 	{
@@ -764,6 +775,8 @@ json Engine::LookState() const
 			 { "grain_colour", look_->grain_colour },
 			 { "grain_shadows", look_->grain_shadows },
 			 { "grain_clumps", look_->grain_clumps },
+			 { "halation", look_->halation },
+			 { "halation_radius", look_->halation_radius },
 			 { "preview", preview_ != nullptr } };
 }
 

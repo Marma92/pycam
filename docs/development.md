@@ -60,6 +60,12 @@ Sur un ordinateur, avec Python 3.11+ et Pillow : `tools/pycam_preset.py` (voir `
 scp -r mon-preset ael@192.168.1.165:.config/pycam/presets/
 ```
 
+Pour régler un preset avec ce que seul le moteur dessine (grain, vignettage, halation), sur le Pi, avec le moteur compilé :
+
+```bash
+python3 tools/look_apply.py app/pycam/presets/cinema-800t-plus2 photo.jpg essai.png
+```
+
 ## Tests unitaires du moteur
 
 L'analyse d'image (histogrammes YUV → RVB) est testée sur des images synthétiques de couleur connue, sur le Pi après une compilation :

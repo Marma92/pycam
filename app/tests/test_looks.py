@@ -40,6 +40,17 @@ class LooksTest(unittest.TestCase):
         self.assertAlmostEqual(grey[0], 0.638, places=2)  # the standard curve, as computed
         self.assertEqual(grey[0], grey[2])
 
+    def test_halation(self):
+        presets = looks.find_presets([looks.BUILTIN_DIR])
+        cinestill = looks.engine_look(presets["cinema-800t-plus2"])
+        self.assertGreater(cinestill["halation"], 0)
+        r, g, b = cinestill["halation_colour"]
+        self.assertTrue(r > g > b)  # red-orange
+        self.assertNotIn("halation", looks.engine_look(presets["portrait-400"]))  # anti-halation layer
+        self.assertEqual(looks.engine_look(presets["cinema-800t"], grain=False)["grain"], 0)
+        with self.assertRaises(looks.PresetError):
+            self.preset("[halation]\namount = 2\n", "bad")
+
     def test_film_white_balance(self):
         presets = looks.find_presets([looks.BUILTIN_DIR])
         balances = {pid: p.white_balance for pid, p in presets.items()}

@@ -2,7 +2,7 @@
 # Première version (méthode A), réglée sur les scans de l'auteur à Paris (4), mesurés le
 # 2026-10-12 : rendu mat, noirs très relevés (~0,11), blancs plafonnés (~0,85), couleurs
 # sourdes (0,31), verts vers le bleu canard (~140°). La halation (halo rouge autour des
-# lumières) n'est pas encore imitée : c'est un effet spatial, pas une LUT.
+# lumières) est dessinée par le moteur : c'est un effet spatial, pas une LUT.
 format = 1
 base = "pycam-1"
 name = "Cinéma 800T"
@@ -29,6 +29,12 @@ aqua = [0, 1.0, 0.0]
 blue = [-8, 0.95, 0.0]
 purple = [0, 0.9, 0.0]
 magenta = [0, 0.9, 0.0]
+
+[halation]  # sans couche anti-halo : un halo rouge orangé autour des lumières vives
+amount = 0.45
+radius = 22  # en pixels de l'image pleine résolution
+threshold = 0.82  # à partir de quel niveau de la base la lumière s'étale
+hue = 8  # la teinte du halo, en degrés (rouge orangé)
 
 [grain]  # moyen : une 800 ISO cinéma, sans couche anti-halo
 amount = 0.25

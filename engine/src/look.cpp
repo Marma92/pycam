@@ -166,8 +166,116 @@ private:
 	std::array<CachedRow, 3> grid_;
 };
 
-void apply_rows(Look const &look, Grain const *grain, uint8_t *frame, unsigned width, unsigned height,
-				unsigned stride, unsigned row0, unsigned row1)
+// Halation: where the light spreads, on a coarse grid (cells of a few pixels), blurred.
+class HaloMap
+{
+public:
+	HaloMap(Look const &look, uint8_t const *frame, unsigned width, unsigned height, unsigned stride, float scale)
+	{
+		float const sigma = std::max(1.0f, look.halation_radius * scale);
+		cell_ = std::clamp(static_cast<unsigned>(sigma / 3), 2u, 16u); // ~3 cells per sigma
+		w_ = (width + cell_ - 1) / cell_, h_ = (height + cell_ - 1) / cell_;
+		values_.assign(static_cast<size_t>(w_) * h_, 0.0f);
+		// The bright parts, in the red: the light that reaches the film base and comes back
+		// to the red layer is mostly red, the other layers (and the yellow filter of colour
+		// films) having taken the rest. How far above the threshold, averaged over each cell.
+		float const t = std::clamp(look.halation_threshold, 0.0f, 0.99f);
+		float light[256];
+		for (int level = 0; level < 256; level++)
+		{
+			float const above = std::max(0.0f, (level / 255.0f - t) / (1 - t));
+			light[level] = above * above; // a soft start, then fast: the brightest lights glow
+		}
+		uint8_t const *const v_plane = frame + static_cast<size_t>(stride) * height + static_cast<size_t>(stride / 2) * (height / 2);
+		unsigned const step = cell_ >= 8 ? 4 : 2;
+		for (unsigned cy = 0; cy < h_; cy++)
+			for (unsigned cx = 0; cx < w_; cx++)
+			{
+				float sum = 0;
+				unsigned n = 0;
+				// One pixel in `step` each way is plenty for a glow tens of pixels wide.
+				for (unsigned y = cy * cell_; y < std::min(height, (cy + 1) * cell_); y += step)
+				{
+					uint8_t const *luma = frame + static_cast<size_t>(y) * stride;
+					uint8_t const *v = v_plane + static_cast<size_t>(y / 2) * (stride / 2);
+					for (unsigned x = cx * cell_; x < std::min(width, (cx + 1) * cell_); x += step)
+					{
+						int const red = luma[x] + ((359 * (v[x / 2] - 128)) >> 8); // R = Y + 1.402 Cr
+						sum += light[std::clamp(red, 0, 255)], n++;
+					}
+				}
+				values_[static_cast<size_t>(cy) * w_ + cx] = n ? sum / n : 0;
+			}
+		// Three box blurs in each direction: close to a gaussian of this sigma.
+		float const sigma_cells = sigma / cell_;
+		int const radius = std::max(1, static_cast<int>(std::lround((std::sqrt(4 * sigma_cells * sigma_cells + 1) - 1) / 2)));
+		std::vector<float> tmp(values_.size());
+		for (int pass = 0; pass < 3; pass++)
+		{
+			BoxBlur(values_.data(), tmp.data(), w_, h_, 1, w_, radius);
+			BoxBlur(tmp.data(), values_.data(), h_, w_, w_, 1, radius);
+		}
+		// Where the centre of each 2x2 block falls between the cells, along x.
+		unsigned const blocks = width / 2;
+		x0_.resize(blocks), tx_.resize(blocks);
+		for (unsigned bx = 0; bx < blocks; bx++)
+		{
+			float const fx = std::clamp((2 * bx + 1.0f) / cell_ - 0.5f, 0.0f, w_ - 1.0f);
+			x0_[bx] = std::min(static_cast<unsigned>(fx), w_ > 1 ? w_ - 2 : 0);
+			tx_[bx] = fx - x0_[bx];
+		}
+	}
+
+	// The map at the centre of each 2x2 block of a row of blocks (pixel row y), bilinear
+	// between the cell centres: one row at a time, the positions along x computed once.
+	void FillRow(float y, float *out) const
+	{
+		unsigned const blocks = x0_.size();
+		float const fy = std::clamp(y / cell_ - 0.5f, 0.0f, h_ - 1.0f);
+		unsigned const y0 = std::min(static_cast<unsigned>(fy), h_ > 1 ? h_ - 2 : 0), y1 = std::min(y0 + 1, h_ - 1);
+		float const ty = fy - y0;
+		float const *r0 = &values_[static_cast<size_t>(y0) * w_], *r1 = &values_[static_cast<size_t>(y1) * w_];
+		unsigned const last = w_ - 1;
+		for (unsigned bx = 0; bx < blocks; bx++)
+		{
+			unsigned const x0 = x0_[bx], x1 = std::min(x0 + 1, last);
+			float const tx = tx_[bx];
+			float const top = r0[x0] + (r0[x1] - r0[x0]) * tx, bottom = r1[x0] + (r1[x1] - r1[x0]) * tx;
+			out[bx] = top + (bottom - top) * ty;
+		}
+	}
+
+private:
+	// Along lines of `length` values `step` apart, `lines` of them `line_step` apart; the
+	// edges are repeated.
+	static void BoxBlur(float const *in, float *out, unsigned length, unsigned lines, unsigned step,
+						unsigned line_step, int radius)
+	{
+		float const norm = 1.0f / (2 * radius + 1);
+		for (unsigned l = 0; l < lines; l++)
+		{
+			float const *src = in + static_cast<size_t>(l) * line_step;
+			float *dst = out + static_cast<size_t>(l) * line_step;
+			auto at = [&](int i) { return src[static_cast<size_t>(std::clamp(i, 0, int(length) - 1)) * step]; };
+			float sum = 0;
+			for (int i = -radius; i <= radius; i++)
+				sum += at(i);
+			for (unsigned i = 0; i < length; i++)
+			{
+				dst[static_cast<size_t>(i) * step] = sum * norm;
+				sum += at(int(i) + radius + 1) - at(int(i) - radius);
+			}
+		}
+	}
+
+	unsigned cell_, w_, h_;
+	std::vector<float> values_;
+	std::vector<unsigned> x0_;
+	std::vector<float> tx_;
+};
+
+void apply_rows(Look const &look, Grain const *grain, HaloMap const *halo, uint8_t *frame, unsigned width,
+				unsigned height, unsigned stride, unsigned row0, unsigned row1)
 {
 	unsigned const uv_stride = stride / 2;
 	uint8_t *const u_plane = frame + static_cast<size_t>(stride) * height;
@@ -175,6 +283,7 @@ void apply_rows(Look const &look, Grain const *grain, uint8_t *frame, unsigned w
 	float const cx = width / 2.0f, cy = height / 2.0f, inv_r2 = 1.0f / (cx * cx + cy * cy);
 	// Grain: fine noise, maybe mixed with coarser clumps; for colour films, two more noises
 	// on the chroma, per 2x2 block (there, the grain is half as many blocks).
+	std::vector<float> halo_row(halo ? width / 2 : 0);
 	std::optional<GrainRows> fine, coarse, chroma[2];
 	std::vector<float> noise[2], clumps, chroma_noise[2];
 	float fine_share = 1, clump_share = 0;
@@ -219,6 +328,8 @@ void apply_rows(Look const &look, Grain const *grain, uint8_t *frame, unsigned w
 			if (grain->colour > 0)
 				chroma[0]->Fill(y / 2, chroma_noise[0].data()), chroma[1]->Fill(y / 2, chroma_noise[1].data());
 		}
+		if (halo)
+			halo->FillRow(y + 1.0f, halo_row.data());
 		for (unsigned bx = 0; bx < width / 2; bx++)
 		{
 			unsigned const x = 2 * bx;
@@ -230,7 +341,14 @@ void apply_rows(Look const &look, Grain const *grain, uint8_t *frame, unsigned w
 				k = 1 - look.vignette * r2 * r2;
 				cu *= k, cv *= k;
 			}
-			float const dr = kRV * cv, dg = -kGU * cu - kGV * cv, db = kBU * cu;
+			float dr = kRV * cv, dg = -kGU * cu - kGV * cv, db = kBU * cu;
+			if (halo && halo_row[bx] > 1e-4f)
+			{
+				// Saturating: a small light glows a little, a large bright area fringes.
+				float const glow = look.halation * 160 * (1 - std::exp(-4 * halo_row[bx]));
+				dr += glow * look.halation_colour[0], dg += glow * look.halation_colour[1],
+					db += glow * look.halation_colour[2];
+			}
 			// The 4 pixels of the block, stage by stage rather than one after the other: the
 			// Cortex-A53 runs in order, so independent computations side by side keep it busy.
 			uint8_t *const px[4] = { &rows[0][x], &rows[0][x + 1], &rows[1][x], &rows[1][x + 1] };
@@ -382,12 +500,15 @@ void apply_look(Look const &look, uint8_t *frame, unsigned width, unsigned heigh
 				amplitude * (0.3f + 0.7f * ((1 - look.grain_shadows) * mids + look.grain_shadows * shadows));
 		}
 	}
+	std::unique_ptr<HaloMap> halo;
+	if (look.halation > 0)
+		halo = std::make_unique<HaloMap>(look, frame, width, height, stride, std::clamp(width / 4056.0f, 0.25f, 1.0f));
 	threads = std::max(1u, threads);
 	std::vector<std::thread> pool;
 	for (unsigned i = 0; i < threads; i++)
 	{
 		unsigned const row0 = (height * i / threads) & ~1u, row1 = (height * (i + 1) / threads) & ~1u;
-		pool.emplace_back(apply_rows, std::cref(look), grain.get(), frame, width, height, stride, row0, row1);
+		pool.emplace_back(apply_rows, std::cref(look), grain.get(), halo.get(), frame, width, height, stride, row0, row1);
 	}
 	for (auto &thread : pool)
 		thread.join();

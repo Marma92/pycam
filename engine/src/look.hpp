@@ -22,7 +22,8 @@ struct Lut3D
 };
 
 // What the photos look like, applied to the YUV still before the JPEG is encoded:
-// vignetting (the lens), then the LUT (the film), then the grain.
+// vignetting (the lens), halation (light bouncing back into the film), then the LUT (the
+// film's rendering), then the grain.
 struct Look
 {
 	std::string name; // for the state and the logs
@@ -33,8 +34,14 @@ struct Look
 	float grain_colour = 0; // chroma grain against the luma grain, 0..1 (0: black and white)
 	float grain_shadows = 0; // 0: grain strongest in the mid-tones, 1: lower, in the shadows
 	float grain_clumps = 0; // share of coarser clumps, 0..1
+	// Halation: films without an anti-halation layer (CineStill) glow red around bright
+	// lights, the light crossing the film and coming back from the pressure plate.
+	float halation = 0; // 0..1
+	float halation_radius = 24; // spread (gaussian sigma), in pixels of the full resolution image
+	float halation_threshold = 0.8f; // base luma (0..1) from which light spreads
+	std::array<float, 3> halation_colour { 1.0f, 0.25f, 0.05f };
 
-	bool Empty() const { return !lut && vignette <= 0 && grain <= 0; }
+	bool Empty() const { return !lut && vignette <= 0 && grain <= 0 && halation <= 0; }
 };
 
 // In place, on a planar YUV420 frame (chroma planes at half the stride and height, right

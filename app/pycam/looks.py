@@ -89,6 +89,11 @@ class Preset:
     grain_colour: float = 0.0  # chroma grain against the luma grain (colour films: three dye layers)
     grain_shadows: float = 0.0  # 0: strongest in the mid-tones (slides), 1: in the shadows (negatives)
     grain_clumps: float = 0.0  # share of coarser clumps
+    # Halation: the red glow of films without an anti-halation layer (CineStill).
+    halation: float = 0.0  # 0..1
+    halation_radius: float = 24.0  # spread, in pixels of the full sensor image
+    halation_threshold: float = 0.8  # base level (0..1) from which light spreads
+    halation_colour: tuple = (1.0, 0.25, 0.05)
     vignette: float = 0.0
     digest: str = ""  # of the files that make the preset: the compiled LUT's cache key
 
@@ -140,6 +145,7 @@ def load_preset(folder):
     shooting = data.get("shooting", {})
     look = dict(data.get("look", {}))
     grain = data.get("grain", {})
+    halation = data.get("halation", {})
     vignette = data.get("vignette", {})
     unknown = set(look) - LOOK_KEYS
     if unknown:
@@ -197,6 +203,12 @@ def load_preset(folder):
         grain_colour=_number(grain, "colour", 0.0, 0, 1, "grain."),
         grain_shadows=_number(grain, "shadows", 0.0, 0, 1, "grain."),
         grain_clumps=_number(grain, "clumps", 0.0, 0, 1, "grain."),
+        halation=_number(halation, "amount", 0.0, 0, 1, "halation."),
+        halation_radius=_number(halation, "radius", 24.0, 2, 200, "halation."),
+        halation_threshold=_number(halation, "threshold", 0.8, 0, 0.99, "halation."),
+        halation_colour=tuple(
+            round(c, 4) for c in colorsys.hsv_to_rgb(_number(halation, "hue", 10.0, 0, 360, "halation.") / 360, 0.95, 1)
+        ),
         vignette=_number(vignette, "amount", 0.0, 0, 1, "vignette."),
         digest=hasher.hexdigest()[:16],
     )
@@ -216,6 +228,28 @@ def _freeze(value):
     if isinstance(value, dict):
         return tuple(sorted((k, _freeze(v)) for k, v in value.items()))
     return value
+
+
+def engine_look(preset, grain=True):
+    """The engine "look" parameters of a preset (docs/protocol.md), but the LUT and the
+    preview (compiled_look). grain: False to leave the film grain out."""
+    params = {
+        "name": preset.name,
+        "vignette": preset.vignette,
+        "grain": preset.grain if grain else 0.0,
+        "grain_size": preset.grain_size,
+        "grain_colour": preset.grain_colour,
+        "grain_shadows": preset.grain_shadows,
+        "grain_clumps": preset.grain_clumps,
+    }
+    if preset.halation > 0:
+        params.update(
+            halation=preset.halation,
+            halation_radius=preset.halation_radius,
+            halation_threshold=preset.halation_threshold,
+            halation_colour=list(preset.halation_colour),
+        )
+    return params
 
 
 def grain_label(preset):

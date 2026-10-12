@@ -168,6 +168,28 @@ int main()
 		expect(e == f && e != a, "grain: clumps, reproducible");
 	}
 
+	// Halation: a bright square on a dark frame glows red around it; far away, nothing.
+	{
+		std::vector<uint8_t> night(frame_size, 128);
+		std::fill_n(night.begin(), stride * h, 30);
+		for (unsigned y = 20; y < 28; y++)
+			std::fill_n(night.begin() + y * stride + 28, 8, 250);
+		Look look;
+		look.halation = 0.8f;
+		look.halation_radius = 24; // 6 px on this small frame (scaled by its width)
+		auto frame = night;
+		apply_look(look, frame.data(), w, h, stride, 1, 2);
+		uint8_t const *v = frame.data() + stride * h + (stride / 2) * (h / 2);
+		auto v_at = [&](unsigned x, unsigned y) { return int(v[(y / 2) * (stride / 2) + x / 2]); };
+		expect(v_at(24, 24) > 128 + 5, "halation: red next to the light");
+		expect(frame[24 * stride + 24] > 30 + 3, "halation: brighter next to the light");
+		expect(std::abs(v_at(0, 0) - 128) <= 1 && std::abs(frame[0] - 30) <= 1, "halation: nothing far away");
+		look.halation = 0;
+		frame = night;
+		apply_look(look, frame.data(), w, h, stride, 1, 2);
+		expect(frame == night, "halation: off");
+	}
+
 	// The viewfinder preview.
 	{
 		Preview identity;
