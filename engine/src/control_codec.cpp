@@ -164,6 +164,36 @@ json control_value_to_json(ControlValue const &value)
 	}
 }
 
+void remember_controls(libcamera::ControlList &kept, libcamera::ControlList const &list)
+{
+	namespace controls = libcamera::controls;
+	auto is = [&](ControlId const &id, auto value) {
+		return list.contains(id.id()) && list.get(id.id()) == ControlValue(value);
+	};
+	auto in_list = [&](ControlId const &id) { return list.contains(id.id()); };
+	auto stale = [&](unsigned int id) {
+		if (list.contains(id))
+			return false; // replaced anyway
+		if (id == controls::ExposureTime.id())
+			return is(controls::ExposureTimeMode, int32_t(controls::ExposureTimeModeAuto));
+		if (id == controls::AnalogueGain.id())
+			return is(controls::AnalogueGainMode, int32_t(controls::AnalogueGainModeAuto));
+		if (id == controls::ColourGains.id())
+			return is(controls::AwbEnable, true) || in_list(controls::ColourTemperature);
+		if (id == controls::ColourTemperature.id())
+			return is(controls::AwbEnable, true) || in_list(controls::ColourGains);
+		return false;
+	};
+
+	libcamera::ControlList updated; // a ControlList cannot erase
+	for (auto const &[id, value] : kept)
+		if (!stale(id))
+			updated.set(id, value);
+	for (auto const &[id, value] : list)
+		updated.set(id, value);
+	kept = std::move(updated);
+}
+
 json controls_to_json(libcamera::ControlList const &list)
 {
 	json out = json::object();

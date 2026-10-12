@@ -98,6 +98,8 @@ private:
 	void Reopen();
 	void SetTuning();
 	void FindCameraControls();
+	void ReleaseFrames();
+	std::optional<std::array<int64_t, 2>> FrameLimits(Phase phase) const;
 	void OnFrame(CompletedRequestPtr &request);
 	void GrabStill(CompletedRequestPtr &request);
 	void PublishStats(CompletedRequestPtr &request);

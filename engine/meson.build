@@ -29,6 +29,8 @@ executable('dng-roundtrip',
            dependencies : deps)
 
 test('analysis', executable('analysis-test', files('tests/analysis_test.cpp', 'src/analysis.cpp')))
+test('controls', executable('controls-test', files('tests/controls_test.cpp', 'src/control_codec.cpp'),
+                            dependencies : [dependency('libcamera'), dependency('nlohmann_json')]))
 test('look', executable('look-test', files('tests/look_test.cpp', 'src/look.cpp'), dependencies : dependency('threads')))
 # Development tool: an engine look on any picture (tools/look_apply.py), not installed.
 executable('look-apply', files('tests/look_apply.cpp', 'src/look.cpp'),

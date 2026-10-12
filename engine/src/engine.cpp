@@ -203,8 +203,8 @@ int Engine::Run()
 	}
 
 	std::cerr << "pycam-engine: stopping\n";
+	display_.reset(); // planes off, frames given back before the camera stops (see ReleaseFrames)
 	app_.StopCamera();
-	display_.reset(); // planes off, frames given back, before the buffers are freed
 	app_.Teardown();
 	app_.CloseCamera();
 	writer_.Stop(); // finish writing the photos already taken
@@ -287,21 +287,12 @@ void Engine::PostToCameraLoop(RPiCamApp::MsgType type)
 void Engine::Start(Phase phase)
 {
 	StillOptions *options = app_.GetOptions();
-
-	// A manual exposure longer than the viewfinder frame must still be honoured.
-	int64_t manual_exposure = 0;
-	if (user_controls_.get(controls::ExposureTimeMode).value_or(controls::ExposureTimeModeAuto) ==
-		controls::ExposureTimeModeManual)
-		manual_exposure = user_controls_.get(controls::ExposureTime).value_or(0);
-
-	std::optional<std::array<int64_t, 2>> frame_limits;
 	bool const loupe = phase == Phase::Viewfinder && loupe_zoom_ > 1;
 	if (loupe)
 	{
 		// A plain viewfinder, even in ZSL: the crop would also apply to the still stream.
 		options->Set().viewfinder_mode = Mode(kLoupeMode);
 		app_.ConfigureViewfinder();
-		frame_limits = { kViewfinderMinFrameUs, std::max(kViewfinderMaxFrameUs, manual_exposure) };
 	}
 	else if (zsl_)
 	{
@@ -312,7 +303,6 @@ void Engine::Start(Phase phase)
 		options->Set().height = still_size_ ? (*still_size_)[1] : 0;
 		app_.ConfigureZsl(RPiCamApp::FLAG_STILL_RAW);
 		options->Set().denoise = "auto";
-		frame_limits = { kViewfinderMinFrameUs, std::max(kZslMaxFrameUs, manual_exposure) };
 	}
 	else if (phase == Phase::Still)
 	{
@@ -322,21 +312,19 @@ void Engine::Start(Phase phase)
 		options->Set().height = still_size_ ? (*still_size_)[1] : 0;
 		app_.ConfigureStill(RPiCamApp::FLAG_STILL_RAW);
 		options->Set().denoise = "auto";
-		// No frame limits: rpicam lets a still exposure last as long as needed.
 	}
 	else
 	{
 		options->Set().viewfinder_mode = Mode(kViewfinderMode);
 		app_.ConfigureViewfinder();
-		frame_limits = { kViewfinderMinFrameUs, std::max(kViewfinderMaxFrameUs, manual_exposure) };
 	}
 
 	app_.SetControls(user_controls_);
-	if (frame_limits)
+	if (auto limits = FrameLimits(phase))
 	{
-		libcamera::ControlList limits;
-		limits.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(*frame_limits));
-		app_.SetControls(limits);
+		libcamera::ControlList list;
+		list.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(*limits));
+		app_.SetControls(list);
 	}
 	if (loupe)
 		app_.SetControls(LoupeCrop()); // otherwise rpicam sets the full field of view
@@ -346,12 +334,37 @@ void Engine::Start(Phase phase)
 	frames_since_start_ = 0;
 }
 
+std::optional<std::array<int64_t, 2>> Engine::FrameLimits(Phase phase) const
+{
+	if (phase == Phase::Still)
+		return std::nullopt; // rpicam lets a still exposure last as long as needed
+	// A manual exposure longer than the usual frame must still be honoured.
+	int64_t manual_exposure = 0;
+	if (user_controls_.get(controls::ExposureTimeMode).value_or(controls::ExposureTimeModeAuto) ==
+		controls::ExposureTimeModeManual)
+		manual_exposure = user_controls_.get(controls::ExposureTime).value_or(0);
+	// The loupe is a plain viewfinder, even in ZSL.
+	int64_t const longest = zsl_ && loupe_zoom_ <= 1 ? kZslMaxFrameUs : kViewfinderMaxFrameUs;
+	return std::array<int64_t, 2> { kViewfinderMinFrameUs, std::max(longest, manual_exposure) };
+}
+
+void Engine::ReleaseFrames()
+{
+	// The display thread gives its frames back to the camera *before* it stops: a frame
+	// given back goes through RPiCamApp::queueRequest(), which edits a set of requests
+	// that StopCamera() clears without a lock (rpicam-apps 1.13). Both at once corrupted
+	// the heap ("double free or corruption", 2026-10-12, a capture in switch mode while
+	// the display thread was finishing a frame). It is the only other thread holding
+	// frames, and this one hands it none until the camera starts again.
+	if (display_)
+		display_->Reset(); // the last image stays on the screen during the reconfiguration
+}
+
 void Engine::Restart(Phase phase)
 {
 	Clock::time_point t = Clock::now();
+	ReleaseFrames();
 	app_.StopCamera();
-	if (display_)
-		display_->Reset(); // the last image stays on the screen during the reconfiguration
 	app_.Teardown();
 	Start(phase);
 	reconfigure_ms_ = ms_between(t, started_);
@@ -374,9 +387,8 @@ void Engine::Reopen()
 {
 	// A new tuning file: the camera manager must start again (CloseCamera() drops it).
 	Clock::time_point t = Clock::now();
+	ReleaseFrames();
 	app_.StopCamera();
-	if (display_)
-		display_->Reset();
 	app_.Teardown();
 	app_.CloseCamera();
 	SetTuning();
@@ -550,8 +562,12 @@ void Engine::HandleCommand(int client, json const &command, Clock::time_point re
 			for (auto const &[id, value] : list)
 				if (camera_controls_ && camera_controls_->find(id) == camera_controls_->end())
 					throw CommandError("unsupported", control_name(id) + " is not supported by this camera");
-			for (auto const &[id, value] : list)
-				user_controls_.set(id, value);
+			remember_controls(user_controls_, list);
+			// A manual exposure longer than the frames now (or the automatic one back)
+			// needs other frame limits: until the next start, it would be cut short.
+			auto limits = FrameLimits(phase_);
+			if (limits && (list.contains(controls::ExposureTime.id()) || list.contains(controls::ExposureTimeMode.id())))
+				list.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(*limits));
 			app_.SetControls(list);
 		}
 		else if (name == "capture")
