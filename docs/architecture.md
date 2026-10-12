@@ -99,7 +99,7 @@ rpicam-apps installe sa bibliothèque cœur (`librpicam_app.so`, pkg-config `rpi
   - réutiliser des tampons préalloués pour la copie, ce qui évite les fautes de page (65–165 ms aujourd'hui) ;
   - l'encodeur JPEG matériel du VC4 (V4L2 M2M) ;
   - la compression LJ92 du DNG.
-- **Expositions longues.** L'IMX477 accepte des poses de plusieurs minutes (la limite exacte est à mesurer). La visée ne peut pas suivre : on affiche un compte à rebours.
+- **Expositions longues** : voir §2.4.
 
 ### 2.3 Analyse d'image et aides
 
@@ -129,6 +129,19 @@ rpicam-apps installe sa bibliothèque cœur (`librpicam_app.so`, pkg-config `rpi
 
 Plus tard, si le CPU ne suit pas, le peaking pourra passer en NEON, ou en shader GLES2 sur le GPU VC4.
 
+### 2.4 Poses longues et pose B
+
+- **Limites mesurées** (2026-10-12) : `ExposureTime` va de 56 µs à **674 s** (11'14"), le gain analogique de 1 à 22,3.
+- **Une pose longue est une photo comme une autre**, prise en mode photo (bascule) : aucune image n'est jetée au démarrage, la photo arrive après la pose plus ~0,56 s (2 s → 2,57 s ; 8 s → 8,56 s). En ZSL, dont le flux continu ne peut pas faire de longues images, une pose plus longue que ses images (250 ms) passe aussi par le mode photo (2 s → 2,54 s, mesuré).
+- **La visée garde au moins 10 i/s** (4 en ZSL). Une pose manuelle plus longue que l'image de visée (100 ms) est **simulée** : l'image la plus longue, avec un gain augmenté d'autant (pose × gain conservés), tant que le gain du capteur le permet. Au-delà (ISO 100 au-delà de ~2 s, ISO 800 au-delà de ~0,3 s), la visée passe en **exposition automatique** pour cadrer, l'évènement `stats` le signale et le HUD affiche « VISÉE AUTO ». Le posemètre du mode M se calcule alors sur les réglages, pas sur ce que fait le capteur.
+- **Pendant la pose**, le moteur annonce son début (`exposing`), l'écran garde la dernière image de visée, et l'application affiche le temps restant. Le déclencheur l'annule (`capture_cancel`) : rien n'est écrit, la visée revient aussitôt, et le numéro de la photo reste pris (comme sur un appareil qui a déjà nommé sa prise). Comme aucune image n'arrive pendant des minutes, le moteur se réveille tout seul (toutes les 250 ms) quand il a quelque chose à faire, par exemple une annulation.
+- **La pose B.** Le capteur fixe la durée d'une pose avant de la commencer : impossible de la terminer au relâchement. La pose B est donc **une somme de poses de 1 s**, prises sans interruption en mode photo (`capture` avec `stack`), jusqu'à `capture_stop` ou 30 minutes. Elle finit donc jusqu'à 1 s après le relâchement.
+  - **Le DNG est la somme exacte des RAW** (`stack.cpp`, sommes sur 32 bits, ~49 Mo) : le niveau de noir n'est compté qu'une fois, le bruit autour du noir se moyenne au lieu d'être écrêté image par image, et le blanc sature comme sur le capteur. C'est l'équivalent d'une seule pose aussi longue ; seul le bruit de lecture croît, comme la racine du nombre d'images.
+  - **Le JPEG est développé par le moteur** à partir de cette somme (`develop.cpp`), puisque l'ISP du Pi ne retraite pas un RAW : pixels chauds (un pixel isolé, 4 fois au-dessus de tous ses voisins, est remplacé), dématriçage Malvar-He-Cutler, gains de balance et gain numérique écrêtés à 1 comme dans l'ISP (sinon les hautes lumières où le vert sature virent au magenta : vu au premier essai), matrice couleur de l'ISP pour cette image (métadonnées), courbe de tons du tuning (`rpi.contrast`), YUV BT.601 pleine plage 4:2:0. Il reste ainsi sur la base pycam, et le preset s'applique ensuite comme à toute photo. Il n'y a ni débruitage, ni renforcement de la netteté, ni correction de l'ombrage de l'objectif.
+  - **Mesuré** (2026-10-12, 3 poses de 1 s contre une pose de 3 s, même scène, ISO 100) : même pose totale (3,000 s) ; sur une grille de 36 zones, le JPEG développé et celui de l'ISP diffèrent de 0 à 3 % sur chaque couleur. Le développement prend ~2 s pour 12 Mpx (3 fils), plus le look (~1,7 s) et l'écriture.
+  - **Deux tampons** en mode photo pour un empilement : avec un seul, la caméra n'avait où mettre l'image suivante pendant l'addition de la précédente, et perdait une image sur deux (des poses de 1 s espacées de 2 s, donc des trous dans la pose). Avec deux, elles se suivent : 5 poses de 1 s en 5,7 s depuis la commande, démarrage compris.
+  - Le même mécanisme sait faire la **moyenne** (moins de bruit) et le **maximum** (traînées de lumière) des images : ce sera la base du stacking.
+
 ## 3. Modes d'exposition (dans l'application)
 
 L'ouverture est réglée sur l'objectif, donc les modes « classiques » se traduisent ainsi en contrôles libcamera :
@@ -136,16 +149,16 @@ L'ouverture est réglée sur l'objectif, donc les modes « classiques » se trad
 | Mode | Vitesse (`ExposureTime`) | ISO (`AnalogueGain`) | Remarque |
 |---|---|---|---|
 | **P** (auto) | auto | auto | Correction d'exposition (`ExposureValue`) et mode de mesure (`AeMeteringMode`). |
-| **S** (priorité vitesse) | fixe | auto | — |
+| **S** (priorité vitesse) | fixe, 1 s au plus | auto | L'exposition automatique a besoin de quelques images de la pose pour se régler : au-delà de 1 s, ce serait des dizaines de secondes. |
 | **A** (priorité ISO) | auto | fixe | Correspond à « l'aperture priority » des specs d'origine : l'ouverture est sur la bague et l'appareil choisit la vitesse. |
-| **M** (manuel) | fixe | fixe | Le posemètre indique l'écart en IL. |
+| **M** (manuel) | fixe, jusqu'à 10'40", puis B | fixe | Le posemètre indique l'écart en IL (pas en B, qui n'a pas de durée). Au-delà de 1/10 s, la visée simule la pose (§2.4). |
 
 À ces modes s'ajoutent :
 
 - ✅ **Balance des blancs** : automatique, préréglages (`AwbMode`), ou manuelle.
   - Le **Kelvin** passe par `ColourTemperature` : l'ISP en déduit les gains par la courbe de calibration de l'IMX477 (3000 K → gains R/B 2,08 / 2,20 ; 6500 K → 3,24 / 1,39, mesurés).
   - La **mémorisation** fige les gains (`ColourGains`) trouvés par la balance automatique, par exemple sur une charte grise.
-  - Les deux demandent `AwbEnable` à faux, et un préréglage le remet à vrai. Les valeurs manuelles restées en mémoire dans le moteur sont alors ignorées (vérifié).
+  - Les deux demandent `AwbEnable` à faux, et un préréglage le remet à vrai. Le moteur oublie alors les gains ou la température manuels : gardés, ils recoupaient la balance automatique au redémarrage suivant de la caméra (§10, point 12).
 - ✅ **Mode de mesure** (`AeMeteringMode`, ligne en tête du menu rapide) : pondérée centrale (par défaut), spot, matricielle.
   - L'ISP découpe l'image en 15 zones de statistiques. Chaque mode est un jeu de poids sur ces zones, défini dans le fichier de tuning (`/usr/share/libcamera/ipa/rpi/vc4/imx477.json`) : centrale `[3,3,3,2,2,2,2,1,1,1,1,0,0,0,0]`, spot `[2,1,1,0…]`, matricielle tous à 1.
   - Mesuré sur une même scène : spot −1,6 IL, matricielle +0,4 IL par rapport à la centrale.
@@ -202,7 +215,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | `settings` | Réglages persistants dans `~/.config/pycam/settings.json`, écriture atomique. JSON plutôt que TOML : la bibliothèque standard sait le lire *et* l'écrire. | ✅ |
 | `storage` | DCIM, numérotation persistante, espace libre. | ✅ (suppression à venir) |
 | `state` | Machine d'états : `VIEW` → `MENU` / `PLAYBACK` / `SLEEP`. | ⬜ |
-| `drive` | Modes de déclenchement : vue par vue, rafale, retardateur, intervallomètre, bracketing (voir plus bas). Pose B à venir. | ✅ |
+| `drive` | Modes de déclenchement : vue par vue, rafale, retardateur, intervallomètre, bracketing ; et la pose B, et l'annulation d'une pose longue (voir plus bas). | ✅ |
 | `sensors` | IMU (niveau, orientation), batterie, RTC. | ⬜ |
 | `web` | `aiohttp`, port 8080, réseau local seulement : visée (une image par seconde, prise par la commande `snapshot`), déclencheur, preset et grain, galerie avec téléchargement et suppression, installation de presets. Une page unique sans dépendance (`web/index.html`). | ✅ |
 
@@ -268,6 +281,13 @@ Pendant la revue après la prise, toute touche la ferme ; le déclencheur la fer
 | Bracketing | 3 ou 5 vues autour de la mesure (0, −, +, −−, ++), à ±⅓, ±⅔ ou ±1 IL. L'exposition mesurée est figée (temps et gain manuels) et c'est le temps qui varie (le gain en S, où la vitesse est celle de l'utilisateur), ce qui ne dépend pas de la convergence de l'exposition automatique. Une balance automatique est figée aussi, pour que les vues se fusionnent. Pendant la série, les molettes d'exposition sont bloquées et l'apprentissage du posemètre suspendu ; l'exposition de l'utilisateur revient à la fin. |
 
 Le déclencheur pressé pendant une séquence l'arrête (sauf la rafale, qu'il prolonge). Une séquence attend la file d'écriture (jusqu'à 15 s) au lieu d'afficher « Occupé ». Le bandeau montre le mode en haut à gauche (« RAFALE », « RET 10 s », « INT 10 s », « BKT 3 × 1 ») et, pendant la séquence, sa progression en orange (« INT 4/50 · 8 s », « BKT 2/3 · −1.0 »). Pas de revue après chaque vue d'une rafale ou d'un bracketing : seule la dernière est montrée, à la fin. L'interface web affiche la même chose, et son bouton devient « Arrêter la séquence ».
+
+**Les poses longues** (2026-10-12, §2.4). En M, la molette avant va jusqu'à 10'40" (la limite du capteur, 674 s), puis **B**.
+
+- Une pose de 1 s et plus affiche son temps restant en gros au centre de l'écran, sous « POSE ». Le déclencheur l'annule (« Pose annulée »).
+- **B** : la pose dure tant que le déclencheur est tenu, ou, au choix (MENU › Prise de vue › Pose B), d'un appui à l'autre, pour ne pas tenir le bouton pendant des minutes. Depuis l'interface web, toujours d'un appui à l'autre. Le temps écoulé s'affiche sous « POSE B ». Un appui pendant sa dernière seconde (après l'arrêt) ne fait rien : il ne doit jamais la perdre.
+- Pendant une pose, les molettes d'exposition sont bloquées (« Pose en cours ») ; un changement de preset ou de balance attend la fin de la pose pour s'appliquer.
+- B ignore le mode de déclenchement. Les poses longues, elles, se combinent avec lui : un intervallomètre de poses de 30 s fait un timelapse de nuit, la file d'attente patientant le temps de la pose.
 
 **Les molettes** (décidé le 2026-10-11). Chacune règle sa valeur quand elle est manuelle, sinon la correction d'exposition :
 
@@ -376,6 +396,7 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 10. ✅ **Commande de la correction d'exposition** : la molette dont la valeur est automatique la règle (§5). Plus de touche dédiée.
 11. ✅ **Course à l'arrêt de la caméra** (2026-10-12, vue pendant les essais du bracketing : deux plantages du moteur, « double free or corruption »). Dans rpicam-apps 1.13, `StopCamera()` vide la liste des requêtes rendues à l'application sans verrou, alors que `queueRequest()` y cherche et y efface, verrou pris, quand un autre fil rend une image. Le fil d'affichage rendait parfois la sienne à ce moment-là. Le moteur lui fait désormais rendre ses images *avant* d'arrêter la caméra (`ReleaseFrames`). 200 captures de suite en bascule sans plantage ensuite ; la course étant rare, aucun essai ne l'a reproduite à la demande avant le correctif.
 12. ✅ **Contrôles mémorisés** (2026-10-12). Le moteur rend tous les contrôles reçus à la caméra à chaque redémarrage (photo en bascule, loupe, ZSL). Des gains de balance reçus une fois (balance « Mémorisée », bracketing) y restaient après le retour en Auto, et coupaient la balance automatique à la photo suivante. Désormais, un mode automatique oublie la valeur manuelle qu'il remplace, et les gains et la température s'excluent (`remember_controls`, testé). De même, une pose manuelle plus longue que l'image de visée allonge tout de suite les limites de durée d'image ; avant, il fallait attendre un redémarrage, et en ZSL une pose de ½ s était coupée à ¼ s.
+13. ✅ **Compiler le moteur sur le Pi 3B** (2026-10-12). Un compilateur prend jusqu'à 690 Mo sur `engine.cpp` (nlohmann/json, `-O3`). Deux en parallèle ont saturé le Pi jusqu'à ne plus répondre, même en SSH : il a fallu le redémarrer à la main. `tools/deploy.sh` n'en lance plus qu'un (~10 min pour tout recompiler).
 
 ## 11. Décisions (résumé)
 

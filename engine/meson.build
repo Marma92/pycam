@@ -32,6 +32,10 @@ test('analysis', executable('analysis-test', files('tests/analysis_test.cpp', 's
 test('controls', executable('controls-test', files('tests/controls_test.cpp', 'src/control_codec.cpp'),
                             dependencies : [dependency('libcamera'), dependency('nlohmann_json')]))
 test('look', executable('look-test', files('tests/look_test.cpp', 'src/look.cpp'), dependencies : dependency('threads')))
+test('stack', executable('stack-test',
+                         files('tests/stack_test.cpp', 'src/stack.cpp', 'src/develop.cpp', 'src/dng_writer.cpp'),
+                         include_directories : lj92_inc,
+                         dependencies : deps))
 # Development tool: an engine look on any picture (tools/look_apply.py), not installed.
 executable('look-apply', files('tests/look_apply.cpp', 'src/look.cpp'),
            dependencies : [dependency('threads'), dependency('nlohmann_json')])
@@ -48,6 +52,8 @@ executable('pycam-engine',
                'src/focus_aids.cpp',
                'src/analysis.cpp',
                'src/look.cpp',
+               'src/stack.cpp',
+               'src/develop.cpp',
            ),
            # Vendored code (see its README): a system include, its warnings are not ours.
            include_directories : lj92_inc,

@@ -11,6 +11,7 @@
 
 #include "image/image.hpp"
 
+#include "develop.hpp"
 #include "dng_writer.hpp"
 
 using nlohmann::json;
@@ -144,6 +145,38 @@ json CaptureWriter::Write(CaptureJob &job)
 		if (!parent.empty())
 			fs::create_directories(parent);
 
+		bool const stacked = job.stack != nullptr;
+		if (stacked)
+		{
+			auto t = std::chrono::steady_clock::now();
+			std::vector<uint16_t> pixels = job.stack->Take((1u << raw_bits(job.raw_info)) - 1);
+			unsigned const width = job.stack->width(), height = job.stack->height();
+			job.stack.reset();
+			timings["stack_ms"] = ms_since(t);
+			// The DNG first: developing fixes the hot pixels in place.
+			if (job.dng)
+			{
+				t = std::chrono::steady_clock::now();
+				std::string filename = job.base_path + ".DNG";
+				DngOptions options { job.compress_dng, job.options->Get().exif };
+				save_atomically(filename,
+								[&](std::string const &tmp)
+								{ dng_write_unpacked(pixels, job.raw_info, job.metadata, tmp, job.camera_model, options); });
+				timings["dng_ms"] = ms_since(t);
+				files.push_back(filename);
+				on_event_({ { "event", "file_saved" }, { "capture_id", job.id }, { "path", filename } });
+			}
+			if (job.jpeg)
+			{
+				t = std::chrono::steady_clock::now();
+				DevelopParams params = develop_params(job.metadata, job.raw_info);
+				if (job.tone)
+					params.tone = *job.tone;
+				develop(pixels, width, height, params, job.yuv.data(), job.yuv_info, kLookThreads);
+				timings["develop_ms"] = ms_since(t);
+			}
+		}
+
 		if (job.jpeg)
 		{
 			Planes mem { libcamera::Span<uint8_t>(job.yuv.data(), job.yuv.size()) };
@@ -175,7 +208,7 @@ json CaptureWriter::Write(CaptureJob &job)
 			// The JPEG alone is enough for the review: say so before writing the DNG.
 			on_event_({ { "event", "file_saved" }, { "capture_id", job.id }, { "path", filename } });
 		}
-		if (job.dng)
+		if (job.dng && !stacked)
 		{
 			auto t = std::chrono::steady_clock::now();
 			std::string filename = job.base_path + ".DNG";

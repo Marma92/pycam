@@ -58,6 +58,7 @@ class Hud:
         self.font_bold = ImageFont.truetype(FONT_BOLD, max(12, round(40 * self.s)))
         self.font_message = ImageFont.truetype(FONT_BOLD, max(14, round(52 * self.s)))
         self.font_countdown = ImageFont.truetype(FONT_BOLD, max(40, round(300 * self.s)))
+        self.font_timer = ImageFont.truetype(FONT_BOLD, max(30, round(200 * self.s)))
         self._backgrounds = {}
         self._review = (None, None)  # (path, image fitted to the image area)
         self._full = (None, None)  # (path, full resolution image), for the playback loupe
@@ -105,6 +106,8 @@ class Hud:
             self._loupe(d, view)
         if view.countdown:  # whatever the display: the self-timer is running
             self._countdown(d, view.countdown)
+        if view.exposure_timer:  # and the exposure
+            self._exposure_timer(d, view.exposure_timer, view.exposure_label)
         if view.menu:
             self._menu(d, view)
         if view.message:
@@ -271,6 +274,8 @@ class Hud:
 
         if view.drive:
             badge(view.drive, AMBER if view.drive_running else WHITE)
+        if view.viewfinder_auto:  # the exposure is too long to be shown
+            badge("VISÉE AUTO", AMBER)
         if view.zsl:
             badge("ZSL", AMBER)
         if view.peaking:
@@ -386,6 +391,15 @@ class Hud:
             stroke_width=self.px(6),
             stroke_fill=(0, 0, 0, 160),
         )
+
+    def _exposure_timer(self, d, timer, label):
+        """A long exposure's time left (a bulb's so far), big, over the last image shown."""
+        x, y, w, h = self.rect
+        cx, cy = x + w / 2, y + h * 0.45
+        stroke = {"stroke_width": self.px(5), "stroke_fill": (0, 0, 0, 160)}
+        d.text((cx, cy), timer, font=self.font_timer, fill=(255, 255, 255, 235), anchor="mm", **stroke)
+        top = cy - self.font_timer.size * 0.75
+        d.text((cx, top), label, font=self.font_bold, fill=AMBER, anchor="md", **stroke)
 
     def _message(self, d, message, warning):
         x, y, w, h = self.rect

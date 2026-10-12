@@ -21,6 +21,7 @@ Ce que l'appareil fait aujourd'hui :
 - **Mise au point manuelle** : peaking, zébras, loupe ×5 / ×10 déplaçable.
 - **Déclenchement** en bascule (visée fluide) ou ZSL (sans latence) ; JPEG et DNG (compressé sans perte), écrits de façon durable.
 - **Modes de déclenchement** : vue par vue, rafale, retardateur 2 s / 10 s, intervallomètre, bracketing d'exposition.
+- **Poses longues** jusqu'à 10'40", avec compte à rebours, et **pose B** jusqu'à 30 min (une somme de poses de 1 s, développée par le moteur).
 - **Simulations de pellicules** : presets ouverts (une recette TOML, éventuellement une LUT), appliqués au JPEG avec grain, halation et vignettage, aperçus en visée ; le DNG reste neutre. Livrés : Standard, Base, Portrait 400, Velours 50, Cinéma 800T (+2), Triple-X 400. On peut écrire les siens (`docs/presets.md`).
 - **Menus** Q (12 réglages de prise de vue) et MENU (tout le reste), **lecture** des photos avec loupe et suppression.
 - **Interface web** sur le réseau local (port 8080) : visée, déclencheur, choix du preset, galerie et téléchargement, installation de presets.

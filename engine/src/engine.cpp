@@ -16,6 +16,8 @@
 
 #include "analysis.hpp"
 #include "control_codec.hpp"
+#include "develop.hpp"
+#include "dng_writer.hpp"
 
 namespace controls = libcamera::controls;
 using libcamera::Stream;
@@ -45,6 +47,28 @@ constexpr float kLoupeMaxZoom = 16;
 // How long to wait for the first real frame after a start before stopping the camera
 // anyway (a camera that delivers nothing does not deadlock either). See Run().
 constexpr auto kStartupGrace = std::chrono::seconds(3);
+
+// Stacks: 30 minutes of 1 s frames at most (the exposure time of the metadata is in
+// microseconds, on 32 bits: 35 minutes).
+constexpr unsigned kMaxStackFrames = 1800;
+constexpr int64_t kMaxStackExposureUs = 30LL * 60 * 1'000'000;
+
+std::string tuning_path(std::string const &dir, std::string const &name)
+{
+	if (dir.empty() || name.empty())
+		return "";
+	return (std::filesystem::path(dir) / (name + ".json")).string();
+}
+
+// A copy of `list` without the controls `drop`.
+libcamera::ControlList without(libcamera::ControlList const &list, std::initializer_list<unsigned int> drop)
+{
+	libcamera::ControlList out;
+	for (auto const &[id, value] : list)
+		if (std::find(drop.begin(), drop.end(), id) == drop.end())
+			out.set(id, value);
+	return out;
+}
 
 // A command that cannot be executed; `code` is meant for the app, `what()` for humans.
 struct CommandError : std::runtime_error
@@ -92,6 +116,7 @@ Engine::Engine(EngineConfig cfg)
 	: cfg_(std::move(cfg)), tuning_(export_tuning(cfg_.tuning_dir, cfg_.tuning)), zsl_(cfg_.zsl),
 	  still_denoise_(cfg_.still_denoise)
 {
+	tone_ = std::make_shared<const std::vector<uint8_t>>(tone_curve(tuning_path(cfg_.tuning_dir, tuning_)));
 	if (cfg_.verbose < 2)
 		setenv("LIBCAMERA_LOG_LEVELS", "*:ERROR", 0);
 
@@ -127,6 +152,26 @@ int Engine::Run()
 				   PostToCameraLoop(RPiCamApp::MsgType::RequestComplete);
 			   });
 	writer_.Start([this](json event) { ipc_.Broadcast(event); });
+	ticker_ = std::thread(
+		[this]
+		{
+			while (!ticker_quit_)
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(250));
+				if (tick_)
+					PostToCameraLoop(RPiCamApp::MsgType::RequestComplete);
+			}
+		});
+	// Joined however Run() ends: a thread left joinable would abort the program.
+	struct TickerStop
+	{
+		Engine *engine;
+		~TickerStop()
+		{
+			engine->ticker_quit_ = true;
+			engine->ticker_.join();
+		}
+	} ticker_stop { this };
 
 	TryDisplay();
 
@@ -184,6 +229,12 @@ int Engine::Run()
 			try
 			{
 				Restart(phase);
+				if (phase == Phase::Still && pending_)
+					// The exposure starts now: what a countdown on the screen needs.
+					ipc_.Broadcast({ { "event", "exposing" },
+									 { "capture_id", pending_->id },
+									 { "exposure_us", ManualExposure() },
+									 { "stack", pending_->stack != nullptr } });
 			}
 			catch (std::exception const &e)
 			{
@@ -200,6 +251,8 @@ int Engine::Run()
 				Restart(Phase::Viewfinder);
 			}
 		}
+		// Something to do as soon as the camera may stop: do not wait for a frame.
+		tick_ = reopen_ || next_phase_.has_value();
 	}
 
 	std::cerr << "pycam-engine: stopping\n";
@@ -294,6 +347,18 @@ void Engine::Start(Phase phase)
 		options->Set().viewfinder_mode = Mode(kLoupeMode);
 		app_.ConfigureViewfinder();
 	}
+	else if (phase == Phase::Still)
+	{
+		// A stack needs a second buffer: with one, the camera has nowhere to put the next
+		// frame while this one is added up, and drops every other frame (measured: 1 s
+		// exposures 2 s apart).
+		options->Set().buffer_count = pending_ && pending_->stack ? 2 : 1;
+		options->Set().denoise = still_denoise_;
+		options->Set().width = still_size_ ? (*still_size_)[0] : 0; // 0: full sensor
+		options->Set().height = still_size_ ? (*still_size_)[1] : 0;
+		app_.ConfigureStill(RPiCamApp::FLAG_STILL_RAW);
+		options->Set().denoise = "auto";
+	}
 	else if (zsl_)
 	{
 		options->Set().buffer_count = cfg_.zsl_buffers;
@@ -304,28 +369,13 @@ void Engine::Start(Phase phase)
 		app_.ConfigureZsl(RPiCamApp::FLAG_STILL_RAW);
 		options->Set().denoise = "auto";
 	}
-	else if (phase == Phase::Still)
-	{
-		options->Set().buffer_count = 1;
-		options->Set().denoise = still_denoise_;
-		options->Set().width = still_size_ ? (*still_size_)[0] : 0; // 0: full sensor
-		options->Set().height = still_size_ ? (*still_size_)[1] : 0;
-		app_.ConfigureStill(RPiCamApp::FLAG_STILL_RAW);
-		options->Set().denoise = "auto";
-	}
 	else
 	{
 		options->Set().viewfinder_mode = Mode(kViewfinderMode);
 		app_.ConfigureViewfinder();
 	}
 
-	app_.SetControls(user_controls_);
-	if (auto limits = FrameLimits(phase))
-	{
-		libcamera::ControlList list;
-		list.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(*limits));
-		app_.SetControls(list);
-	}
+	app_.SetControls(CameraControls(phase, phase == Phase::Viewfinder ? &viewfinder_exposure_ : nullptr));
 	if (loupe)
 		app_.SetControls(LoupeCrop()); // otherwise rpicam sets the full field of view
 	app_.StartCamera();
@@ -334,18 +384,55 @@ void Engine::Start(Phase phase)
 	frames_since_start_ = 0;
 }
 
-std::optional<std::array<int64_t, 2>> Engine::FrameLimits(Phase phase) const
+int64_t Engine::ManualExposure() const
 {
-	if (phase == Phase::Still)
-		return std::nullopt; // rpicam lets a still exposure last as long as needed
-	// A manual exposure longer than the usual frame must still be honoured.
-	int64_t manual_exposure = 0;
-	if (user_controls_.get(controls::ExposureTimeMode).value_or(controls::ExposureTimeModeAuto) ==
+	if (user_controls_.get(controls::ExposureTimeMode).value_or(controls::ExposureTimeModeAuto) !=
 		controls::ExposureTimeModeManual)
-		manual_exposure = user_controls_.get(controls::ExposureTime).value_or(0);
-	// The loupe is a plain viewfinder, even in ZSL.
+		return 0;
+	return user_controls_.get(controls::ExposureTime).value_or(0);
+}
+
+libcamera::ControlList Engine::CameraControls(Phase phase, std::string *viewfinder) const
+{
+	// The photo: exactly what was asked, as long as it takes (no frame limits).
+	if (viewfinder)
+		viewfinder->clear();
+	if (phase == Phase::Still)
+		return user_controls_;
+
+	// The viewfinder keeps at least 10 frames a second (4 in ZSL; the loupe is a plain
+	// viewfinder). An exposure that fits is shown as it is; a longer manual one with a
+	// manual gain is simulated: the longest frame, its gain raised as much; beyond the
+	// sensor's gain, the viewfinder exposes automatically (the meter tells the rest).
 	int64_t const longest = zsl_ && loupe_zoom_ <= 1 ? kZslMaxFrameUs : kViewfinderMaxFrameUs;
-	return std::array<int64_t, 2> { kViewfinderMinFrameUs, std::max(longest, manual_exposure) };
+	int64_t const manual = ManualExposure();
+	bool const manual_gain = user_controls_.get(controls::AnalogueGainMode).value_or(controls::AnalogueGainModeAuto) ==
+							 controls::AnalogueGainModeManual;
+	libcamera::ControlList list = user_controls_;
+	int64_t frame_max = std::max(longest, manual);
+	if (manual > longest && manual_gain)
+	{
+		float const gain = user_controls_.get(controls::AnalogueGain).value_or(1.0f) * manual / longest;
+		if (gain <= max_gain_)
+		{
+			list.set(controls::ExposureTime, static_cast<int32_t>(longest));
+			list.set(controls::AnalogueGain, gain);
+			if (viewfinder)
+				*viewfinder = "simulated";
+		}
+		else
+		{
+			list = without(list, { controls::ExposureTime.id(), controls::AnalogueGain.id() });
+			list.set(controls::ExposureTimeMode, controls::ExposureTimeModeAuto);
+			list.set(controls::AnalogueGainMode, controls::AnalogueGainModeAuto);
+			if (viewfinder)
+				*viewfinder = "auto";
+		}
+		frame_max = longest;
+	}
+	std::array<int64_t, 2> const limits { kViewfinderMinFrameUs, frame_max };
+	list.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(limits));
+	return list;
 }
 
 void Engine::ReleaseFrames()
@@ -373,6 +460,7 @@ void Engine::Restart(Phase phase)
 void Engine::SetTuning()
 {
 	tuning_ = export_tuning(cfg_.tuning_dir, tuning_);
+	tone_ = std::make_shared<const std::vector<uint8_t>>(tone_curve(tuning_path(cfg_.tuning_dir, tuning_)));
 }
 
 void Engine::FindCameraControls()
@@ -381,6 +469,12 @@ void Engine::FindCameraControls()
 	for (auto const &camera : app_.GetCameras())
 		if (camera->id() == app_.CameraId())
 			camera_controls_ = &camera->controls();
+	if (camera_controls_)
+	{
+		auto it = camera_controls_->find(controls::AnalogueGain.id());
+		if (it != camera_controls_->end())
+			max_gain_ = it->second.max().get<float>();
+	}
 }
 
 void Engine::Reopen()
@@ -411,7 +505,12 @@ void Engine::OnFrame(CompletedRequestPtr &request)
 
 	if (phase_ == Phase::Still)
 	{
-		// Switch strategy: the first full resolution frame is the photo.
+		// The first full resolution frame is the photo; a stack takes them until it stops.
+		if (pending_ && pending_->stack)
+		{
+			StackFrame(request);
+			return;
+		}
 		if (pending_)
 			GrabStill(request);
 		next_phase_ = Phase::Viewfinder;
@@ -435,18 +534,95 @@ void Engine::OnFrame(CompletedRequestPtr &request)
 	}
 }
 
-void Engine::GrabStill(CompletedRequestPtr &request)
+std::unique_ptr<CaptureJob> Engine::NewJob(PendingCapture const &capture, CompletedRequestPtr &request)
 {
-	PendingCapture capture = std::move(*pending_);
-	pending_.reset();
-	Clock::time_point t_frame = Clock::now();
-
 	auto job = std::make_unique<CaptureJob>();
 	job->id = capture.id;
 	job->base_path = capture.base_path;
 	job->jpeg = capture.jpeg;
 	job->dng = capture.dng;
 	job->compress_dng = capture.compress_dng;
+	job->metadata = request->metadata;
+	job->options = std::make_unique<StillOptions>();
+	job->options->Set() = app_.GetOptions()->Get();
+	job->options->Set().quality = capture.quality;
+	job->options->Set().exif = capture.exif;
+	job->camera_model = app_.CameraModel();
+	job->look = look_;
+	job->base_jpeg_path = capture.base_jpeg_path;
+	return job;
+}
+
+void Engine::StackFrame(CompletedRequestPtr &request)
+{
+	PendingCapture &capture = *pending_;
+	StreamInfo raw_info;
+	Stream *raw = app_.RawStream(&raw_info);
+	if (!raw)
+		throw std::runtime_error("stack: no raw stream");
+	{
+		BufferReadSync sync(&app_, request->buffers[raw]);
+		int const bits = raw_bits(raw_info);
+		unsigned black = 4096u >> (16 - bits);
+		if (auto levels = request->metadata.get(controls::SensorBlackLevels))
+			black = static_cast<unsigned>((*levels)[0]) >> (16 - bits);
+		capture.stack->Add(sync.Get()[0].data(), raw_info, black);
+	}
+	FrameInfo info(request);
+	capture.stack_exposure_us += static_cast<int64_t>(info.exposure_time);
+	unsigned const frames = capture.stack->frames();
+	ipc_.Broadcast({ { "event", "stack_frame" },
+					 { "capture_id", capture.id },
+					 { "frames", frames },
+					 { "exposure_us", capture.stack_exposure_us } });
+	bool const last = capture.stop || (capture.stack_frames && frames >= capture.stack_frames) ||
+					  frames >= kMaxStackFrames || capture.stack_exposure_us + info.exposure_time > kMaxStackExposureUs;
+	if (!last)
+		return;
+
+	PendingCapture done = std::move(*pending_);
+	pending_.reset();
+	auto job = NewJob(done, request);
+	app_.RawStream(&job->raw_info);
+	app_.StillStream(&job->yuv_info);
+	if (done.jpeg)
+		job->yuv.resize(static_cast<size_t>(job->yuv_info.stride) * job->yuv_info.height * 3 / 2);
+	job->stack = std::move(done.stack);
+	job->tone = tone_;
+	// The photo's exposure: all of them (mean, max: one of them).
+	int64_t const exposure = job->stack->mode() == RawStack::Mode::Add ? done.stack_exposure_us : info.exposure_time;
+	job->metadata.set(controls::ExposureTime, static_cast<int32_t>(std::min<int64_t>(exposure, INT32_MAX)));
+
+	ipc_.Broadcast({ { "event", "captured" },
+					 { "capture_id", done.id },
+					 { "latency_ms", ms_between(done.t_command, Clock::now()) },
+					 { "exposure_us", exposure },
+					 { "frames", frames },
+					 { "analogue_gain", info.analogue_gain },
+					 { "digital_gain", info.digital_gain } });
+	writer_.Push(std::move(job));
+	next_phase_ = Phase::Viewfinder;
+}
+
+json Engine::CancelCapture()
+{
+	if (!pending_)
+		return { { "cancelled", false } };
+	uint64_t const id = pending_->id;
+	pending_.reset();
+	if (phase_ == Phase::Still || next_phase_)
+		next_phase_ = Phase::Viewfinder;
+	ipc_.Broadcast({ { "event", "capture_error" }, { "capture_id", id }, { "error", "cancelled" } });
+	return { { "cancelled", true } };
+}
+
+void Engine::GrabStill(CompletedRequestPtr &request)
+{
+	PendingCapture capture = std::move(*pending_);
+	pending_.reset();
+	Clock::time_point t_frame = Clock::now();
+
+	auto job = NewJob(capture, request);
 	if (capture.jpeg)
 	{
 		Stream *still = app_.StillStream(&job->yuv_info);
@@ -461,14 +637,6 @@ void Engine::GrabStill(CompletedRequestPtr &request)
 		auto const &planes = sync.Get();
 		job->raw.assign(planes[0].begin(), planes[0].end());
 	}
-	job->metadata = request->metadata;
-	job->options = std::make_unique<StillOptions>();
-	job->options->Set() = app_.GetOptions()->Get();
-	job->options->Set().quality = capture.quality;
-	job->options->Set().exif = capture.exif;
-	job->camera_model = app_.CameraModel();
-	job->look = look_;
-	job->base_jpeg_path = capture.base_jpeg_path;
 
 	FrameInfo info(request);
 	json event = {
@@ -480,7 +648,7 @@ void Engine::GrabStill(CompletedRequestPtr &request)
 		{ "analogue_gain", info.analogue_gain },
 		{ "digital_gain", info.digital_gain },
 	};
-	if (!zsl_)
+	if (!zsl_ || phase_ == Phase::Still)
 	{
 		event["reconfigure_ms"] = reconfigure_ms_;
 		event["first_frame_ms"] = ms_between(started_, t_frame);
@@ -516,6 +684,8 @@ void Engine::PublishStats(CompletedRequestPtr &request)
 	event["colour_gains"] = frame.colour_gains;
 	event["focus_fom"] = frame.focus;
 	event["ae_converged"] = frame.aelock;
+	if (!viewfinder_exposure_.empty())
+		event["viewfinder"] = viewfinder_exposure_;
 	auto const &metadata = request->metadata;
 	if (auto lux = metadata.get(controls::Lux))
 		event["lux"] = *lux;
@@ -563,15 +733,36 @@ void Engine::HandleCommand(int client, json const &command, Clock::time_point re
 				if (camera_controls_ && camera_controls_->find(id) == camera_controls_->end())
 					throw CommandError("unsupported", control_name(id) + " is not supported by this camera");
 			remember_controls(user_controls_, list);
-			// A manual exposure longer than the frames now (or the automatic one back)
-			// needs other frame limits: until the next start, it would be cut short.
-			auto limits = FrameLimits(phase_);
-			if (limits && (list.contains(controls::ExposureTime.id()) || list.contains(controls::ExposureTimeMode.id())))
-				list.set(controls::FrameDurationLimits, libcamera::Span<const int64_t, 2>(*limits));
+			// The exposure as the camera must run it now: the viewfinder may simulate a long
+			// one, and a longer manual exposure (or the automatic one back) needs other
+			// frame limits; until the next start, it would be cut short.
+			std::initializer_list<unsigned int> const exposure_ids = {
+				controls::ExposureTime.id(), controls::ExposureTimeMode.id(), controls::AnalogueGain.id(),
+				controls::AnalogueGainMode.id(), controls::FrameDurationLimits.id()
+			};
+			if (std::any_of(exposure_ids.begin(), exposure_ids.end(), [&](unsigned int id) { return list.contains(id); }))
+			{
+				libcamera::ControlList camera =
+					CameraControls(phase_, phase_ == Phase::Viewfinder ? &viewfinder_exposure_ : nullptr);
+				list = without(list, exposure_ids);
+				for (unsigned int id : exposure_ids)
+					if (camera.contains(id))
+						list.set(id, camera.get(id));
+			}
 			app_.SetControls(list);
 		}
 		else if (name == "capture")
 			reply.update(Capture(command, received));
+		else if (name == "capture_stop")
+		{
+			// A stack ends with the frame being exposed; a single exposure goes on.
+			bool const stack = pending_ && pending_->stack;
+			if (stack)
+				pending_->stop = true;
+			reply["stopping"] = stack;
+		}
+		else if (name == "capture_cancel")
+			reply.update(CancelCapture());
 		else if (name == "configure")
 			Configure(command);
 		else if (name == "focus_aids")
@@ -649,6 +840,21 @@ json Engine::Capture(json const &command, Clock::time_point received)
 	capture.exif = command.value("exif", std::vector<std::string> {});
 	capture.base_jpeg_path = command.value("base_jpeg", "");
 	capture.t_command = received;
+	if (command.contains("stack"))
+	{
+		json const &stack = command["stack"];
+		try
+		{
+			capture.stack = std::make_shared<RawStack>(RawStack::ParseMode(stack.value("mode", "add")));
+		}
+		catch (std::invalid_argument const &e)
+		{
+			throw CommandError("bad_request", e.what());
+		}
+		capture.stack_frames = stack.value("frames", 0u);
+		if (capture.stack_frames > kMaxStackFrames)
+			throw CommandError("bad_request", "stack: " + std::to_string(kMaxStackFrames) + " frames at most");
+	}
 
 	uint64_t id = capture.id;
 	pending_ = std::move(capture);
@@ -660,7 +866,8 @@ json Engine::Capture(json const &command, Clock::time_point received)
 		loupe_zoom_ = 1;
 		ipc_.Broadcast({ { "event", "loupe" }, { "loupe", LoupeState() } });
 	}
-	if (!zsl_)
+	// In ZSL, a stack and an exposure longer than its frames need the still mode too.
+	if (!zsl_ || pending_->stack || ManualExposure() > kZslMaxFrameUs)
 		next_phase_ = Phase::Still;
 	else if (leave_loupe)
 		next_phase_ = Phase::Viewfinder; // back to the ZSL configuration; its first frame is the photo
@@ -856,6 +1063,7 @@ json Engine::State() const
 		{ "camera", app_.CameraModel() },
 		{ "strategy", zsl_ ? "zsl" : "switch" },
 		{ "phase", phase_ == Phase::Still ? "still" : "viewfinder" },
+		{ "viewfinder_exposure", viewfinder_exposure_.empty() ? json(nullptr) : json(viewfinder_exposure_) },
 		{ "fps", fps_ },
 		{ "write_queue", writer_.Queued() },
 		{ "max_queue", cfg_.max_queue },

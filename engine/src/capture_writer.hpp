@@ -17,6 +17,7 @@
 #include "core/stream_info.hpp"
 
 #include "look.hpp"
+#include "stack.hpp"
 
 namespace pycam
 {
@@ -39,6 +40,9 @@ struct CaptureJob
 	std::string camera_model;
 	std::shared_ptr<const Look> look; // applied to the JPEG only
 	std::string base_jpeg_path; // without extension; not empty: also write the JPEG without the look
+	// A stack: the raw frame and the YUV image (allocated, `yuv_info` set) are made from it.
+	std::shared_ptr<RawStack> stack;
+	std::shared_ptr<const std::vector<uint8_t>> tone; // the ISP's tone curve, to develop it
 };
 
 // Writes capture jobs on a background thread, one at a time, and reports each one

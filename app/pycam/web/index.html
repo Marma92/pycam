@@ -123,17 +123,20 @@ document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
 
 // --- Viewfinder and state
 
-let running = false;  // a drive sequence: the state is followed every second
+let running = false;  // a drive sequence or an exposure: the state is followed every second
 
 async function refreshState() {
   try {
     const s = await api("/api/state");
-    running = s.drive_running;
+    running = s.drive_running || !!s.exposure_timer;
     const parts = [["Mode", s.mode], ["Vitesse", s.shutter], ["", s.iso], ["Correction", s.ev || "—"], ["Balance", s.awb],
                    ["Format", s.formats], ["Vues restantes", s.shots]];
     if (s.writing) parts.push(["Écriture", s.writing]);
     if (s.drive) parts.unshift(["", s.countdown ? `${s.drive} · ${s.countdown}` : s.drive]);
-    $("shutter").textContent = s.drive_running ? "Arrêter la séquence" : "Déclencher";
+    if (s.exposure_timer) parts.unshift([s.exposure_label, s.exposure_timer]);
+    const bulb = s.exposure_label === "POSE B";
+    $("shutter").textContent = bulb ? "Arrêter la pose" : s.exposure_timer ? "Annuler la pose"
+      : s.drive_running ? "Arrêter la séquence" : s.shutter === "B" ? "Ouvrir (pose B)" : "Déclencher";
     $("status").innerHTML = (s.connected ? "" : "<b>Moteur indisponible</b> ") +
       parts.map(([k, v]) => `<span>${k ? k + " " : ""}<b>${esc(v)}</b></span>`).join("");
     const select = $("preset");
