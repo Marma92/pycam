@@ -24,7 +24,7 @@ class VideoModeTest(DriveCase):
         controls = self.engine.last("set_controls")["controls"]
         self.assertEqual((controls["ExposureTimeMode"], controls["AnalogueGainMode"]), ("Auto", "Auto"))  # not the photo's M
         view = self.camera.view()
-        self.assertEqual((view.video_mode, view.mode, view.formats), (True, "V", "1080p 25 i/s · Normale"))
+        self.assertEqual((view.video_mode, view.mode, view.formats), (True, "V", "1080p25 · Normale"))
         self.assertTrue(view.shots.endswith(" min"))
         await self.video_mode()  # back to photo
         self.assertEqual(self.calls("video_mode")[-1], {"on": False})
@@ -86,6 +86,77 @@ class VideoModeTest(DriveCase):
         await asyncio.sleep(0.01)
         self.assertEqual(self.calls("video_mode")[-1]["width"], 1280)
 
+    async def test_exposure_lock(self):
+        await self.video_mode()
+        self.camera.on_event({"event": "stats", "analogue_gain": 2.0, "exposure_us": 10000})
+        self.camera.on_action("shutter_auto")  # S: AE-L
+        self.assertEqual(self.camera.video_lock, (0.01, 200))
+        await asyncio.sleep(0.01)
+        controls = self.engine.last("set_controls")["controls"]
+        self.assertEqual((controls["ExposureTime"], controls["AnalogueGain"]), (10000, 2.0))
+        view = self.camera.view()
+        self.assertEqual((view.ev, view.shutter, view.iso, view.shutter_auto, view.iso_auto), ("AE-L", "1/100", "ISO 200", False, False))
+        self.assertIsNone(view.meter)  # the meter only when something is wrong
+        self.camera.on_event({"event": "stats", "analogue_gain": 2.0, "exposure_us": 10000, "lux": 2 * 13.8e6 / 20000})
+        view = self.camera.view()
+        self.assertEqual((view.meter, view.meter_warning), (1.0, True))  # the scene a stop brighter than locked
+        self.camera.on_action("front_dial_plus")  # no compensation while locked
+        self.assertIn("verrouillée", self.camera.view().message)
+        self.assertEqual(self.settings.exposure.ev, 0)
+        self.camera.on_action("rear_dial_plus")  # the locked exposure, brighter
+        self.assertEqual(self.camera.video_lock, (0.01, 250))
+        self.camera.on_action("shutter_auto")
+        self.assertIsNone(self.camera.video_lock)
+        await asyncio.sleep(0.01)
+        self.assertEqual(self.engine.last("set_controls")["controls"]["ExposureTimeMode"], "Auto")
+        self.settings.video_shutter = "180"  # locked at 180°: the speed stays half a frame
+        self.camera.on_action("shutter_auto")
+        self.assertEqual(self.camera.video_lock, (1 / 50, 200))
+        self.camera.on_action("video")  # leaving the video mode frees it
+        self.assertIsNone(self.camera.video_lock)
+
+    async def test_stops_before_the_card_is_full(self):
+        s = self.settings
+        free = [10**12]
+        self.camera.storage.free_bytes = lambda: free[0]
+        per_second = video.bitrate(s) / 8
+        await self.video_mode()
+        self.camera.on_action("shutter")
+        await asyncio.sleep(0.01)
+        path = self.calls("record_start")[0]["path"]
+        free[0] = video.RESERVE_BYTES + 50 * per_second  # 50 s left
+        self.camera.on_event({"event": "record_progress", "path": path, "duration": 60, "bytes": 1})
+        view = self.camera.view()
+        self.assertEqual((view.message, view.task), ("Carte presque pleine", "CARTE PLEINE DANS 0:40"))
+        self.assertEqual(self.calls("record_stop"), [])
+        free[0] = video.RESERVE_BYTES + 8 * per_second
+        self.camera.on_event({"event": "record_progress", "path": path, "duration": 102, "bytes": 1})
+        await asyncio.sleep(0.01)
+        self.assertEqual(len(self.calls("record_stop")), 1)
+        self.camera.on_event({"event": "record_progress", "path": path, "duration": 103, "bytes": 1})
+        await asyncio.sleep(0.01)
+        self.assertEqual(len(self.calls("record_stop")), 1)  # once
+        self.camera.on_event({"event": "record_done", "path": path, "duration": 103, "frames": 2575, "bytes": 1})
+        self.assertEqual(self.camera.view().message, "PYV_0001 · 1:43 · carte pleine")
+        self.camera.on_action("shutter")  # too little left to start another
+        await asyncio.sleep(0.01)
+        self.assertEqual(len(self.calls("record_start")), 1)
+        self.assertEqual(self.camera.view().message, "Carte pleine")
+
+    async def test_frame_rate_in_the_menu(self):
+        self.settings.video_resolution, self.settings.video_fps = "720p", 50
+        await self.video_mode()
+        self.assertEqual(self.calls("video_mode")[-1]["fps"], 50)
+        self.camera.on_action("q")
+        while self.camera.menu.item.label != "Définition vidéo":
+            self.camera.on_action("rear_dial_minus")
+        self.camera.on_action("front_dial_minus")  # 1080p: 50 frames a second no more
+        await asyncio.sleep(0.01)
+        self.assertEqual((self.settings.video_resolution, self.settings.video_fps), ("1080p", 25))
+        self.assertEqual(self.calls("video_mode")[-1]["fps"], 25)
+        rows = dict(self.camera.menu.rows())
+        self.assertEqual((rows["Cadence"], rows["Vitesse vidéo"]), ("25 i/s", "Automatique"))
+
     async def test_failed_recording(self):
         await self.video_mode()
         self.engine.refuse["record_start"] = "busy"
@@ -99,15 +170,37 @@ class HelpersTest(unittest.TestCase):
     def test_bitrates_and_time_left(self):
         s = Settings(video_resolution="720p", video_quality="high")
         self.assertEqual(video.engine_setup(s), {"width": 1280, "height": 720, "fps": 25, "bitrate": 10_000_000})
-        self.assertEqual(video.minutes_left(s, 75 * 10**8), 100)  # 7.5 GB at 10 Mbit/s
+        self.assertEqual(video.minutes_left(s, 75 * 10**8 + video.RESERVE_BYTES), 100)  # 7.5 GB at 10 Mbit/s, the reserve kept
+
+    def test_frame_rates_and_speed(self):
+        s = Settings(video_fps=24)
+        self.assertEqual(video.engine_setup(s), {"width": 1920, "height": 1080, "fps": 24, "bitrate": 12_000_000})
+        self.assertEqual([f for f, _ in video.fps_options(s)], [24, 25, 30])  # no 1080p50 on a Pi 3
+        s.video_fps, s.video_quality = 30, "high"
+        self.assertEqual(video.bitrate(s), 24_000_000)  # more frames, more bits
+        s.video_resolution, s.video_fps = "720p", 50
+        self.assertEqual(video.engine_setup(s), {"width": 1280, "height": 720, "fps": 50, "bitrate": 20_000_000})
+        self.assertEqual(video.label(s), "720p50 · Haute")
+        s.video_resolution = "1080p"
+        self.assertEqual(video.fps(s), 25)
+        s.video_fps, s.video_shutter = 25, "180"
+        self.assertAlmostEqual(video.shutter(s), 1 / 50)
+        controls = video.controls(s)
+        self.assertEqual((controls["ExposureTime"], controls["ExposureTimeMode"], controls["AnalogueGainMode"]), (20000, "Manual", "Auto"))
+        controls = video.controls(s, lock=(1 / 100, 400))
+        self.assertEqual((controls["ExposureTime"], controls["AnalogueGain"], controls["AnalogueGainMode"]), (10000, 4.0, "Manual"))
 
     def test_bad_saved_values(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "settings.json")
             with open(path, "w", encoding="utf-8") as f:
-                f.write('{"mode": "cinema", "video_resolution": "4k", "video_quality": "ultra", "video_iso": 123}')
+                f.write('{"mode": "cinema", "video_resolution": "4k", "video_quality": "ultra", "video_iso": 123, "video_fps": 60, "video_shutter": "90"}')
             s = load_settings(path)
-        self.assertEqual((s.mode, s.video_resolution, s.video_quality, s.video_iso), ("photo", "1080p", "normal", 0))
+            self.assertEqual((s.mode, s.video_resolution, s.video_quality, s.video_iso), ("photo", "1080p", "normal", 0))
+            self.assertEqual((s.video_fps, s.video_shutter), (25, "auto"))
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('{"video_resolution": "1080p", "video_fps": 50}')
+            self.assertEqual(load_settings(path).video_fps, 25)
 
 
 if __name__ == "__main__":

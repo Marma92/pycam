@@ -67,6 +67,8 @@ class Settings:
     video_resolution: str = "1080p"  # video.RESOLUTIONS
     video_quality: str = "normal"  # video.QUALITIES
     video_iso: int = 0  # video.ISO_VALUES, 0: automatic
+    video_fps: int = 25  # video.FRAME_RATES (50: 720p only)
+    video_shutter: str = "auto"  # video.SHUTTERS: automatic, or 180° (half a frame)
     screen_off: int = 30  # SCREEN_OFF: seconds without a press before the screen sleeps in a long capture, 0: never
     display: str = "detailed"
     grid: bool = True
@@ -184,10 +186,14 @@ def load_settings(path):
         ("video_resolution", tuple(video.RESOLUTIONS)),
         ("video_quality", video.QUALITIES),
         ("video_iso", video.ISO_VALUES),
+        ("video_fps", video.FRAME_RATES),
+        ("video_shutter", video.SHUTTERS),
         ("stack_frames", drive.STACK_COUNTS),
     ):
         if getattr(settings, name) not in allowed:
             setattr(settings, name, getattr(defaults, name))
+    if settings.video_fps == 50 and settings.video_resolution != "720p":
+        settings.video_fps = defaults.video_fps
     if not set(settings.formats) <= {"jpeg", "dng"} or not settings.formats:
         settings.formats = defaults.formats
     if not 0 <= settings.lens < len(settings.lenses):

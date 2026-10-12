@@ -23,7 +23,7 @@ Ce que l'appareil fait aujourd'hui :
 - **Modes de déclenchement** : vue par vue, rafale, retardateur 2 s / 10 s, intervallomètre, **timelapse** (la vidéo MP4 est assemblée sur l'appareil, lissée contre le scintillement), bracketing d'exposition.
 - **Poses longues** jusqu'à 10'40", avec compte à rebours, et **pose B** jusqu'à 30 min (une somme de poses de 1 s, développée par le moteur).
 - **Empilement** de vues : moyenne (moins de bruit, pose longue simulée) ou maximum (traînées de lumière, d'étoiles).
-- **Vidéo d'appoint** : 1080p ou 720p à 25 i/s, H.264 matériel, exposition automatique.
+- **Vidéo d'appoint** : 1080p à 24, 25 ou 30 i/s, 720p à 50 i/s, H.264 matériel, exposition automatique, vitesse à 180° et exposition verrouillable, arrêt propre avant que la carte soit pleine.
 - **Simulations de pellicules** : presets ouverts (une recette TOML, éventuellement une LUT), appliqués au JPEG avec grain, halation et vignettage, aperçus en visée ; le DNG reste neutre. Livrés : Standard, Base, Portrait 400, Velours 50, Cinéma 800T (+2), Triple-X 400. On peut écrire les siens (`docs/presets.md`).
 - **Menus** Q (12 réglages de prise de vue) et MENU (tout le reste), **lecture** des photos (loupe, suppression) et des vidéos (décodeur matériel).
 - **Économie d'énergie** : l'écran se met en veille pendant les longues prises.
