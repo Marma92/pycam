@@ -338,8 +338,10 @@ class Camera:
             log.error("exposure refused: %s", e)
 
     async def apply_picture(self):
+        s = self.settings
+        controls = picture.controls(s, video=s.mode == "video", monochrome=bool(self._look and self._look.monochrome))
         try:
-            await self.engine.call("set_controls", controls=picture.controls(self.settings))
+            await self.engine.call("set_controls", controls=controls)
         except ConnectionError:
             pass  # pushed again on reconnection
         except EngineError as e:
@@ -374,6 +376,8 @@ class Camera:
                 return
             self._look = compiled
             self.redraw()
+        if self.settings.mode == "video":
+            await self.refresh_video_picture()  # the video's contrast, saturation, black and white
 
     async def configure_still(self, **config):
         """Photo settings of the engine for a while (a timelapse's smaller frames);
@@ -836,18 +840,32 @@ class Camera:
             self.redraw()
         return True
 
-    async def apply_mode(self):
-        """Tells the engine the mode, the video's settings, and the exposure that goes with it."""
+    async def apply_mode(self, restart=False):
+        """Tells the engine the mode, the video's settings, and the exposure that goes with it.
+        The ISP's contrast and saturation first (the video's, or neutral for the photos): the
+        screen's stream takes them only when the camera starts. restart: in video, the camera
+        starts again even with the same settings, for that."""
         s = self.settings
+        await self.apply_picture()
         try:
             if s.mode == "video":
-                await self.engine.call("video_mode", on=True, **video.engine_setup(s))
+                await self.engine.call("video_mode", on=True, restart=restart, **video.engine_setup(s))
             else:
                 await self.engine.call("video_mode", on=False)
         except (EngineError, ConnectionError, TimeoutError) as e:
             log.warning("video mode refused: %s", e)
             self.show_message("Impossible pour l'instant", warning=True)
         await self.apply_exposure()
+
+    async def refresh_video_picture(self):
+        """In video, the picture changed (contrast, saturation, sharpness, a black and white
+        preset): the recording would take it at once, the screen only when the camera starts
+        again (~0.3 s). During a recording: after it, so that the take stays as it began."""
+        if self.recording:
+            self._video_setup_deferred = True
+            self.show_message("Appliqué après l'enregistrement")
+            return
+        await self.apply_mode(restart=True)
 
     def on_video_action(self, action):
         """The controls in video mode; True if handled (the others act as in photo)."""
@@ -954,10 +972,12 @@ class Camera:
         else:
             log.info("video %s: %.1f s, %d frames, %d bytes", name, msg.get("duration", 0), msg.get("frames", 0), msg.get("bytes", 0))
             text = f"{name} · {exp.format_duration(msg.get('duration', 0))}"
+            if msg.get("video_duration", 0) > msg.get("duration", 0) + 0.5:  # a slow motion: as long as it plays
+                text = f"{name} · {exp.format_duration(msg['video_duration'])} au ralenti"
             self.show_message(text + " · carte pleine" if card_full else text, warning=card_full)
         if self._video_setup_deferred:
             self._video_setup_deferred = False
-            self.spawn(self.apply_mode())
+            self.spawn(self.apply_mode(restart=True))
         self.wake_apps()
         self.redraw()
 
@@ -1076,10 +1096,10 @@ class Camera:
                 s.aperture = None  # it belonged to the previous lens
             if item.attr == "drive":
                 self.drive.stop()  # the sequence of the previous mode
-            if item.attr in ("video_fps", "video_shutter", "video_resolution"):
+            if item.attr in ("video_rate", "video_shutter", "video_resolution"):
                 self.video_lock = None  # another speed, or another frame
             if item.attr == "video_resolution" and s.video_fps == 50 and s.video_resolution != "720p":
-                s.video_fps = 25  # 50 frames a second: 720p only
+                s.video_fps, s.video_slowmo = 25, False  # 50 frames a second: 720p only
         if item.attr == "preset":
             self.spawn(self.apply_exposure())  # its exposure shift
         if item.attr == "lens_shading":
@@ -1089,7 +1109,7 @@ class Camera:
         elif item.push == "look":
             self.spawn(self.apply_look())
         elif item.push == "picture":
-            self.spawn(self.apply_picture())
+            self.spawn(self.refresh_video_picture() if s.mode == "video" else self.apply_picture())
         elif item.push == "config":
             self.spawn(self.apply_still_config())
         elif item.push == "focus":

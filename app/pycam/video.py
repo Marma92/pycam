@@ -5,7 +5,10 @@ ISO; the rest is automatic. 25 frames a second by default (50 Hz mains light doe
 flicker at 1/50 s); 24 for cinema, 30, and 50 in 720p (the encoder of a Pi 3 does not go to
 1080p50). The exposure is automatic within a frame, with the compensation on the front
 dial; or the speed at 180° (half a frame: the motion blur of cinema), the gain following;
-the ISO on the rear dial, or automatic. S locks the exposure as it is (AE-L), for a take. The white balance and the metering are the photo's. No look: the video keeps the
+the ISO on the rear dial, or automatic. S locks the exposure as it is (AE-L), for a take.
+A slow motion: 50 frames a second in 720p, played at 25 (the engine stretches the times).
+No look, but the ISP does the contrast and the saturation of the Image settings, and black
+and white for a black and white preset (picture.controls). The white balance and the metering are the photo's. No look: the video keeps the
 pycam base (a film simulation at 25 frames a second is beyond a Pi 3). No sound: the Pi has
 no microphone. H.264 in MP4, by the VideoCore's encoder (the engine's Recorder).
 """
@@ -13,7 +16,8 @@ no microphone. H.264 in MP4, by the VideoCore's encoder (the engine's Recorder).
 from . import exposure as exp
 
 FRAME_RATES = (24, 25, 30, 50)
-FPS_LABELS = {24: "24 i/s · cinéma", 25: "25 i/s", 30: "30 i/s · scintille sous 50 Hz", 50: "50 i/s · 720p"}
+FPS_LABELS = {24: "24 i/s · cinéma", 25: "25 i/s", 30: "30 i/s · scintille sous 50 Hz", 50: "50 i/s · 720p",
+              "slow": "Ralenti ×2 · 50 i/s lus à 25"}  # fmt: skip
 SHUTTERS = ("auto", "180")  # automatic, or half a frame
 RESOLUTIONS = {"1080p": (1920, 1080), "720p": (1280, 720)}
 QUALITIES = ("high", "normal", "light")
@@ -40,8 +44,14 @@ def fps(settings):
 
 
 def fps_options(settings):
-    rates = FRAME_RATES if settings.video_resolution == "720p" else FRAME_RATES[:-1]
+    """For the menu's Cadence line (Settings.video_rate): the slow motion with them."""
+    rates = FRAME_RATES + ("slow",) if settings.video_resolution == "720p" else FRAME_RATES[:-1]
     return tuple((f, FPS_LABELS[f]) for f in rates)
+
+
+def slowdown(settings):
+    """How many times slower the file plays than it is filmed: 2 in slow motion."""
+    return 2 if settings.video_slowmo and fps(settings) == 50 else 1
 
 
 def bitrate(settings, quality=None):
@@ -58,7 +68,7 @@ def shutter(settings):
 def engine_setup(settings):
     """The engine's video_mode command (protocol.md)."""
     width, height = RESOLUTIONS[settings.video_resolution]
-    return {"width": width, "height": height, "fps": fps(settings), "bitrate": bitrate(settings)}
+    return {"width": width, "height": height, "fps": fps(settings), "bitrate": bitrate(settings), "slowdown": slowdown(settings)}
 
 
 def controls(settings, lock=None):
@@ -89,8 +99,10 @@ def minutes_left(settings, free_bytes):
 
 
 def label(settings):
-    """"1080p25 · Normale" for the HUD (its bar is full in video)."""
-    return f"{settings.video_resolution}{fps(settings)} · {QUALITY_LABELS[settings.video_quality]}"
+    """"1080p25 · Normale" for the HUD (its bar is full in video), "720p ×2 · Normale" in
+    slow motion."""
+    rate = " ×2" if slowdown(settings) > 1 else str(fps(settings))
+    return f"{settings.video_resolution}{rate} · {QUALITY_LABELS[settings.video_quality]}"
 
 
 def step_iso(settings, steps, measured_iso):

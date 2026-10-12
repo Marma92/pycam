@@ -32,9 +32,9 @@ Toute commande peut porter un `id`, qui est renvoyé tel quel dans la réponse. 
 | `video_play` | `path` (un MP4 H.264) | `video` : `duration` (s), `width`, `height`, `fps`. La vidéo remplace la visée à l'écran (la caméra continue), dans la zone d'image ; elle s'arrête d'elle-même à la fin en laissant sa dernière image. Erreur `bad_request` si elle ne peut pas être lue. |
 | `video_pause` | `paused` (bool, `true` par défaut) | — |
 | `video_stop` | — | — : retour à la visée |
-| `video_mode` | `on` (bool) ; et `width`, `height` (1920×1080 par défaut, pairs, 2028×1080 au plus), `fps` (25), `bitrate` (bit/s, 12 000 000) | — : la caméra passe en mode vidéo (ou revient à la visée photo). Refusé (`busy`) pendant une prise ou un enregistrement s'il faut changer de réglages. En mode vidéo, `capture` répond `busy` et `loupe` `unsupported`. |
+| `video_mode` | `on` (bool) ; et `width`, `height` (1920×1080 par défaut, pairs, 2028×1080 au plus), `fps` (25), `bitrate` (bit/s, 12 000 000), `slowdown` (1 ; 2 : le fichier est lu deux fois plus lentement qu'il n'est filmé, un ralenti), `restart` (redémarrer la caméra même sans changement : le contraste et la saturation de l'ISP n'atteignent le petit flux, celui de l'écran, qu'au démarrage) | — : la caméra passe en mode vidéo (ou revient à la visée photo). Refusé (`busy`) pendant une prise ou un enregistrement s'il faut changer de réglages. En mode vidéo, `capture` répond `busy` et `loupe` `unsupported`. |
 | `record_start` | `path` (le MP4) | `path` ; `busy` hors du mode vidéo ou pendant un enregistrement |
-| `record_stop` | — | `path`, `duration` (s), `frames`, `bytes`, et `error` si la vidéo n'a pu être faite ; `recording: false` s'il n'y avait rien à arrêter. L'évènement `record_done` porte le même contenu. |
+| `record_stop` | — | `path`, `duration` (s, filmées), `video_duration` (s, lues : le double en ralenti ×2), `frames`, `bytes`, et `error` si la vidéo n'a pu être faite ; `recording: false` s'il n'y avait rien à arrêter. L'évènement `record_done` porte le même contenu. |
 | `display_power` | `on` (bool) | — : l'écran éteint (DPMS) n'affiche plus rien, ni la visée ni le HUD, jusqu'à `on: true` |
 | `hud_commit` | — | — (le contenu de la mémoire partagée a été copié : on peut dessiner le HUD suivant) |
 | `quit` | — | — (le moteur termine les écritures en cours puis s'arrête) |
@@ -114,7 +114,7 @@ Avec `stack`, la prise additionne les images RAW successives en mode photo, chac
 | `loupe` | Le moteur quitte la loupe de lui-même (un déclenchement : la photo est toujours en plein cadre) | `loupe` : `{zoom, center}` |
 | `video_progress` | Pendant une lecture, ~2 fois/s | `position`, `duration` (s) |
 | `record_progress` | Pendant un enregistrement, chaque seconde | `path`, `duration` (s), `bytes` |
-| `record_done` | Fin d'un enregistrement (`record_stop`, redémarrage de la caméra, arrêt du moteur) | `path`, `duration`, `frames`, `bytes`, `error` |
+| `record_done` | Fin d'un enregistrement (`record_stop`, redémarrage de la caméra, arrêt du moteur) | `path`, `duration`, `video_duration`, `frames`, `bytes`, `error` |
 | `record_error` | L'écriture a échoué (carte pleine) | `path`, `error` : envoyer `record_stop` |
 | `video_ended` | Fin d'une lecture | `reason` (`end`, `stopped`, `error`), `position`, `error` |
 | `tuning` | La caméra a été rouverte avec un autre fichier de tuning | `tuning` (nom ou `null`), `reopen_ms` |

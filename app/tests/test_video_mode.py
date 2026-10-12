@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import types
 import unittest
 
 from pycam import video
@@ -17,6 +18,14 @@ class VideoModeTest(DriveCase):
     def calls(self, name):
         return [params for cmd, params in self.engine.calls if cmd == name]
 
+    def picture_controls(self):
+        """The last contrast and saturation sent to the ISP."""
+        return [c["controls"] for c in self.calls("set_controls") if "Saturation" in c["controls"]][-1]
+
+    def exposure_controls(self):
+        """The last exposure sent (the picture's controls follow a change of mode)."""
+        return [c["controls"] for c in self.calls("set_controls") if "ExposureTimeMode" in c["controls"]][-1]
+
     async def video_mode(self):
         self.camera.on_action("video")
         await asyncio.sleep(0.01)
@@ -25,15 +34,15 @@ class VideoModeTest(DriveCase):
         self.settings.exposure.shutter, self.settings.exposure.iso = 4, 100  # a photo in M
         await self.video_mode()
         self.assertEqual(self.settings.mode, "video")
-        self.assertEqual(self.calls("video_mode")[-1], {"on": True, "width": 1920, "height": 1080, "fps": 25, "bitrate": 12_000_000})
-        controls = self.engine.last("set_controls")["controls"]
+        self.assertEqual(self.calls("video_mode")[-1], {"on": True, "restart": False, "width": 1920, "height": 1080, "fps": 25, "bitrate": 12_000_000, "slowdown": 1})
+        controls = self.exposure_controls()
         self.assertEqual((controls["ExposureTimeMode"], controls["AnalogueGainMode"]), ("Auto", "Auto"))  # not the photo's M
         view = self.camera.view()
         self.assertEqual((view.video_mode, view.mode, view.formats), (True, "V", "1080p25 · Normale"))
         self.assertTrue(view.shots.endswith(" min"))
         await self.video_mode()  # back to photo
         self.assertEqual(self.calls("video_mode")[-1], {"on": False})
-        self.assertEqual(self.engine.last("set_controls")["controls"]["ExposureTime"], 4_000_000)
+        self.assertEqual(self.exposure_controls()["ExposureTime"], 4_000_000)
 
     async def test_recording(self):
         await self.video_mode()
@@ -162,6 +171,60 @@ class VideoModeTest(DriveCase):
         rows = dict(self.camera.menu.rows())
         self.assertEqual((rows["Cadence"], rows["Vitesse vidéo"]), ("25 i/s", "Automatique"))
 
+    async def test_slow_motion_and_black_and_white(self):
+        s = self.settings
+        s.video_resolution, s.contrast = "720p", 2
+        self.camera._look = types.SimpleNamespace(monochrome=True, curves=None)  # a black and white preset
+        await self.video_mode()
+        controls = self.picture_controls()
+        self.assertEqual((controls["Saturation"], controls["Contrast"]), (0.0, 1.5))
+        commands = [cmd for cmd, _ in self.engine.calls]
+        first_picture = next(i for i, (cmd, p) in enumerate(self.engine.calls) if cmd == "set_controls" and "Saturation" in p["controls"])
+        self.assertLess(first_picture, commands.index("video_mode"))  # before the camera starts: the screen's stream takes it then
+        self.camera.on_action("q")
+        while self.camera.menu.item.label != "Cadence":
+            self.camera.on_action("rear_dial_minus")
+        for _ in range(4):  # 25, 30, 50, slow motion
+            self.camera.on_action("front_dial_plus")
+        await asyncio.sleep(0.01)
+        self.assertEqual(dict(self.camera.menu.rows())["Cadence"], "Ralenti ×2 · 50 i/s lus à 25")
+        self.assertEqual(self.calls("video_mode")[-1]["slowdown"], 2)
+        self.camera.on_action("q")
+        self.camera.on_action("shutter")
+        await asyncio.sleep(0.01)
+        path = self.calls("record_start")[0]["path"]
+        self.camera.on_event({"event": "record_done", "path": path, "duration": 6.0, "video_duration": 12.0, "frames": 300, "bytes": 1})
+        self.assertEqual(self.camera.view().message, "PYV_0001 · 0:12 au ralenti")
+        await self.video_mode()  # back to photo: the ISP neutral again, the look does the rest
+        await asyncio.sleep(0.01)
+        controls = self.picture_controls()
+        self.assertEqual((controls["Saturation"], controls["Contrast"]), (1.0, 1.0))
+
+    async def test_a_picture_change_in_video_starts_the_camera_again(self):
+        await self.video_mode()
+        self.camera.on_action("menu")
+        while self.camera.menu.item.label != "Netteté":
+            self.camera.on_action("rear_dial_minus")
+        self.camera.on_action("front_dial_plus")
+        await asyncio.sleep(0.01)
+        self.assertEqual(self.calls("video_mode")[-1]["restart"], True)  # for the screen to show it
+        self.assertEqual(self.picture_controls()["Sharpness"], 1.5)
+        self.camera.on_action("menu")
+        self.camera.on_action("shutter")  # recording: after it
+        await asyncio.sleep(0.01)
+        path = self.calls("record_start")[0]["path"]
+        self.camera.on_action("menu")
+        while self.camera.menu.item.label != "Netteté":
+            self.camera.on_action("rear_dial_minus")
+        self.camera.on_action("front_dial_plus")
+        await asyncio.sleep(0.01)
+        self.assertEqual(self.camera.view().message, "Appliqué après l'enregistrement")
+        self.assertEqual(len(self.calls("video_mode")), 2)
+        self.camera.on_event({"event": "record_done", "path": path, "duration": 3, "frames": 75, "bytes": 1})
+        await asyncio.sleep(0.01)
+        self.assertEqual((len(self.calls("video_mode")), self.calls("video_mode")[-1]["restart"]), (3, True))
+        self.assertEqual(self.picture_controls()["Sharpness"], 2.0)
+
     async def test_failed_recording(self):
         await self.video_mode()
         self.engine.refuse["record_start"] = "busy"
@@ -212,6 +275,28 @@ class VideoModeTest(DriveCase):
 
 
 class HelpersTest(unittest.TestCase):
+    def test_slow_motion(self):
+        s = Settings(video_resolution="720p")
+        self.assertIn("slow", [f for f, _ in video.fps_options(s)])
+        s.video_rate = "slow"
+        self.assertEqual((s.video_fps, s.video_slowmo, s.video_rate), (50, True, "slow"))
+        self.assertEqual(video.engine_setup(s), {"width": 1280, "height": 720, "fps": 50, "bitrate": 12_000_000, "slowdown": 2})
+        self.assertEqual(video.label(s), "720p ×2 · Normale")
+        s.video_shutter = "180"
+        self.assertAlmostEqual(video.shutter(s), 1 / 100)  # half a frame as filmed
+        s.video_rate = 25
+        self.assertEqual((s.video_fps, s.video_slowmo, video.slowdown(s)), (25, False, 1))
+        s.video_resolution = "1080p"
+        self.assertNotIn("slow", [f for f, _ in video.fps_options(s)])
+
+    def test_the_isp_does_the_videos_picture(self):
+        from pycam import picture
+
+        s = Settings(contrast=1, saturation=-1, sharpness=2)
+        self.assertEqual(picture.controls(s), {"Sharpness": 2.0, "Contrast": 1.0, "Saturation": 1.0})  # photos: the look does it
+        self.assertEqual(picture.controls(s, video=True), {"Sharpness": 2.0, "Contrast": 1.25, "Saturation": 0.75})
+        self.assertEqual(picture.controls(s, video=True, monochrome=True)["Saturation"], 0.0)
+
     def test_framing_guides(self):
         rect = (240, 0, 1440, 1080)  # a 4:3 image
         self.assertEqual(guide_rect(rect, "none"), rect)
@@ -223,17 +308,17 @@ class HelpersTest(unittest.TestCase):
 
     def test_bitrates_and_time_left(self):
         s = Settings(video_resolution="720p", video_quality="high")
-        self.assertEqual(video.engine_setup(s), {"width": 1280, "height": 720, "fps": 25, "bitrate": 10_000_000})
+        self.assertEqual(video.engine_setup(s), {"width": 1280, "height": 720, "fps": 25, "bitrate": 10_000_000, "slowdown": 1})
         self.assertEqual(video.minutes_left(s, 75 * 10**8 + video.RESERVE_BYTES), 100)  # 7.5 GB at 10 Mbit/s, the reserve kept
 
     def test_frame_rates_and_speed(self):
         s = Settings(video_fps=24)
-        self.assertEqual(video.engine_setup(s), {"width": 1920, "height": 1080, "fps": 24, "bitrate": 12_000_000})
+        self.assertEqual(video.engine_setup(s), {"width": 1920, "height": 1080, "fps": 24, "bitrate": 12_000_000, "slowdown": 1})
         self.assertEqual([f for f, _ in video.fps_options(s)], [24, 25, 30])  # no 1080p50 on a Pi 3
         s.video_fps, s.video_quality = 30, "high"
         self.assertEqual(video.bitrate(s), 24_000_000)  # more frames, more bits
         s.video_resolution, s.video_fps = "720p", 50
-        self.assertEqual(video.engine_setup(s), {"width": 1280, "height": 720, "fps": 50, "bitrate": 20_000_000})
+        self.assertEqual(video.engine_setup(s), {"width": 1280, "height": 720, "fps": 50, "bitrate": 20_000_000, "slowdown": 1})
         self.assertEqual(video.label(s), "720p50 · Haute")
         s.video_resolution = "1080p"
         self.assertEqual(video.fps(s), 25)

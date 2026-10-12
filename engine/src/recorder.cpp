@@ -1,5 +1,6 @@
 #include "recorder.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -73,8 +74,10 @@ std::vector<uint8_t> parameter_sets(uint8_t const *data, size_t size)
 
 } // namespace
 
-Recorder::Recorder(std::string path, StreamInfo const &info, unsigned fps, unsigned bitrate, EventFn on_event)
-	: path_(std::move(path)), part_(path_ + ".part"), info_(info), fps_(fps), on_event_(std::move(on_event))
+Recorder::Recorder(std::string path, StreamInfo const &info, unsigned fps, unsigned bitrate, EventFn on_event,
+				   unsigned slowdown)
+	: path_(std::move(path)), part_(path_ + ".part"), info_(info), fps_(fps), slowdown_(std::max(1u, slowdown)),
+	  on_event_(std::move(on_event))
 {
 	// The encoder's settings, set directly: parsing them as a command line would make rpicam
 	// restart its camera manager, under the running camera.
@@ -102,7 +105,7 @@ Recorder::Recorder(std::string path, StreamInfo const &info, unsigned fps, unsig
 	stream_->codecpar->width = info.width;
 	stream_->codecpar->height = info.height;
 	stream_->time_base = { 1, 90000 };
-	stream_->avg_frame_rate = { int(fps), 1 };
+	stream_->avg_frame_rate = { int(fps), int(slowdown_) }; // as played
 	if (avio_open(&format_->pb, part_.c_str(), AVIO_FLAG_WRITE) < 0)
 	{
 		avformat_free_context(format_);
@@ -203,8 +206,10 @@ void Recorder::OnOutput(void *mem, size_t size, int64_t timestamp_us, bool keyfr
 			throw std::runtime_error("out of memory");
 		}
 		std::copy(data, data + size, packet->data);
-		packet->pts = packet->dts = av_rescale_q(timestamp_us - first_us_, kMicroseconds, stream_->time_base);
-		packet->duration = av_rescale_q(1000000 / fps_, kMicroseconds, stream_->time_base);
+		// A slow motion: the same frames, their times stretched.
+		packet->pts = packet->dts =
+			av_rescale_q((timestamp_us - first_us_) * slowdown_, kMicroseconds, stream_->time_base);
+		packet->duration = av_rescale_q(1000000 * slowdown_ / fps_, kMicroseconds, stream_->time_base);
 		packet->stream_index = stream_->index;
 		if (keyframe)
 			packet->flags |= AV_PKT_FLAG_KEY;
@@ -250,6 +255,7 @@ json Recorder::Stop()
 	json result = { { "path", path_ }, { "frames", frames_ }, { "bytes", bytes_ } };
 	double const duration = started_ ? (last_us_ - first_us_) / 1e6 + 1.0 / fps_ : 0;
 	result["duration"] = duration;
+	result["video_duration"] = duration * slowdown_;
 	if (format_)
 	{
 		if (started_ && av_write_trailer(format_) < 0 && error_.empty())

@@ -89,6 +89,7 @@ private:
 	struct VideoSetup
 	{
 		unsigned width = 1920, height = 1080, fps = 25, bitrate = 12'000'000;
+		unsigned slowdown = 1; // the file plays this many times slower (Recorder)
 		bool operator==(VideoSetup const &) const = default;
 	};
 
