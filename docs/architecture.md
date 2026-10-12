@@ -235,7 +235,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | `timelapse` | L'assemblage des vues d'un timelapse en vidéo MP4, par ffmpeg (voir plus bas). | ✅ |
 | `video` | Le mode vidéo : définitions, débits, exposition automatique, temps restant (voir plus bas). | ✅ |
 | `web` | `aiohttp`, port 8080, réseau local seulement : visée (une image par seconde, prise par la commande `snapshot`), déclencheur, preset et grain, galerie avec téléchargement et suppression, installation de presets, compte et mode de Cloud sync. Une page unique sans dépendance (`web/index.html`). | ✅ |
-| `apps` | Les applications de l'appareil, dans MENU › Applications (voir plus bas). La première : `cloudsync`. | ✅ |
+| `apps` | Les applications de l'appareil, dans MENU › Applications (voir plus bas) : `cloudsync`, `share`. | ✅ |
 
 **Commandes clavier, en attendant les boutons.** Le clavier ne garde qu'une touche par commande de l'appareil (`hardware.md` §2) ; tous les autres réglages sont dans les menus. Les touches sont choisies pour être au même endroit en QWERTY et en AZERTY.
 
@@ -259,6 +259,8 @@ Pendant la revue après la prise, toute touche la ferme ; le déclencheur la fer
 
 Les **vidéos** des timelapses y sont aussi, chacune après ses vues. Une vidéo s'affiche d'abord par sa première image (faite une fois par ffmpeg, puis gardée en cache), avec un signe de lecture, sa durée, sa définition, sa cadence et son nombre de vues. LOUPE la lit (par le moteur, sur le plan vidéo), la met en pause, la reprend, et la relit une fois finie ; pendant la lecture, le HUD ne garde qu'une barre de progression, le nom, le temps (« 0:02 / 0:04 ») et le signe de pause. La dernière image reste à la fin. Les molettes, LECTURE, MENU et le déclencheur l'arrêtent ; Q la supprime (ses vues restent).
 
+**MENU en lecture** ouvre le menu de la prise affichée : ce que les applications savent en faire (Partager, pour une photo). La molette arrière choisit, la molette avant ouvre ; MENU revient en arrière puis ferme, Q ferme, LECTURE quitte la lecture, le déclencheur déclenche.
+
 | Commande | En lecture |
 |---|---|
 | Molette arrière | Photo précédente / suivante. |
@@ -266,7 +268,8 @@ Les **vidéos** des timelapses y sont aussi, chacune après ses vues. Une vidéo
 | LOUPE | Ajustée → 100 % (un pixel de la photo par pixel de l'écran) → 200 % → ajustée. Dans la loupe, les molettes déplacent la zone, avec la mini-carte. La photo est décodée en pleine résolution une fois (~1 s), puis seulement recadrée. Sur une vidéo : lecture, pause, reprise. |
 | DISP | Détaillé (infos et histogramme) → simple (infos) → photo seule. |
 | Q | Supprimer : un premier appui demande confirmation, un second dans les 3 s supprime la prise entière (JPEG, DNG, copie de base). Toute autre touche annule. |
-| LECTURE, MENU | Revenir à la prise de vue. |
+| MENU | Le menu de la prise : Partager (voir « Partage »). |
+| LECTURE | Revenir à la prise de vue. |
 | Déclencheur | Revenir à la prise de vue *et* déclencher : on ne rate jamais une photo. |
 
 **Les menus** (`menu.py`). La molette arrière choisit la ligne, la molette avant change la valeur, qui s'applique tout de suite.
@@ -343,6 +346,19 @@ Le déclencheur pressé pendant une séquence l'arrête (sauf la rafale, qu'il p
   - **Google Drive** : l'utilisateur crée son propre client OAuth de type « TV et appareils à entrée limitée » (API Drive activée) ; connexion par code (« device flow ») : la page affiche un code à saisir sur google.com/device depuis un téléphone. Portée `drive.file` : l'appareil ne voit que les fichiers qu'il a créés. L'écran de consentement doit être **publié** : en mode « Test », Google fait expirer l'accès au bout de 7 jours. Envoi « resumable ».
 - **À l'écran.** « CLOUD 40 % » en haut à gauche pendant un envoi (le pourcentage du passage, redessiné au plus 100 fois). Le menu donne le service, le compte, l'adresse de la page web, l'état, ce qui reste à envoyer (« 234 fichiers · 1,1 Go »). Une action lancée à la main affiche son bilan (« Cloud : 12 fichiers envoyés, 180 Mo libérés »).
 - **Mesuré** (2026-10-12, vers un serveur WebDAV de test sur le Pi lui-même) : 234 fichiers, 1,1 Go en 163 s (6,8 Mo/s, limité par la carte SD qui lit et écrit à la fois), tous identiques à l'octet près ; une photo RAW + JPEG part ~12 s après la prise. En Wi-Fi (2,4 GHz seulement sur le Pi 3B), compter plutôt 2 à 4 Mo/s.
+
+**Partage** (`apps/share/`, 2026-10-12). Publier une photo sur **Instagram**, **Flickr** et **Bluesky**, depuis la galerie, à la manière de SPP (Simple Photo Poster, l'outil de bureau de l'auteur) dont il reprend la légende, la préparation des images et les règles de chaque plateforme.
+
+- **Sur l'appareil** : en lecture, MENU › Partager. Une ligne par plateforme connectée (Oui / Non, d'un cran de la molette avant, dans un sens ou dans l'autre ; le dernier choix revient), ce que dira la légende, puis Publier. Pas de clavier : la légende est faite de la photo et des hashtags par défaut. La ligne Partager dit ensuite où en est la photo (« En attente », « Publiée · Bluesky, Flickr »).
+- **Sur la page web** : un bouton Partager dans la galerie ouvre le même partage avec un titre, une description, un texte alternatif, les hashtags, et l'appareil, l'objectif, la pellicule et la date pré-remplis, modifiables. Chaque plateforme montre **ce qu'elle publiera** : son image (« carré de 1440 px », « l'original »), sa légende, et la partie coupée barrée en rouge avec le compte (« 358/300 »). L'aperçu ne touche pas au réseau.
+- **La légende**, comme SPP : titre, puis l'équipement (📷 appareil, 👁️ objectif, 🎞️ pellicule, 🗓️ date), la description, les hashtags, en blocs séparés par un point seul (le saut de paragraphe d'Instagram). L'EXIF donne l'appareil (« Raspberry Pi HQ Camera »), l'objectif s'il est connu, la date, et la **pellicule : le preset de la photo** (« Cinéma 800T » ; rien pour Standard et Base). Bluesky la coupe à 300 graphèmes (un emoji compte pour un), Instagram à 2 200 caractères, Flickr jamais.
+- **Les images**, comme SPP : Instagram reçoit un carré de 1440 px, la photo centrée sur fond blanc ; Bluesky 2000 px sur le grand côté, sous sa limite de 1 Mo (la qualité baisse, puis la taille) ; Flickr l'original. Préparées au moment d'envoyer (~1 s sur le Pi 3B), puis effacées.
+- **La file** (`~/.local/share/pycam/share/queue.json`) : une publication attend que l'appareil soit en ligne (même sur un réseau facturé : c'est une demande explicite), puis part sur chaque plateforme l'une après l'autre ; une plateforme en échec n'arrête pas les autres. Injoignable ou occupée : nouvel essai dans 1, 5, puis 15 min, cinq fois au plus. Refusée (compte à reconnecter, légende refusée) : elle attend « Réessayer » (page web, ou MENU › Applications › Partage). Jamais pendant un enregistrement, une séquence ou une pose longue. Un redémarrage reprend ce qui était en cours. « PARTAGE BLUESKY » sur le HUD pendant l'envoi, puis « PYC_0171 publiée sur Bluesky ». Les 50 dernières publications réussies restent dans la file, avec leurs liens.
+- **Les comptes** se connectent depuis la page web (onglet Partage) ; les secrets vont dans `~/.config/pycam/share.json` (0600) et n'en ressortent pas.
+  - **Bluesky** : l'identifiant et un **mot de passe d'application**. L'API XRPC directement (aiohttp) : la session, l'image (`uploadBlob`), puis le message avec les hashtags en vraies facettes, le texte alternatif, les proportions de l'image et la langue (`fr` par défaut, réglable). Une session expirée est refaite une fois.
+  - **Flickr** : la clé d'API de l'utilisateur ; OAuth 1.0a signé ici (HMAC-SHA1), avec un code à recopier (`oob` : rien vers quoi rediriger un appareil photo), droit d'écriture seulement. Titre, légende en description, hashtags en tags.
+  - **Instagram** : comme SPP, l'API privée par **instagrapi** (les comptes personnels n'ont pas d'API officielle de publication ; l'officielle exige un compte professionnel et une image à une adresse publique). Un nouvel appareil se voit souvent demander une vérification : on donne de préférence le `sessionid` d'un navigateur déjà connecté. L'« appareil » qu'instagrapi présente à Instagram est gardé (`instagram.json`, 0600) : changer d'appareil à chaque connexion attire d'autres vérifications. instagrapi n'a pas de paquet Debian : `tools/install-share.sh` l'installe à part (`~/.local/share/pycam/vendor`), et seul Instagram en dépend. C'est un usage que les conditions d'Instagram n'autorisent pas : le compte peut être bloqué un temps.
+- **Testé** contre de faux Bluesky et Flickr sur 127.0.0.1 (le faux Flickr vérifie chaque signature OAuth, elle-même vérifiée sur l'exemple de la documentation de Twitter) et un faux instagrapi. Pas encore sur de vrais comptes.
 
 **Les poses longues** (2026-10-12, §2.4). En M, la molette avant va jusqu'à 10'40" (la limite du capteur, 674 s), puis **B**.
 
@@ -473,3 +489,4 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 | D7 | Écran HDMI sans tactile ; navigation 100 % boutons et molettes | DSI tactile ; SPI | Choix de l'utilisateur (2026-10-11). Le GPIO reste libre et on garde la composition matérielle. |
 | D8 | Deux stratégies de capture, « bascule » (visée 30 i/s, ~0,4 s de latence) et « ZSL » (visée ~10 i/s, latence ~0), au choix | Une seule stratégie imposée | D'après les mesures du 2026-10-11 : aucune n'est meilleure dans tous les cas. |
 | D9 | Cloud sync parle lui-même aux trois services (aiohttp), avec l'app Dropbox et le client Google de l'utilisateur | rclone ; une app « pycam » enregistrée chez Dropbox et Google | Aucun secret dans un dépôt public, aucune validation d'app par Google, chacun garde la main sur ses accès. rclone ajouterait un binaire de ~60 Mo et sa propre configuration, sans le contrôle fin de la vérification avant effacement. |
+| D10 | Partage reprend SPP (légende, images, règles des plateformes) mais parle lui-même à Bluesky et Flickr ; instagrapi pour Instagram | Les bibliothèques de SPP (atproto, flickrapi) ; l'API officielle d'Instagram | atproto tire pydantic, cryptography, httpx… pour trois appels ; flickrapi ouvre un navigateur local pour OAuth, impossible sur l'appareil. L'API officielle d'Instagram exige un compte professionnel et une image à une adresse publique. |

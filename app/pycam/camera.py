@@ -612,8 +612,8 @@ class Camera:
                 if action == "front_dial_plus":
                     self.menu_stack.append(self.menu)
                     self.menu = item.target(self)
-            elif item.kind == "run":
-                if action == "front_dial_plus":
+            elif item.kind in ("run", "toggle"):
+                if action == "front_dial_plus" or item.kind == "toggle":
                     item.target(self)
             else:
                 self.change_setting(+1 if action == "front_dial_plus" else -1)
@@ -633,6 +633,14 @@ class Camera:
         self.spawn(self.load_shown())
         self.redraw()
 
+    def photo_menu(self):
+        """MENU in playback: what the applications can do with the photo shown (share it...)."""
+        path = self.playback.current
+        items = [item for app in self.apps for item in app.photo_items(self, path)]
+        if not items:
+            items = [Item("Rien à faire de cette prise", kind="info")]
+        return Menu(self.settings, items=items, title=os.path.basename(path)[:-4], context=self)
+
     def close_playback(self):
         self.stop_video()
         self.playback = self._shown = None
@@ -641,12 +649,24 @@ class Camera:
     def on_playback_action(self, action):
         """While in playback. Returns True if handled (the shutter leaves and shoots)."""
         p = self.playback
-        if action in ("play", "menu"):
+        if action == "play":
             self.close_playback()
             return True
         if action == "shutter":
             self.close_playback()
             return False  # and shoot: never miss a photo
+        if self.menu:  # the photo's menu: MENU goes back, then closes it, as Q does
+            if action == "q" or (action == "menu" and not self.menu_stack):
+                self.menu, self.menu_stack = None, []
+            else:
+                self.on_menu_action(action)
+            self.redraw()
+            return True
+        if action == "menu":
+            self.stop_video()
+            self.menu, self.menu_stack = self.photo_menu(), []
+            self.redraw()
+            return True
         if action == "q":
             self.delete_shown()
             return True
@@ -1208,6 +1228,7 @@ class Camera:
                     review=shown.image,
                     review_info=shown.info,
                     playback=p.position,
+                    **self._menu_fields(),
                     video_hint="LOUPE : lire",
                     message=message,
                     warning=warning,
@@ -1217,6 +1238,7 @@ class Camera:
                 review=shown.path,
                 review_info=shown.info,
                 playback=p.position,
+                **self._menu_fields(),
                 loupe=self.playback_zoom(),
                 loupe_center=p.center,
                 loupe_label=f"{PIXEL_SCALES[p.scale] * 100:g} %" if p.scale else "",
@@ -1300,6 +1322,11 @@ class Camera:
             message=message,
             warning=warning,
         )
+
+    def _menu_fields(self):
+        if not self.menu:
+            return {}
+        return {"menu": self.menu.rows(self.stats), "menu_title": self.menu.title, "menu_index": self.menu.index}
 
     def _histograms(self, luma, rgb, live=True):
         """The one histogram the HUD draws: in the detailed display, RGB when chosen and known.

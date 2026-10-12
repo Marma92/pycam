@@ -5,7 +5,8 @@
 - the preset and its grain;
 - the photos: thumbnails, download (JPEG, DNG), deletion;
 - the presets: install one made on a computer, remove it;
-- Cloud sync: its account (connected from here: the camera has no keyboard), its mode.
+- Cloud sync: its account (connected from here: the camera has no keyboard), its mode;
+- Partage: a photo shared on Instagram, Flickr, Bluesky, with the preview of each; the accounts.
 
 Local network only: any other address is refused, IPv6 included (the camera may have a
 public IPv6 address, and nothing here asks for a password).
@@ -39,6 +40,7 @@ MAX_UPLOAD = 32 * 1024**2
 FOLDER = re.compile(r"^\d{3}PYCAM$")
 SHOT = re.compile(r"^(PY[CB]_\d{4}\.(JPG|DNG)|PY[TV]_\d{4}\.MP4)$")
 VIDEO = re.compile(r"^PY[TV]_\d{4}\.MP4$")
+SHARED = re.compile(r"^PY[CB]_\d{4}\.JPG$")
 PRESET_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
 
 
@@ -103,6 +105,17 @@ class WebServer:
                 web.post("/api/cloud/mode", self.cloud_mode),
                 web.post("/api/cloud/action", self.cloud_action),
                 web.delete("/api/cloud", self.cloud_disconnect),
+                web.get("/api/share", self.share_state),
+                web.post("/api/share/preview", self.share_preview),
+                web.post("/api/share/post", self.share_post),
+                web.post("/api/share/queue/{id}/retry", self.share_retry),
+                web.delete("/api/share/queue/{id}", self.share_remove),
+                web.post("/api/share/bluesky", self.share_bluesky),
+                web.post("/api/share/flickr/start", self.share_flickr_start),
+                web.post("/api/share/flickr/finish", self.share_flickr_finish),
+                web.post("/api/share/instagram", self.share_instagram),
+                web.post("/api/share/defaults", self.share_defaults),
+                web.delete("/api/share/account/{platform}", self.share_disconnect),
             ]
         )
         self.app = app
@@ -397,6 +410,107 @@ class WebServer:
 
     async def cloud_disconnect(self, request):
         await self._cloud().disconnect()
+        return web.json_response({"ok": True})
+
+
+    # --- Partage (apps/share): the secrets come in, never go out
+
+    def _share(self):
+        app = next((a for a in self.camera.apps if getattr(a, "id", "") == "share"), None)
+        if app is None:
+            raise web.HTTPNotFound(text="Le partage n'est pas disponible.")
+        return app
+
+    async def _share_call(self, coro):
+        from .apps.share.publishers import Refused, ShareError
+
+        try:
+            return await coro
+        except Refused as e:
+            raise web.HTTPBadRequest(text=f"Refusé : {e}")
+        except (ShareError, aiohttp.ClientError, TimeoutError, OSError) as e:
+            raise web.HTTPBadGateway(text=f"Service injoignable : {e or type(e).__name__}")
+
+    def _shared_photo(self, data):
+        folder, name = str(data.get("folder", "")), str(data.get("name", ""))
+        if not name.upper().endswith(".JPG"):
+            name += ".JPG"
+        path = os.path.join(self.camera.storage.root, folder, name)
+        if not FOLDER.match(folder) or not SHARED.match(name) or not os.path.isfile(path):
+            raise web.HTTPNotFound(text="Photo introuvable.")
+        return path
+
+    async def share_state(self, request):
+        return web.json_response(self._share().status())
+
+    async def share_preview(self, request):
+        data = await request.json()
+        fields = data.get("fields") if isinstance(data.get("fields"), dict) else None
+        post, platforms = await asyncio.to_thread(self._share().preview, self._shared_photo(data), fields)
+        return web.json_response({"post": post.to_dict(), "platforms": platforms})
+
+    async def share_post(self, request):
+        from .apps.share.config import PLATFORMS
+
+        data = await request.json()
+        app, path = self._share(), self._shared_photo(data)
+        platforms = [p for p in PLATFORMS if p in (data.get("platforms") or []) and app.config.ready(p)]
+        if not platforms:
+            raise web.HTTPBadRequest(text="Aucune plateforme connectée choisie.")
+        fields = data.get("fields") if isinstance(data.get("fields"), dict) else {}
+        post, _ = await asyncio.to_thread(app.preview, path, fields, ())
+        return web.json_response({"ok": True, "message": app.add(path, post, platforms)})
+
+    async def share_retry(self, request):
+        return web.json_response({"ok": True, "message": self._share().retry(request.match_info["id"])})
+
+    async def share_remove(self, request):
+        if not self._share().remove(request.match_info["id"]):
+            raise web.HTTPConflict(text="Publication en cours, ou déjà retirée.")
+        return web.json_response({"ok": True})
+
+    async def share_bluesky(self, request):
+        data = await request.json()
+        handle, password = str(data.get("handle") or ""), str(data.get("password") or "")
+        if not (handle and password):
+            raise web.HTTPBadRequest(text="Il faut l'identifiant et un mot de passe d'application.")
+        account = await self._share_call(self._share().connect_bluesky(handle, password))
+        return web.json_response({"ok": True, "account": account})
+
+    async def share_flickr_start(self, request):
+        data = await request.json()
+        key, secret = str(data.get("key") or ""), str(data.get("secret") or "")
+        if not (key and secret):
+            raise web.HTTPBadRequest(text="Il faut la clé et le secret de l'API Flickr.")
+        return web.json_response({"url": await self._share_call(self._share().flickr_start(key, secret))})
+
+    async def share_flickr_finish(self, request):
+        code = str((await request.json()).get("code") or "")
+        if not code:
+            raise web.HTTPBadRequest(text="Il faut le code donné par Flickr.")
+        account = await self._share_call(self._share().flickr_finish(code))
+        return web.json_response({"ok": True, "account": account})
+
+    async def share_instagram(self, request):
+        data = await request.json()
+        user, password, sessionid = (str(data.get(k) or "") for k in ("user", "password", "sessionid"))
+        if not (user and (password or sessionid)):
+            raise web.HTTPBadRequest(text="Il faut l'identifiant, et le sessionid ou le mot de passe.")
+        account = await self._share_call(self._share().connect_instagram(user, password, sessionid))
+        return web.json_response({"ok": True, "account": account})
+
+    async def share_defaults(self, request):
+        data = await request.json()
+        self._share().set_defaults(tags=data.get("tags"), lang=data.get("lang"))
+        return web.json_response({"ok": True})
+
+    async def share_disconnect(self, request):
+        from .apps.share.config import PLATFORMS
+
+        platform = request.match_info["platform"]
+        if platform not in PLATFORMS:
+            raise web.HTTPNotFound()
+        self._share().disconnect(platform)
         return web.json_response({"ok": True})
 
 

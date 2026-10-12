@@ -144,6 +144,8 @@ class Hud:
             self._histogram(d, view)
         if view.loupe > 1:
             self._loupe(d, view)
+        if view.menu:  # the photo's menu, in playback
+            self._menu(d, view)
         if view.message:
             self._message(d, view.message, view.warning)
         self.shm[:] = img.tobytes()

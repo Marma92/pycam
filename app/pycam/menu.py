@@ -25,15 +25,15 @@ class Item:
     shown: tuple = ()  # how each value is shown
     push: str = ""  # what the engine must be told: "exposure", "picture", "look", "config", "focus" or nothing
     # Not a setting: "open" (target(context) gives the menu to open), "run" (target(context)
-    # runs, with the front dial forward), "info" (only shown). text(context): what is shown
-    # on the right.
+    # runs, with the front dial forward), "toggle" (the same, either way: a yes / no that is
+    # not a setting), "info" (only shown). text(context): what is shown on the right.
     kind: str = ""
     target: object = None
     text: object = None
 
     @property
     def selectable(self):
-        return bool(self.attr) or self.kind in ("open", "run")
+        return bool(self.attr) or self.kind in ("open", "run", "toggle")
 
     def options(self, settings):
         """((value, shown), ...)"""
