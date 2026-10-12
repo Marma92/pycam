@@ -66,6 +66,7 @@
     <div class="panel" style="margin-top:14px">
       <label>Simulation <select id="preset"></select></label>
       <label>Simuler le grain <select id="grain"><option value="1">Oui</option><option value="0">Non</option></select></label>
+      <label>Appareil <select id="mode"><option value="photo">Photo</option><option value="video">Vidéo</option></select></label>
     </div>
   </section>
 
@@ -135,12 +136,15 @@ async function refreshState() {
     if (s.writing) parts.push(["Écriture", s.writing]);
     if (s.task) parts.push(["", s.task]);
     if (!s.screen) parts.push(["", "écran en veille"]);
+    if (s.recording) parts.unshift(["● REC", s.recording]);
+    if (document.activeElement !== $("mode")) $("mode").value = s.camera_mode;
     if (s.drive) parts.unshift(["", s.countdown ? `${s.drive} · ${s.countdown}` : s.drive]);
     if (s.exposure_timer) parts.unshift([s.exposure_label, s.exposure_timer]);
     const bulb = s.exposure_label === "POSE B";
     const stack = (s.exposure_label || "").startsWith("EMPILEMENT");
     $("shutter").textContent = bulb ? "Arrêter la pose" : stack ? "Arrêter l'empilement" : s.exposure_timer ? "Annuler la pose"
-      : s.drive_running ? "Arrêter la séquence" : s.shutter === "B" ? "Ouvrir (pose B)" : "Déclencher";
+      : s.drive_running ? "Arrêter la séquence" : s.shutter === "B" ? "Ouvrir (pose B)"
+      : s.camera_mode === "video" ? (s.recording ? "Arrêter l'enregistrement" : "Enregistrer") : "Déclencher";
     $("status").innerHTML = (s.connected ? "" : "<b>Moteur indisponible</b> ") +
       parts.map(([k, v]) => `<span>${k ? k + " " : ""}<b>${esc(v)}</b></span>`).join("");
     const select = $("preset");
@@ -169,6 +173,9 @@ $("shutter").onclick = async () => {
 $("preset").onchange = async (e) => {
   try { await post("/api/preset", {id: e.target.value}); toast("Simulation : " + e.target.selectedOptions[0].textContent); refreshState(); }
   catch (err) { toast(err.message); }
+};
+$("mode").onchange = async (e) => {
+  try { await post("/api/mode", {mode: e.target.value}); refreshState(); } catch (err) { toast(err.message); refreshState(); }
 };
 $("grain").onchange = async (e) => { await post("/api/grain", {on: e.target.value === "1"}); refreshState(); };
 

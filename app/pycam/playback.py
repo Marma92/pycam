@@ -14,7 +14,7 @@ import subprocess
 
 FOLDER = re.compile(r"^\d{3}PYCAM$")
 PHOTO = re.compile(r"^PYC_\d{4}\.JPG$")
-VIDEO = re.compile(r"^PYT_\d{4}\.MP4$")
+VIDEO = re.compile(r"^PY[TV]_\d{4}\.MP4$")  # timelapses (PYT) and videos (PYV)
 # Magnifications: the photo fitted to the screen, then real pixels (100 %), then 200 %.
 PIXEL_SCALES = (None, 1.0, 2.0)
 
@@ -86,7 +86,7 @@ def describe_video(path):
     num, _, den = stream.get("avg_frame_rate", "0/1").partition("/")
     fps = float(num) / float(den or 1) if float(den or 1) else 0
     parts = [name, f"vidéo {duration:.0f} s", f"{stream['width']} × {stream['height']}", f"{fps:g} i/s"]
-    if stream.get("nb_read_packets"):
+    if name.startswith("PYT_") and stream.get("nb_read_packets"):  # a timelapse: its frames
         parts.append(f"{stream['nb_read_packets']} vues")
     return "   ".join(parts), (stream["width"], stream["height"]), duration
 

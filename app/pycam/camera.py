@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from . import drive as drives
 from . import exposure as exp
-from . import lenses, looks, meter, picture, timelapse
+from . import lenses, looks, meter, picture, timelapse, video
 from .engine_client import EngineError, call_blocking
 from .menu import Menu
 from .playback import PIXEL_SCALES, Playback, describe, describe_video, poster
@@ -97,6 +97,16 @@ class Video:
     ended: bool = False
 
 
+@dataclass
+class Recording:
+    """A video being recorded (by the engine's Recorder)."""
+
+    path: str
+    start: float  # time.monotonic()
+    duration: float = 0  # seconds recorded, from the engine
+    bytes: int = 0
+
+
 # Drive modes during which the screen may go to sleep (Camera.check_screen).
 LONG_CAPTURES = ("interval", "timelapse", "bulb", "stack")
 
@@ -141,6 +151,8 @@ class Camera:
         self.last_capture_path = ""  # without extension
         self.task_status = ""  # a long background task, on the HUD ("VIDÉO 40 %")
         self.video = None  # Video, while one is played in playback
+        self.recording = None  # Recording, in video mode
+        self._video_setup_deferred = False  # video settings changed while recording
         self.screen_on = True  # off during long captures, to save power (check_screen)
         self._last_input = time.monotonic()
         self._exposure_deferred = False  # an exposure change waits for the end of the exposure
@@ -171,6 +183,9 @@ class Camera:
         if isinstance(exposure_max, (int, float)) and exposure_max > 0:
             self.slowest_shutter = exposure_max / 1e6
         await self.engine.call("configure", strategy=self.settings.strategy, **picture.engine_config(self.settings))
+        self.recording = None  # a new engine records nothing
+        if self.settings.mode == "video":
+            await self.apply_mode()
         await self.apply_exposure()
         await self.apply_picture()
         await self.apply_look()
@@ -279,6 +294,17 @@ class Camera:
                     self.spawn(self._video_call("video_stop"))
                     self.show_message("Lecture impossible", warning=True)
                 self.redraw()
+        elif kind == "record_progress":
+            if self.recording and self.recording.path == msg.get("path"):
+                self.recording.duration = msg.get("duration", 0)
+                self.recording.bytes = msg.get("bytes", 0)
+                self.redraw()
+        elif kind == "record_done":
+            self._recording_done(msg)
+        elif kind == "record_error":
+            log.error("recording %s: %s", msg.get("path"), msg.get("error"))
+            self.show_message("Erreur d'enregistrement vidéo", warning=True)
+            self.spawn(self.stop_recording())
         elif kind == "display_ready":
             log.info("the engine got the screen")
             self.spawn(self.setup_hud())
@@ -292,8 +318,11 @@ class Camera:
             self._exposure_deferred = True  # not in the middle of a bulb
             return
         try:
-            preset = self.preset()
-            controls = self.settings.exposure.controls(preset.exposure_bias, preset.white_balance)
+            if self.settings.mode == "video":
+                controls = video.controls(self.settings)
+            else:
+                preset = self.preset()
+                controls = self.settings.exposure.controls(preset.exposure_bias, preset.white_balance)
             await self.engine.call("set_controls", controls=controls)
         except ConnectionError:
             pass  # pushed again on reconnection
@@ -457,10 +486,19 @@ class Camera:
         if self.menu and self.on_menu_action(action):
             return
         if action == "play":
+            if self.recording:
+                self.show_message("Enregistrement en cours", warning=True)
+                return
             self.open_playback()
             return
         if action in ("fn1", "fn2"):  # the action they are given in the menu
             action = getattr(s, action)
+        if action == "video":
+            if self.set_mode("photo" if s.mode == "video" else "video"):
+                self.show_message("Vidéo" if s.mode == "video" else "Photo")
+            else:
+                self.show_message("Enregistrement en cours", warning=True)
+            return
         if action in ("q", "menu") and not (action == "menu" and self.loupe > 1):
             looks.refresh()  # a preset copied to the camera shows up in the menu
         if action == "q":
@@ -474,6 +512,8 @@ class Camera:
             else:
                 self.menu = Menu(s, quick=False)
                 self.redraw()
+            return
+        if s.mode == "video" and self.on_video_action(action):
             return
         if action == "shutter":
             self.drive.shutter(remote=remote)
@@ -692,6 +732,132 @@ class Camera:
         except (EngineError, ConnectionError, TimeoutError) as e:
             log.warning("%s: %s", command, e)
 
+    # --- Video mode (video.py; the engine's video_mode and Recorder)
+
+    def set_mode(self, mode):
+        """Photo or video; False while recording (or for no such mode)."""
+        if mode not in ("photo", "video") or (self.recording and mode != self.settings.mode):
+            return False
+        if mode != self.settings.mode:
+            self.settings.mode = mode
+            self.menu = None
+            self.loupe = 1
+            self.spawn(self.apply_mode())
+            self.save_soon()
+            self.redraw()
+        return True
+
+    async def apply_mode(self):
+        """Tells the engine the mode, the video's settings, and the exposure that goes with it."""
+        s = self.settings
+        try:
+            if s.mode == "video":
+                await self.engine.call("video_mode", on=True, **video.engine_setup(s))
+            else:
+                await self.engine.call("video_mode", on=False)
+        except (EngineError, ConnectionError, TimeoutError) as e:
+            log.warning("video mode refused: %s", e)
+            self.show_message("Impossible pour l'instant", warning=True)
+        await self.apply_exposure()
+
+    def on_video_action(self, action):
+        """The controls in video mode; True if handled (the others act as in photo)."""
+        s, e = self.settings, self.settings.exposure
+        if action == "shutter":
+            self.spawn(self.stop_recording() if self.recording else self.start_recording())
+            return True
+        if action in ("front_dial_plus", "front_dial_minus"):
+            e.step_ev(+1 if action == "front_dial_plus" else -1)
+        elif action in ("rear_dial_plus", "rear_dial_minus"):
+            video.step_iso(s, +1 if action == "rear_dial_plus" else -1, self.measured_iso())
+        elif action == "iso_auto":
+            if s.video_iso:
+                s.video_iso = 0
+            else:
+                video.step_iso(s, 0, self.measured_iso())
+        elif action in ("shutter_auto", "loupe", "strategy", "raw", "drive"):
+            self.show_message("Pas en vidéo", warning=True)
+            return True
+        else:
+            return False
+        self.spawn(self.apply_exposure())
+        self.save_soon()
+        self.redraw()
+        return True
+
+    async def start_recording(self):
+        async with self._capture_lock:
+            if self.recording:
+                return
+            base, folder, number = self.storage.next_photo()
+            path = os.path.join(os.path.dirname(base), f"PYV_{number:04d}.MP4")
+            try:
+                await self.engine.call("record_start", path=path)
+            except (EngineError, ConnectionError, TimeoutError) as e:
+                log.error("cannot record: %s", e)
+                self.show_message("Enregistrement impossible", warning=True)
+                return
+            self.storage.commit(folder, number)
+            self.save_now()  # never give the same number twice
+            self.recording = Recording(path, time.monotonic())
+            log.info("recording %s", path)
+            self.redraw()
+
+    async def stop_recording(self):
+        try:
+            await self.engine.call("record_stop")  # then "record_done"
+        except (EngineError, ConnectionError, TimeoutError) as e:
+            log.error("cannot stop recording: %s", e)
+            self.recording = None
+            self.redraw()
+
+    def _recording_done(self, msg):
+        name = os.path.basename(msg.get("path", ""))[:-4]
+        self.recording = None
+        if msg.get("error"):
+            log.error("video %s: %s", name, msg["error"])
+            self.show_message("Vidéo non enregistrée", warning=True)
+        else:
+            log.info("video %s: %.1f s, %d frames, %d bytes", name, msg.get("duration", 0), msg.get("frames", 0), msg.get("bytes", 0))
+            self.show_message(f"{name} · {exp.format_duration(msg.get('duration', 0))}")
+        if self._video_setup_deferred:
+            self._video_setup_deferred = False
+            self.spawn(self.apply_mode())
+        self.redraw()
+
+    def _video_view(self, message, warning):
+        s, e = self.settings, self.settings.exposure
+        recording = ""
+        if self.recording:
+            recording = exp.format_duration(self.recording.duration or time.monotonic() - self.recording.start)
+        iso = s.video_iso or round(self.measured_iso())
+        return HudView(
+            display=s.display,
+            grid=s.grid,
+            video_mode=True,
+            recording=recording,
+            mode="V",
+            metering=e.metering,
+            shutter=exp.format_shutter(self.measured_shutter()),
+            shutter_auto=True,
+            iso=f"ISO {iso}" if iso else "ISO --",
+            iso_auto=not s.video_iso,
+            ev=exp.format_ev(e.ev),
+            awb=e.awb_label(),
+            formats=video.label(s),
+            shots=f"{video.minutes_left(s, self.storage.free_bytes())} min",
+            peaking=s.peaking_color if s.peaking else "",
+            zebra=s.zebra,
+            menu=self.menu.rows(self.stats) if self.menu else (),
+            menu_title=self.menu.title if self.menu else "",
+            menu_index=self.menu.index if self.menu else 0,
+            writing=self.writing,
+            task=self.task_status,
+            **self._histograms(self.stats.get("histogram", ()), self.stats.get("histogram_rgb", ()), live=False),
+            message=message,
+            warning=warning,
+        )
+
     # --- The screen asleep during long captures
 
     @property
@@ -770,6 +936,15 @@ class Camera:
             self.spawn(self.apply_still_config())
         elif item.push == "focus":
             self.spawn(self.apply_focus_aids())
+        elif item.push == "mode":
+            self.show_message("Vidéo" if s.mode == "video" else "Photo")
+            self.spawn(self.apply_mode())
+        elif item.push == "video":
+            if self.recording:
+                self._video_setup_deferred = True
+                self.show_message("Appliqué après l'enregistrement")
+            elif s.mode == "video":
+                self.spawn(self.apply_mode())
         self.save_soon()
 
     async def capture(self, quiet=False, stack=None, formats=None, keep_base=None):
@@ -1021,6 +1196,8 @@ class Camera:
                 message=message,
                 warning=warning,
             )
+        if s.mode == "video":
+            return self._video_view(message, warning)
         shutter = e.shutter if e.shutter is not None else self.measured_shutter()
         iso = e.iso if e.iso is not None else round(self.measured_iso())
         # The meter: always in M (but B: no duration); in the other modes, only when the

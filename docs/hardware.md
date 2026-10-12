@@ -65,7 +65,7 @@ Comme il n'y a pas de tactile, les commandes doivent couvrir trois choses : **le
 | 7 | **LECTURE** | Bouton tactile | Galerie. |
 | 8 | **DISP** | Bouton tactile | Faire défiler les affichages : visée nature → détaillée → histogramme + niveau. |
 | 9 | **LOUPE** | Bouton tactile | Loupe ×1 → ×5 → ×10 pour la mise au point manuelle. |
-| 10 | **Fn1, Fn2** | Boutons tactiles | Assignables : peaking, zébras, balance des blancs, mode de déclenchement… |
+| 10 | **Fn1, Fn2** | Boutons tactiles | Assignables : peaking, zébras, balance des blancs, mode de déclenchement, photo / vidéo… |
 
 La logique d'usage reprend celle d'un hybride expert (Fujifilm/Sony) : **deux molettes pour l'exposition, un bouton Q pour tout le reste**. Le menu complet ne sert presque qu'à la configuration.
 

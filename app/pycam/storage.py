@@ -59,6 +59,15 @@ class Storage:
         """The photo (folder, number) was taken: the next one comes after."""
         self.settings.folder_number, self.settings.next_number = _after(folder, number)
 
+    def free_bytes(self):
+        path = self.root
+        while not os.path.exists(path):  # the card may not have a DCIM folder yet
+            parent = os.path.dirname(path)
+            if parent == path:
+                return 0
+            path = parent
+        return shutil.disk_usage(path).free
+
     def shots_remaining(self, formats, dng_compressed=False, base_jpeg=False):
         path = self.root
         while not os.path.exists(path):  # the card may not have a DCIM folder yet

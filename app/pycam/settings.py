@@ -10,7 +10,7 @@ import logging
 import os
 from dataclasses import dataclass, field, fields
 
-from . import drive, picture
+from . import drive, picture, video
 from .exposure import Exposure
 from .lenses import DEFAULT_LENSES, clean_lens
 
@@ -25,7 +25,8 @@ HISTOGRAMS = ("rgb", "luma")
 BULB_MODES = ("hold", "toggle")
 SCREEN_OFF = (10, 30, 60, 0)  # B: held shutter, or one press to start and one to stop
 # What the Fn1 and Fn2 buttons can do: actions of Camera.on_action.
-FN_ACTIONS = ("peaking", "zebra", "awb_lock", "grid", "strategy", "raw", "drive")
+FN_ACTIONS = ("peaking", "zebra", "awb_lock", "grid", "strategy", "raw", "drive", "video")
+CAMERA_MODES = ("photo", "video")
 
 
 def default_path():
@@ -59,6 +60,10 @@ class Settings:
     timelapse_photos: str = "video"  # drive.TL_PHOTOS
     stack_mode: str = "mean"  # drive.STACK_MODES
     stack_frames: int = 8  # drive.STACK_COUNTS, 0: until stopped
+    mode: str = "photo"  # CAMERA_MODES
+    video_resolution: str = "1080p"  # video.RESOLUTIONS
+    video_quality: str = "normal"  # video.QUALITIES
+    video_iso: int = 0  # video.ISO_VALUES, 0: automatic
     screen_off: int = 30  # SCREEN_OFF: seconds without a press before the screen sleeps in a long capture, 0: never
     display: str = "detailed"
     grid: bool = True
@@ -170,6 +175,10 @@ def load_settings(path):
         ("timelapse_aspect", drive.TL_ASPECTS),
         ("timelapse_photos", drive.TL_PHOTOS),
         ("stack_mode", drive.STACK_MODES),
+        ("mode", CAMERA_MODES),
+        ("video_resolution", tuple(video.RESOLUTIONS)),
+        ("video_quality", video.QUALITIES),
+        ("video_iso", video.ISO_VALUES),
         ("stack_frames", drive.STACK_COUNTS),
     ):
         if getattr(settings, name) not in allowed:

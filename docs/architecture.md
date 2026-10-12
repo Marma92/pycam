@@ -142,6 +142,16 @@ Plus tard, si le CPU ne suit pas, le peaking pourra passer en NEON, ou en shader
   - **Deux tampons** en mode photo pour un empilement : avec un seul, la caméra n'avait où mettre l'image suivante pendant l'addition de la précédente, et perdait une image sur deux (des poses de 1 s espacées de 2 s, donc des trous dans la pose). Avec deux, elles se suivent : 5 poses de 1 s en 5,7 s depuis la commande, démarrage compris.
   - Le même mécanisme fait la **moyenne** (moins de bruit) et le **maximum** (traînées de lumière) des images : le mode Empilement (§5). Pour un empilement, l'ISP ne débruite pas les images YUV, qui ne servent pas. Une somme est limitée à 30 minutes de pose (la durée va dans les métadonnées, en µs sur 32 bits) ; une moyenne ou un maximum, à 3 600 images.
 
+### 2.5 Vidéo
+
+Un appareil fait pour la photo, avec la vidéo en appoint (2026-10-12).
+
+- **La phase « vidéo »** (commande `video_mode`) reconfigure la caméra : mode capteur 2028×1080 (binning 2×2, toute la largeur du capteur, jusqu'à 50 i/s), mis à l'échelle par l'ISP en 1080p ou 720p, à une cadence fixe (25 i/s : la lumière secteur à 50 Hz ne scintille pas au 1/50), avec un petit flux 1024×576 pour l'écran et les mesures. L'écran montre ce flux en 16:9 dans la zone d'image, sans le look : la vidéo garde la base pycam (une LUT 3D à 25 i/s en 1080p dépasse le Pi 3). La loupe et les photos sont refusées dans ce mode.
+- **L'enregistrement** (`recorder.cpp`, commandes `record_start` et `record_stop`) : l'encodeur H.264 du VideoCore (`H264Encoder` de rpicam-apps, profil High, niveau 4.1, une image clé par seconde) lit directement les tampons de la caméra (dmabuf, sans copie), et libavformat met le flux dans un MP4 (les SPS/PPS de la première image clé dans l'en-tête), sans son (le Pi n'a pas de micro). Le fichier est écrit en `.part`, puis renommé et forcé sur la carte. Chaque image reste à l'encodeur jusqu'à ce qu'il la rende ; l'enregistrement s'arrête toujours avant un redémarrage de la caméra (le fichier est fini, pas perdu).
+- **Mesuré** (Pi 3B, 1080p25 à 12 Mbit/s) : 25 i/s exactes, ~7 % du CPU (4 cœurs) pour la prise et l'encodage. Deux pièges trouvés :
+  - les options de l'encodeur se règlent directement : les faire analyser comme une ligne de commande relance le gestionnaire de caméras de rpicam, sous la caméra en marche (le moteur plantait), et l'encodeur prend la taille du flux H.264 dans ces options, pas dans le flux (sans elle, le micrologiciel refusait de démarrer) ;
+  - la toute première utilisation de l'encodeur après le démarrage du moteur le bloque ~2 s : la première vidéo perdait ses images de la 5e à la 50e. Le moteur l'utilise donc une demi-seconde, dans un fichier jetable, en entrant pour la première fois en mode vidéo.
+
 ## 3. Modes d'exposition (dans l'application)
 
 L'ouverture est réglée sur l'objectif, donc les modes « classiques » se traduisent ainsi en contrôles libcamera :
@@ -223,6 +233,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | `drive` | Modes de déclenchement : vue par vue, rafale, retardateur, intervallomètre, bracketing ; et la pose B, et l'annulation d'une pose longue (voir plus bas). | ✅ |
 | `sensors` | IMU (niveau, orientation), batterie, RTC. | ⬜ |
 | `timelapse` | L'assemblage des vues d'un timelapse en vidéo MP4, par ffmpeg (voir plus bas). | ✅ |
+| `video` | Le mode vidéo : définitions, débits, exposition automatique, temps restant (voir plus bas). | ✅ |
 | `web` | `aiohttp`, port 8080, réseau local seulement : visée (une image par seconde, prise par la commande `snapshot`), déclencheur, preset et grain, galerie avec téléchargement et suppression, installation de presets. Une page unique sans dépendance (`web/index.html`). | ✅ |
 
 **Commandes clavier, en attendant les boutons.** Le clavier ne garde qu'une touche par commande de l'appareil (`hardware.md` §2) ; tous les autres réglages sont dans les menus. Les touches sont choisies pour être au même endroit en QWERTY et en AZERTY.
@@ -238,7 +249,8 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | D | DISP | Affichage : détaillé → simple → nature. |
 | L | LOUPE | Loupe ×5 → ×10 → coupée. Dans la loupe, les flèches la déplacent au lieu de régler vitesse et ISO (en attendant le joystick). La grille est masquée, et le HUD montre le grossissement et une mini-carte de la zone. |
 | P | LECTURE | Les photos de la carte (voir ci-dessous). |
-| 1 / 2 | Fn1 / Fn2 | Ce que le menu leur attribue : peaking (Fn1 par défaut), zébras (Fn2 par défaut), mémoriser la balance, grille, bascule ⇄ ZSL, RAW + JPEG ⇄ JPEG, mode de déclenchement suivant. |
+| 1 / 2 | Fn1 / Fn2 | Ce que le menu leur attribue : peaking (Fn1 par défaut), zébras (Fn2 par défaut), mémoriser la balance, grille, bascule ⇄ ZSL, RAW + JPEG ⇄ JPEG, mode de déclenchement suivant., photo ⇄ vidéo. |
+| V | Sélecteur photo / vidéo | Passer du mode photo au mode vidéo, et retour (pas pendant un enregistrement). |
 
 Pendant la revue après la prise, toute touche la ferme ; le déclencheur la ferme *et* déclenche.
 
@@ -300,6 +312,14 @@ Le déclencheur pressé pendant une séquence l'arrête (sauf la rafale, qu'il p
 - La lecture sur l'appareil montre les vues et la vidéo, qu'elle lit (voir « La lecture »).
 
 **L'écran en veille pendant les longues prises** (2026-10-12). Pendant un intervallomètre, un timelapse, une pose B ou une pose longue, l'écran s'éteint après 30 s sans appui (MENU › Affichage › Écran en longue prise : 10 s, 30 s, 1 min, ou jamais). Plus de HUD à dessiner (0,1 s de CPU à chaque rendu), plus de visée à afficher. Un appui le rallume et ne fait que ça : l'appui qui réveille ne déclenche pas, n'arrête rien. Le relâchement du déclencheur compte toujours (il termine une pose B tenue), et le déclencheur de l'interface web agit sans rallumer. L'écran se rallume seul à la fin de la prise. Mesuré pendant un intervallomètre (RAW + JPEG, Cinéma 800T, une vue toutes les 5 s) : le moteur passe de 174 à 129 % d'un cœur, l'application de 33 à 10 %, soit un tiers du CPU en moins, en plus de l'écran.
+
+**Le mode vidéo** (`video.py`, §2.5). On y passe par MENU › Vidéo › Appareil, par une touche Fn (« Photo / Vidéo »), ou la touche V du clavier (un sélecteur sur l'appareil). Peu de réglages : la définition (1080p, 720p), la qualité (débit : 20, 12 ou 6 Mbit/s en 1080p, la moitié en 720p) et l'ISO (automatique, ou de 100 à 1600) ; le reste est automatique. La balance et la mesure sont celles de la photo (« Pellicule » devient automatique : pas de look en vidéo).
+
+- Le déclencheur démarre et arrête l'enregistrement : `PYV_0169.MP4`, numéroté comme les photos. Pendant l'enregistrement, « ● REC 0:05 » en rouge ; pas de lecture, ni de retour en photo, et un changement de définition ou de qualité attend la fin.
+- La molette avant règle la correction d'exposition, la molette arrière l'ISO (le premier cran part de l'ISO mesuré), l'appui sur la molette arrière remet l'ISO en automatique.
+- Le menu Q devient « Réglages vidéo » : appareil, définition, qualité, ISO, mesure, balance, température, peaking, zébras.
+- Le bandeau montre « V », la vitesse et l'ISO mesurés, la correction, la balance, « 1080p 25 i/s · Normale » et le temps d'enregistrement restant sur la carte. L'image est en 16:9, avec des bandes noires dans la zone d'image.
+- Les vidéos vont dans la lecture et l'interface web (lecture, téléchargement, suppression), comme les timelapses. Le mode, enregistré dans les réglages, revient au démarrage.
 
 **Les poses longues** (2026-10-12, §2.4). En M, la molette avant va jusqu'à 10'40" (la limite du capteur, 674 s), puis **B**.
 

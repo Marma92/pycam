@@ -96,7 +96,7 @@ class Hud:
         if view.review:
             self._draw_review(view)
             return
-        img = self._background(view.grid and view.display != "clean").copy()
+        img = self._background(view.grid and view.display != "clean", view.video_mode).copy()
         d = ImageDraw.Draw(img)
         if view.display != "clean":
             self._info_bar(d, view)
@@ -204,19 +204,28 @@ class Hud:
         # Beyond 100 %, the pixels as squares: that is what one looks for.
         return crop.resize((round(cw * scale), round(ch * scale)), Image.NEAREST if scale > 1 else Image.BILINEAR)
 
-    def _background(self, grid):
-        """Black margins, transparent image, maybe the rule of thirds: drawn once, then copied."""
-        if grid not in self._backgrounds:
+    def video_rect(self):
+        """The 16:9 image of the video mode, in the image area (letterboxed as the engine
+        shows it)."""
+        x, y, w, h = self.rect
+        vh = min(h, round(w * 9 / 16)) & ~1
+        return x, y + (h - vh) // 2, w, vh
+
+    def _background(self, grid, video=False):
+        """Black margins, transparent image, maybe the rule of thirds: drawn once, then copied.
+        video: the 16:9 image of the video mode, black above and below it."""
+        key = (grid, video)
+        if key not in self._backgrounds:
             img = Image.new("RGBA", self.size, OPAQUE_BLACK)
             d = ImageDraw.Draw(img)
-            x, y, w, h = self.rect
+            x, y, w, h = self.video_rect() if video else self.rect
             d.rectangle([x, y, x + w - 1, y + h - 1], fill=TRANSPARENT)
             if grid:
                 for i in (1, 2):
                     d.line([(x + w * i // 3, y), (x + w * i // 3, y + h)], fill=GRID, width=self.px(2))
                     d.line([(x, y + h * i // 3), (x + w, y + h * i // 3)], fill=GRID, width=self.px(2))
-            self._backgrounds[grid] = img
-        return self._backgrounds[grid]
+            self._backgrounds[key] = img
+        return self._backgrounds[key]
 
     def _info_bar(self, d, view):
         x, y, w, h = self.rect
@@ -317,6 +326,10 @@ class Hud:
             d.text((cx + self.px(10), cy + self.px(5)), label, font=self.font, fill=colour)
             cx += tw + self.px(32)
 
+        if view.recording:
+            badge(f"● REC {view.recording}", RED)
+        elif view.video_mode:
+            badge("VIDÉO", WHITE)
         if view.drive:
             badge(view.drive, AMBER if view.drive_running else WHITE)
         if view.viewfinder_auto:  # the exposure is too long to be shown

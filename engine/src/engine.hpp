@@ -23,6 +23,7 @@
 #include "focus_aids.hpp"
 #include "ipc_server.hpp"
 #include "look.hpp"
+#include "recorder.hpp"
 #include "stack.hpp"
 #include "video_player.hpp"
 
@@ -81,6 +82,14 @@ private:
 		// Full resolution for the photo: one frame, or those of a stack. Switch strategy,
 		// and in ZSL for the exposures longer than its frames, and for stacks.
 		Still,
+		// Video mode: the video stream (1080p or 720p), and a small one for the screen.
+		Video,
+	};
+
+	struct VideoSetup
+	{
+		unsigned width = 1920, height = 1080, fps = 25, bitrate = 12'000'000;
+		bool operator==(VideoSetup const &) const = default;
 	};
 
 	struct PendingCapture
@@ -109,6 +118,10 @@ private:
 	void SetTuning();
 	void FindCameraControls();
 	void ReleaseFrames();
+	Phase IdlePhase() const { return video_ ? Phase::Video : Phase::Viewfinder; }
+	void VideoMode(json const &command);
+	json RecordStart(json const &command);
+	json RecordStop();
 	int64_t ManualExposure() const;
 	libcamera::ControlList CameraControls(Phase phase, std::string *viewfinder = nullptr) const;
 	void OnFrame(CompletedRequestPtr &request);
@@ -138,6 +151,16 @@ private:
 	CaptureWriter writer_;
 	std::unique_ptr<Display> display_; // null without a screen
 	std::unique_ptr<VideoPlayer> player_; // made with the first video; before display_ goes
+	std::optional<VideoSetup> video_; // the video mode, when on
+	std::unique_ptr<Recorder> recorder_; // while recording
+	// The VideoCore's encoder, used once for half a second on entering the video mode: its
+	// very first use after the engine starts stalls it ~2 s (frames lost at the start of
+	// the first video, measured 2026-10-12).
+	std::unique_ptr<Recorder> warmup_;
+	unsigned warmup_frames_ = 0;
+	bool encoder_warm_ = false;
+	void EndWarmup();
+	std::atomic<bool> video_display_ { false }; // the screen shows the video stream: no look on it
 	Clock::time_point next_display_try_ {};
 	bool display_failure_logged_ = false;
 	FocusAids focus_aids_; // drawn into the viewfinder frames, on the display thread
