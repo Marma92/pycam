@@ -217,6 +217,7 @@ Un seul processus `asyncio` (`python3 -m pycam`, dans `app/`), découpé en modu
 | `state` | Machine d'états : `VIEW` → `MENU` / `PLAYBACK` / `SLEEP`. | ⬜ |
 | `drive` | Modes de déclenchement : vue par vue, rafale, retardateur, intervallomètre, bracketing ; et la pose B, et l'annulation d'une pose longue (voir plus bas). | ✅ |
 | `sensors` | IMU (niveau, orientation), batterie, RTC. | ⬜ |
+| `timelapse` | L'assemblage des vues d'un timelapse en vidéo MP4, par ffmpeg (voir plus bas). | ✅ |
 | `web` | `aiohttp`, port 8080, réseau local seulement : visée (une image par seconde, prise par la commande `snapshot`), déclencheur, preset et grain, galerie avec téléchargement et suppression, installation de presets. Une page unique sans dépendance (`web/index.html`). | ✅ |
 
 **Commandes clavier, en attendant les boutons.** Le clavier ne garde qu'une touche par commande de l'appareil (`hardware.md` §2) ; tous les autres réglages sont dans les menus. Les touches sont choisies pour être au même endroit en QWERTY et en AZERTY.
@@ -277,10 +278,18 @@ Pendant la revue après la prise, toute touche la ferme ; le déclencheur la fer
 | Vue par vue | Une photo par appui. |
 | Rafale | Tant que le déclencheur est tenu (au moins une vue, 20 au plus) : chaque vue dès que le moteur a pris la précédente (`captured`), puis au rythme de l'écriture quand la file est pleine. Le clavier et les boutons envoient le relâchement (`shutter_release`) ; le déclencheur web fait appui + relâchement, donc une vue. |
 | Retardateur 2 s / 10 s | Compte à rebours en gros chiffres au centre de la visée, puis une photo. |
+| Timelapse | L'intervallomètre, plus une vidéo (voir ci-dessous). |
 | Intervallomètre | Une photo toutes les 2, 5, 10, 30 s, 1 ou 5 min ; 10, 25, 50, 100, 250 vues ou jusqu'à l'arrêt. En retard d'un intervalle entier (file d'écriture pleine), la suivante part un intervalle plus tard : pas de rattrapage en rafale. |
 | Bracketing | 3 ou 5 vues autour de la mesure (0, −, +, −−, ++), à ±⅓, ±⅔ ou ±1 IL. L'exposition mesurée est figée (temps et gain manuels) et c'est le temps qui varie (le gain en S, où la vitesse est celle de l'utilisateur), ce qui ne dépend pas de la convergence de l'exposition automatique. Une balance automatique est figée aussi, pour que les vues se fusionnent. Pendant la série, les molettes d'exposition sont bloquées et l'apprentissage du posemètre suspendu ; l'exposition de l'utilisateur revient à la fin. |
 
 Le déclencheur pressé pendant une séquence l'arrête (sauf la rafale, qu'il prolonge). Une séquence attend la file d'écriture (jusqu'à 15 s) au lieu d'afficher « Occupé ». Le bandeau montre le mode en haut à gauche (« RAFALE », « RET 10 s », « INT 10 s », « BKT 3 × 1 ») et, pendant la séquence, sa progression en orange (« INT 4/50 · 8 s », « BKT 2/3 · −1.0 »). Pas de revue après chaque vue d'une rafale ou d'un bracketing : seule la dernière est montrée, à la fin. L'interface web affiche la même chose, et son bouton devient « Arrêter la séquence ».
+
+**Le timelapse** (`drive.py`, `timelapse.py`, 2026-10-12). Un mode de déclenchement : une vue toutes les 1 à 60 s, 100 à 1 500 vues ou jusqu'à l'arrêt (le menu donne la durée de vidéo qui en sortira : « 250 vues · 10 s de vidéo »), puis une vidéo.
+
+- **Les vues** vont dans un dossier à elles (`101PYCAM`…), et les photos suivantes dans le dossier d'après. Par défaut, ce sont des JPEG de 3 Mpx (assez pour du 1080p, deux fois plus rapides à écrire, look compris), le temps du timelapse ; au choix, des photos complètes (les réglages de Fichiers, un JPEG au moins pour la vidéo). Le preset s'applique comme à toute photo.
+- **La vidéo** (`PYT_0056.MP4` pour une première vue `PYC_0056.JPG`, à côté des vues) est faite par ffmpeg, en arrière-plan, quand la prise s'arrête (fin, ou déclencheur) : recadrage 16:9 (1920 × 1080) ou 4:3 (1440 × 1080), lissage du scintillement (le filtre `deflicker` ramène la luminosité de chaque vue à la moyenne de ses 9 voisines : les sauts de l'exposition automatique disparaissent), H.264 par l'**encodeur matériel** du VideoCore (`h264_v4l2m2m`, 20 Mbit/s), libx264 s'il échoue. Elle est écrite en `.part`, puis renommée. Sa progression s'affiche en haut à gauche (« VIDÉO 40 % ») et dans l'interface web, qui la liste, la lit et la télécharge.
+- **Mesuré** (2026-10-12, 100 vues à 1 s, mode P, Cinéma 800T) : une vue toutes les 1,00 s en moyenne (0,86 à 1,19 s), vidéo prête 14 s après la dernière vue (~7 vues/s), 6,3 Mo pour 4 s de 1080p. Sur des vues au scintillement simulé de ±15 %, le lissage divise l'écart-type de la luminance par 3,4 ; sur le vrai timelapse, il reste de 0,28 niveau sur 255. L'assemblage ne bloque jamais l'application plus de 32 ms.
+- La lecture sur l'appareil montre les vues, pas encore la vidéo.
 
 **Les poses longues** (2026-10-12, §2.4). En M, la molette avant va jusqu'à 10'40" (la limite du capteur, 674 s), puis **B**.
 
@@ -329,7 +338,7 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 
 ## 7. Stockage et formats
 
-- **Arborescence** : `~/DCIM/100PYCAM/PYC_0001.JPG` et `.DNG`. Le numéro est persistant et le dossier change tous les 9999 fichiers. Si on ajoute une clé USB plus tard, elle se monte au même endroit.
+- **Arborescence** : `~/DCIM/100PYCAM/PYC_0001.JPG` et `.DNG`. Le numéro est persistant et le dossier change tous les 9999 fichiers, ainsi qu'au début et à la fin d'un timelapse (ses vues et sa vidéo `PYT_xxxx.MP4` dans un dossier à elles). Si on ajoute une clé USB plus tard, elle se monte au même endroit.
 - **JPEG.** Qualité réglable. L'EXIF contient la vitesse, l'ISO et la date (venant de la RTC plus tard), puis l'orientation de l'IMU plus tard.
   - ✅ **Profil d'objectif** (2026-10-11, `app/pycam/lenses.py`). L'application passe des balises EXIF au moteur avec la commande `capture`, et rpicam-apps les écrit via libexif : `LensModel`, `LensMake`, `FocalLength`, `FocalLengthIn35mmFilm` (facteur de recadrage IMX477 ≈ 5,5 : un 16 mm équivaut à un 88 mm), `MaxApertureValue`, `LensSpecification`. Vérifié en relisant le fichier.
   - L'ouverture réglée sur la bague n'est pas connue de l'appareil. L'utilisateur l'indique (ligne Ouverture des menus) et elle est écrite en `FNumber` ; sinon, elle est omise plutôt qu'inventée.

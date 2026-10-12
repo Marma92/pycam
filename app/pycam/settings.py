@@ -50,6 +50,12 @@ class Settings:
     bracket_shots: int = 3  # drive.BRACKET_SHOTS
     bracket_step: int = 3  # thirds of a stop, drive.BRACKET_STEPS
     bulb_mode: str = "hold"  # BULB_MODES
+    timelapse_interval: int = 5  # drive.TL_INTERVALS, seconds
+    timelapse_frames: int = 250  # drive.TL_COUNTS, 0: until stopped
+    timelapse_fps: int = 25  # drive.TL_FPS
+    timelapse_aspect: str = "16:9"  # drive.TL_ASPECTS
+    timelapse_deflicker: bool = True  # smooth the brightness of the frames in the video
+    timelapse_photos: str = "video"  # drive.TL_PHOTOS
     display: str = "detailed"
     grid: bool = True
     peaking: bool = False
@@ -152,6 +158,11 @@ def load_settings(path):
         ("interval_count", drive.COUNTS),
         ("bracket_shots", drive.BRACKET_SHOTS),
         ("bracket_step", drive.BRACKET_STEPS),
+        ("timelapse_interval", drive.TL_INTERVALS),
+        ("timelapse_frames", drive.TL_COUNTS),
+        ("timelapse_fps", drive.TL_FPS),
+        ("timelapse_aspect", drive.TL_ASPECTS),
+        ("timelapse_photos", drive.TL_PHOTOS),
     ):
         if getattr(settings, name) not in allowed:
             setattr(settings, name, getattr(defaults, name))

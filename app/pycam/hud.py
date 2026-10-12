@@ -276,6 +276,8 @@ class Hud:
             badge(view.drive, AMBER if view.drive_running else WHITE)
         if view.viewfinder_auto:  # the exposure is too long to be shown
             badge("VISÉE AUTO", AMBER)
+        if view.task:
+            badge(view.task, AUTO)
         if view.zsl:
             badge("ZSL", AMBER)
         if view.peaking:

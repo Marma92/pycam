@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from . import drive as drives
 from . import exposure as exp
-from . import lenses, looks, meter, picture
+from . import lenses, looks, meter, picture, timelapse
 from .engine_client import EngineError, call_blocking
 from .menu import Menu
 from .playback import PIXEL_SCALES, Playback, describe
@@ -106,6 +106,7 @@ class Camera:
         self._shown = None  # Review of the photo shown in playback, once loaded
         self._delete_armed_until = 0.0  # deleting takes two presses of Q
         self._look_version = 0  # the last look asked for: only that one is sent
+        self._still_version = 0  # the last photo settings asked for (_configure)
         self._look = None  # looks.Compiled sent to the engine: its curves correct the histograms
         self._look_lock = asyncio.Lock()
         self.slowest_shutter = exp.SHUTTER_SPEEDS[-1]
@@ -118,6 +119,8 @@ class Camera:
         self._capture_waits = {}  # capture id -> future, for wait_captured
         self.drive = drives.Drive(self)
         self.exposing = None  # Exposing, during a long exposure or a bulb
+        self.last_capture_path = ""  # without extension
+        self.task_status = ""  # a long background task, on the HUD ("VIDÉO 40 %")
         self._exposure_deferred = False  # an exposure change waits for the end of the exposure
         self._save_handle = None
         self._tasks = set()
@@ -291,15 +294,36 @@ class Camera:
             self._look = compiled
             self.redraw()
 
+    async def configure_still(self, **config):
+        """Photo settings of the engine for a while (a timelapse's smaller frames);
+        apply_still_config() gives the user's back."""
+        await self._configure(config)
+
     async def apply_still_config(self):
-        try:
-            await self.engine.call("configure", **picture.engine_config(self.settings))
-        except ConnectionError:
-            pass
-        except EngineError as e:
-            # Busy (a photo being taken): pushed again with the next change or reconnection.
-            log.warning("still settings refused: %s", e)
-            self.show_message("Réglage appliqué après la prise en cours", warning=True)
+        await self._configure(picture.engine_config(self.settings))
+
+    async def _configure(self, config):
+        """The engine refuses photo settings while a photo is being taken ("busy"): they
+        are sent again until it is over, unless newer ones replace them meanwhile."""
+        self._still_version += 1
+        version, waited = self._still_version, False
+        while version == self._still_version:
+            try:
+                await self.engine.call("configure", **config)
+                if waited:
+                    log.info("still settings applied after the capture")
+                return
+            except ConnectionError:
+                return  # pushed again on reconnection
+            except EngineError as e:
+                if e.code != "busy":
+                    log.warning("still settings refused: %s", e)
+                    self.show_message("Réglage refusé", warning=True)
+                    return
+            if not waited:
+                log.info("still settings wait for the capture in progress")
+                waited = True
+            await asyncio.sleep(0.25)
 
     async def apply_focus_aids(self):
         s = self.settings
@@ -620,10 +644,11 @@ class Camera:
             self.spawn(self.apply_focus_aids())
         self.save_soon()
 
-    async def capture(self, quiet=False, stack=None):
+    async def capture(self, quiet=False, stack=None, formats=None, keep_base=None):
         """One photo: its capture id, or None (why in self.capture_error). quiet: no
         "busy" message (a sequence waits for the engine). stack: frames added up into
-        one (the engine's "stack": the bulb)."""
+        one (the engine's "stack": the bulb). formats, keep_base: instead of the settings'
+        (a timelapse's frames)."""
         async with self._capture_lock:  # two quick presses must not get the same name
             self.capture_error = None
             if not self.engine.connected:
@@ -632,14 +657,16 @@ class Camera:
                 return None
             base, folder, number = self.storage.next_photo()
             s, preset = self.settings, self.preset()
-            extra = {"base_jpeg": Storage.base_copy(base)} if s.keep_base and "jpeg" in s.formats else {}
+            formats = formats or s.formats
+            keep_base = s.keep_base if keep_base is None else keep_base
+            extra = {"base_jpeg": Storage.base_copy(base)} if keep_base and "jpeg" in formats else {}
             if stack:
                 extra["stack"] = stack
             try:
                 reply = await self.engine.call(
                     "capture",
                     path=base,
-                    formats=s.formats,
+                    formats=formats,
                     dng_compression=s.dng_compression,
                     quality=s.jpeg_quality,
                     exif=lenses.lens_exif(self.lens(), s.aperture) + [f"IFD0.Software=pycam, {preset.name}"],
@@ -662,6 +689,7 @@ class Camera:
             self.writing += 1
             self.loupe = 1  # the engine leaves the loupe to shoot the full frame
             self.last_shot = Shot(reply.get("capture_id"), os.path.basename(base))
+            self.last_capture_path = base
             self.show_message(os.path.basename(base))
             return self.last_shot.capture_id
 
@@ -680,6 +708,32 @@ class Camera:
             return False
         finally:
             self._capture_waits.pop(capture_id, None)
+
+    async def make_timelapse(self, frames):
+        """The video of a timelapse's frames, next to them (timelapse.py), in the background."""
+        s = self.settings
+        out = os.path.join(os.path.dirname(frames[0]), timelapse.video_name(frames[0]))
+        for _ in range(600):  # the last frames may still be being written
+            if all(os.path.exists(f) for f in frames):
+                break
+            await asyncio.sleep(0.1)
+        frames = [f for f in frames if os.path.exists(f)]
+
+        def progress(fraction):
+            self.task_status = f"VIDÉO {round(fraction * 100)} %"
+            self.redraw()
+
+        progress(0)
+        try:
+            ok = await timelapse.assemble(frames, out, s.timelapse_fps, s.timelapse_aspect, s.timelapse_deflicker, progress)
+        finally:
+            self.task_status = ""
+            self.redraw()
+        if ok:
+            log.info("timelapse: %s, %d frames", out, len(frames))
+            self.show_message(f"Vidéo : {os.path.basename(out)}")
+        else:
+            self.show_message("Vidéo impossible", warning=True)
 
     async def cancel_capture(self):
         """Abandons the exposure in progress (nothing is written)."""
@@ -869,6 +923,7 @@ class Camera:
             drive=self.drive.status if self.drive.active else drives.short_label(s),
             drive_running=self.drive.active,
             countdown=self.drive.countdown,
+            task=self.task_status,
             exposure_timer=timer,
             exposure_label=timer_label,
             viewfinder_auto=self.stats.get("viewfinder") == "auto",

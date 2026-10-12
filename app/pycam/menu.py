@@ -48,6 +48,12 @@ def _grain_options(settings):
     return ((False, "Non"), (True, f"Oui · {label}"))
 
 
+def _timelapse_count_options(settings):
+    """The number of frames, and the length of the video they make."""
+    fps = settings.timelapse_fps
+    return tuple((n, f"{n} vues · {n / fps:.0f} s de vidéo" if n else "Jusqu'à l'arrêt") for n in drive.TL_COUNTS)
+
+
 def _aperture_options(settings):
     if not 0 <= settings.lens < len(settings.lenses):
         return ((None, "Choisir l'objectif"),)
@@ -116,6 +122,14 @@ BRACKET_STEP = Item(
     "Écart du bracketing", "bracket_step", drive.BRACKET_STEPS, tuple(f"±{drive.format_step(t)} IL" for t in drive.BRACKET_STEPS)
 )
 BULB = Item("Pose B", "bulb_mode", ("hold", "toggle"), ("Tenir le déclencheur", "Un appui, puis un autre"))
+TL_INTERVAL = Item(
+    "Une vue toutes les", "timelapse_interval", drive.TL_INTERVALS, tuple(drive.format_interval(i) for i in drive.TL_INTERVALS)
+)
+TL_COUNT = Item("Durée", "timelapse_frames", _timelapse_count_options)
+TL_FPS = Item("Cadence vidéo", "timelapse_fps", drive.TL_FPS, tuple(f"{f} i/s" for f in drive.TL_FPS))
+TL_ASPECT = Item("Format vidéo", "timelapse_aspect", drive.TL_ASPECTS, ("16:9 · 1920 × 1080", "4:3 · 1440 × 1080"))
+TL_DEFLICKER = Item("Lissage du scintillement", "timelapse_deflicker", (True, False), ("Oui", "Non"))
+TL_PHOTOS = Item("Vues", "timelapse_photos", drive.TL_PHOTOS, ("Pour la vidéo · JPEG 3 Mpx", "Photos complètes"))
 REVIEW = Item("Revue après la prise", "review_seconds", (0, 1, 2, 4), ("Coupée", "1 s", "2 s", "4 s"))
 # Applied at the next start of the application (web.py).
 WEB = Item("Interface web", "web", (True, False), ("Oui · au prochain démarrage", "Non · au prochain démarrage"))
@@ -175,6 +189,13 @@ FULL = (
     STRATEGY,
     REVIEW,
     KEEP_BASE,
+    Item("Timelapse"),
+    TL_INTERVAL,
+    TL_COUNT,
+    TL_FPS,
+    TL_ASPECT,
+    TL_DEFLICKER,
+    TL_PHOTOS,
     Item("Objectif"),
     LENS,
     APERTURE,

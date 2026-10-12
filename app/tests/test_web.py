@@ -96,6 +96,20 @@ class WebTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(deleted["removed"]), ["PYC_0001.DNG", "PYC_0001.JPG"])
         self.assertEqual(await (await self.client.get("/api/photos")).json(), [])
 
+    async def test_videos(self):
+        folder = os.path.join(self.settings.dcim, "101PYCAM")
+        os.makedirs(folder)
+        with open(os.path.join(folder, "PYT_0008.MP4"), "wb") as f:
+            f.write(b"\0" * 100)
+        videos = await (await self.client.get("/api/videos")).json()
+        self.assertEqual([(v["folder"], v["name"], v["size"]) for v in videos], [("101PYCAM", "PYT_0008.MP4", 100)])
+        download = await self.client.get("/api/photo/101PYCAM/PYT_0008.MP4?download=1")
+        self.assertEqual(download.status, 200)
+        self.assertIn("attachment", download.headers["Content-Disposition"])
+        deleted = await (await self.client.delete("/api/photo/101PYCAM/PYT_0008.MP4")).json()
+        self.assertEqual(deleted["removed"], ["PYT_0008.MP4"])
+        self.assertEqual(await (await self.client.get("/api/videos")).json(), [])
+
     async def test_install_and_remove_a_preset(self):
         archive = io.BytesIO()
         with zipfile.ZipFile(archive, "w") as z:
