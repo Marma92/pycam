@@ -40,6 +40,14 @@ class LooksTest(unittest.TestCase):
         self.assertAlmostEqual(grey[0], 0.638, places=2)  # the standard curve, as computed
         self.assertEqual(grey[0], grey[2])
 
+    def test_film_white_balance(self):
+        presets = looks.find_presets([looks.BUILTIN_DIR])
+        balances = {pid: p.white_balance for pid, p in presets.items()}
+        self.assertEqual((balances["cinema-800t"], balances["portrait-400"], balances["standard"]), (3200, 5500, None))
+        for bad in ("white_balance = 900", 'white_balance = "tungsten"'):
+            with self.subTest(bad=bad), self.assertRaises(looks.PresetError):
+                self.preset(f"[shooting]\n{bad}\n", "bad")
+
     def test_film_grain(self):
         presets = looks.find_presets([looks.BUILTIN_DIR])
         labels = {pid: looks.grain_label(p) for pid, p in presets.items()}

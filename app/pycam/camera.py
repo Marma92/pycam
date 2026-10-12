@@ -189,7 +189,9 @@ class Camera:
 
     async def apply_exposure(self):
         try:
-            await self.engine.call("set_controls", controls=self.settings.exposure.controls(self.preset().exposure_bias))
+            preset = self.preset()
+            controls = self.settings.exposure.controls(preset.exposure_bias, preset.white_balance)
+            await self.engine.call("set_controls", controls=controls)
         except ConnectionError:
             pass  # pushed again on reconnection
         except EngineError as e:
@@ -674,7 +676,7 @@ class Camera:
             ev=exp.format_ev(e.ev) if e.mode != "M" else "",
             meter=meter_value,
             meter_warning=meter_warning,
-            awb=e.awb_label(),
+            awb=e.awb_label(self.preset().white_balance),
             formats="RAW+JPEG" if "dng" in s.formats else "JPEG",
             lens=lenses.format_lens(self.lens(), s.aperture),
             shots=self.storage.shots_remaining(s.formats, s.dng_compression, s.keep_base),

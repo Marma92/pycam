@@ -9,6 +9,9 @@ name = "Cinéma 800T"
 short = "C800T"
 description = "Pellicule cinéma tungstène : mate, ombres canard, couleurs sourdes."
 
+[shooting]
+white_balance = 3200  # tungstène : la balance du film, avec la balance des blancs « Pellicule »
+
 [look]
 tone_curve = [
     [0.0, 0.09], [0.1, 0.14], [0.25, 0.25], [0.5, 0.47], [0.75, 0.70],

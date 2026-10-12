@@ -82,6 +82,7 @@ class Preset:
     description: str = ""
     base: str = BASE
     exposure_bias: float = 0.0  # stops, added to the compensation (protects the highlights)
+    white_balance: int | None = None  # Kelvin, the film's own (balance "Pellicule"); None: auto
     look: tuple = ()  # the [look] table, as sorted (key, value) pairs
     grain: float = 0.0  # strength, 0..1
     grain_size: float = 1.0  # in pixels of the full sensor image: the finer the grain, the smaller
@@ -189,6 +190,7 @@ def load_preset(folder):
         description=str(data.get("description", "")),
         base=base,
         exposure_bias=_number(shooting, "exposure_bias", 0.0, -2, 2, "shooting."),
+        white_balance=_white_balance(shooting.get("white_balance", "auto")),
         look=tuple(sorted((k, _freeze(v)) for k, v in look.items())),
         grain=_number(grain, "amount", 0.0, 0, 1, "grain."),
         grain_size=_number(grain, "size", 1.0, 0.5, 8, "grain."),
@@ -198,6 +200,14 @@ def load_preset(folder):
         vignette=_number(vignette, "amount", 0.0, 0, 1, "vignette."),
         digest=hasher.hexdigest()[:16],
     )
+
+
+def _white_balance(value):
+    if value == "auto":
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or not 2000 <= value <= 10000:
+        raise PresetError('shooting.white_balance : des Kelvin entre 2000 et 10000, ou "auto"')
+    return value
 
 
 def _freeze(value):

@@ -14,7 +14,9 @@ Statut : **orientations décidées le 2026-10-11** (§10). Les mesures datent du
 
 - le grain des pellicules : intensité, finesse, grain coloré, répartition selon les tons, amas ; réglage « Simuler le grain », avec la finesse affichée dans le menu.
 
-**Reste** : affiner les pellicules sur de vraies photos de l'appareil ; la balance des blancs fixe d'une pellicule (le tungstène de la Cinéma 800T) ; la halation ; `pycam_preset.py fit` pour la méthode B.
+- la balance du film (`[shooting] white_balance`) : 5500 K pour Portrait 400 et Velours 50, 3200 K pour les Cinéma 800T, appliquée avec la balance des blancs « Pellicule ».
+
+**Reste** : affiner les pellicules sur de vraies photos de l'appareil ; la halation ; `pycam_preset.py fit` pour la méthode B.
 
 **Ajouter un preset** : copier son dossier dans `~/.config/pycam/presets/`. Il apparaît à la prochaine ouverture d'un menu, et un preset du même nom de dossier qu'un preset intégré le remplace. Un preset illisible est ignoré, avec un avertissement dans le journal (`journalctl -u pycam`).
 
@@ -99,7 +101,8 @@ short = "P400"                   # affiché dans le bandeau
 author = "…"
 
 [shooting]                       # réglages de prise de vue (facultatifs)
-white_balance = "auto"           # ou 5500 (Kelvin fixe, comme une pellicule lumière du jour), 3200 (tungstène)
+white_balance = 5500             # la balance du film, en Kelvin (3200 : tungstène), ou "auto" ;
+                                 # appliquée quand la balance des blancs est sur « Pellicule »
 exposure_bias = -0.3             # protège les hautes lumières ; la courbe relève les tons moyens
 monochrome = false
 

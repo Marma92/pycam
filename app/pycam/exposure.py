@@ -20,7 +20,8 @@ ISO_VALUES = (100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600
 EV_MAX = 3.0
 EV_STEP = 1 / 3
 # White balance: libcamera presets, then a colour temperature ("Kelvin"), then the gains
-# measured on a grey card ("Locked"). B goes through the first ones; Locked comes from H.
+# measured on a grey card ("Locked"), then the film's own ("Film": the preset's balance,
+# fixed like a film's: 5500 K for daylight films, 3200 K for tungsten ones).
 AWB_PRESETS = ("Auto", "Daylight", "Cloudy", "Tungsten", "Fluorescent", "Indoor")
 AWB_MODES = AWB_PRESETS + ("Kelvin",)
 AWB_LABELS = {
@@ -70,7 +71,7 @@ class Exposure:
     shutter: float | None = None  # seconds, None = automatic
     iso: int | None = None  # None = automatic
     ev: float = 0.0  # compensation, used by whatever is automatic
-    awb: str = "Auto"  # AWB_MODES, or "Locked"
+    awb: str = "Auto"  # AWB_MODES, "Locked" or "Film"
     kelvin: int = 5500  # for awb == "Kelvin"
     wb_gains: list | None = None  # [red, blue] for awb == "Locked"
     metering: str = "centre"  # METERING
@@ -91,7 +92,7 @@ class Exposure:
         if isinstance(gains, list) and len(gains) == 2 and all(isinstance(g, (int, float)) and 0 < g < 32 for g in gains):
             exposure.wb_gains = [float(g) for g in gains]
         awb = data.get("awb")
-        if awb in AWB_MODES or (awb == "Locked" and exposure.wb_gains):
+        if awb in AWB_MODES or awb == "Film" or (awb == "Locked" and exposure.wb_gains):
             exposure.awb = awb
         if data.get("metering") in METERING:
             exposure.metering = data["metering"]
@@ -109,13 +110,16 @@ class Exposure:
             (True, True): "M",
         }[(self.shutter is not None, self.iso is not None)]
 
-    def controls(self, bias=0.0):
+    def controls(self, bias=0.0, film_kelvin=None):
         """The libcamera controls for the engine (protocol.md, set_controls). bias: the
-        preset's exposure shift, added to the compensation."""
+        preset's exposure shift, added to the compensation; film_kelvin: the preset's own
+        white balance, used when the balance is "Film" (None: the film has none, auto)."""
         controls = {"ExposureValue": self.ev + bias, "AeMeteringMode": METERING[self.metering]}
         # libcamera applies a colour temperature or gains only with the automatic white
         # balance off; back to a preset, it must be turned on again.
-        if self.awb == "Kelvin":
+        if self.awb == "Film" and film_kelvin:
+            controls.update(AwbEnable=False, ColourTemperature=film_kelvin)
+        elif self.awb == "Kelvin":
             controls.update(AwbEnable=False, ColourTemperature=self.kelvin)
         elif self.awb == "Locked" and self.wb_gains:
             controls.update(AwbEnable=False, ColourGains=list(self.wb_gains))
@@ -183,5 +187,7 @@ class Exposure:
         self.awb = "Locked"
         return True
 
-    def awb_label(self):
+    def awb_label(self, film_kelvin=None):
+        if self.awb == "Film":
+            return f"Film {film_kelvin} K" if film_kelvin else "Film AWB"
         return f"{self.kelvin} K" if self.awb == "Kelvin" else AWB_LABELS.get(self.awb, self.awb)

@@ -251,7 +251,7 @@ Pendant la revue après la prise, toute touche la ferme ; le déclencheur la fer
 
   Il fait 25 lignes et défile ; une barre à droite montre où l'on est.
 - Quelques lignes ont un comportement propre :
-  - **Balance des blancs** : la valeur « Mémorisée » garde les gains que la balance automatique mesure à cet instant (viser une charte grise d'abord). Fn peut faire la même chose sans ouvrir le menu.
+  - **Balance des blancs** : la valeur « Pellicule », juste après « Auto », prend la balance fixe du film du preset (5500 K pour Portrait 400 et Velours 50, 3200 K pour les Cinéma 800T), comme un vrai film : une pellicule tungstène sort bleue en lumière du jour. Un preset sans balance propre (Standard, Triple-X 400) reste alors en automatique. Le bandeau affiche « Film 3200 K ». La valeur « Mémorisée », en dernier, garde les gains que la balance automatique mesure à cet instant (viser une charte grise d'abord) ; Fn peut faire la même chose sans ouvrir le menu.
   - **Température** : hors mode Kelvin, elle affiche la température mesurée (« ≈ 4500 K »). Le premier cran part de cette valeur et passe la balance en Kelvin.
   - **Déclenchement** : le changement n'est gardé que si le moteur l'accepte (il refuse pendant une prise).
   - **Objectif** : en changer oublie l'ouverture indiquée. Les profils sont dans `settings.json` ; par défaut, les deux objectifs officiels Raspberry Pi.

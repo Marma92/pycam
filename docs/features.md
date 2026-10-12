@@ -42,7 +42,7 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Correction d'exposition | ±3 IL. | ✅ |
 | Mode de mesure | Pondérée centrale, spot, matricielle, dans le menu rapide. Icône dans le bandeau, cercle au centre de la visée en spot. Agit sur l'exposition automatique ; le posemètre du mode M mesure toute l'image. | ✅ |
 | Posemètre | Échelle −3…+3 IL au tiers dans le bandeau : toujours en M, et en avertissement (orange) quand l'exposition automatique est hors de portée. Précision ~0,15 IL. | ✅ |
-| Balance des blancs | Auto, 5 préréglages, Kelvin manuel (2000–10 000 K, en partant de la mesure), mémorisation des gains mesurés (charte grise). | ✅ |
+| Balance des blancs | Auto, Pellicule (la balance fixe du film du preset : lumière du jour 5500 K ou tungstène 3200 K), 5 préréglages, Kelvin manuel (2000–10 000 K, en partant de la mesure), mémorisation des gains mesurés (charte grise). | ✅ |
 | Histogramme | RVB additif (par défaut) ou luminance, au choix dans le menu rapide, en visée détaillée et à la revue. Calculé par le moteur sur le flux basse résolution. | ✅ |
 | Peaking | Couleur (5) et sensibilité (3) réglables ; seuil adaptatif ; ~6 ms par image. | ✅ |
 | Zébras | Marche / arrêt dans les menus ou par Fn2. Seuil réglable dans le protocole (95 % par défaut), pas encore dans l'application. | ✅ |

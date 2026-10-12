@@ -10,6 +10,7 @@ short = "V50"
 description = "Diapositive : couleurs denses, ciels profonds, verts vifs, contraste fort."
 
 [shooting]
+white_balance = 5500  # lumière du jour : la balance du film, avec la balance des blancs « Pellicule »
 exposure_bias = -0.3
 
 [look]

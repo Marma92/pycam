@@ -73,13 +73,15 @@ METERING = Item(
     tuple(exposure.METERING_LABELS[m] for m in exposure.METERING),
     "exposure",
 )
-# Locked: chosen in the menu, it keeps the gains the automatic balance measures now (point
-# at a grey card first).
+# Film, next to Auto: the balance of the preset's film, fixed (looks.Preset). Locked, last
+# (so that no dial turned on the way locks anything): it keeps the gains the automatic
+# balance measures now (point at a grey card first).
+_WB_VALUES = ("Auto", "Film") + exposure.AWB_MODES[1:] + ("Locked",)
 WHITE_BALANCE = Item(
     "Balance des blancs",
     "exposure.awb",
-    exposure.AWB_MODES + ("Locked",),
-    tuple({"Auto": "Auto", "Kelvin": "Température"}.get(m) or exposure.AWB_LABELS[m] for m in exposure.AWB_MODES + ("Locked",)),
+    _WB_VALUES,
+    tuple({"Auto": "Auto", "Film": "Pellicule", "Kelvin": "Température"}.get(m) or exposure.AWB_LABELS[m] for m in _WB_VALUES),
     "exposure",
 )
 # Turned from another balance, it starts from the measured temperature (Camera.change_setting).

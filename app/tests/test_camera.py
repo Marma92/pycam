@@ -482,6 +482,19 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.settings.preset = "gone"  # a deleted preset: back to the default one
         self.assertEqual(self.camera.preset().id, "standard")
 
+    async def test_film_white_balance(self):
+        self.settings.preset = "cinema-800t"
+        self.menu_line("Balance des blancs", quick=True)
+        self.camera.on_action("front_dial_plus")  # Auto -> Pellicule, next to it
+        await self.settle()
+        self.assertEqual(dict(self.camera.view().menu)["Balance des blancs"], "Pellicule")
+        controls = self.engine.last("set_controls")["controls"]
+        self.assertEqual((controls["AwbEnable"], controls["ColourTemperature"]), (False, 3200))
+        self.assertEqual(self.camera.view().awb, "Film 3200 K")
+        self.settings.preset = "standard"  # no film balance: automatic
+        await self.camera.apply_exposure()
+        self.assertTrue(self.engine.last("set_controls")["controls"]["AwbEnable"])
+
     async def test_grain_can_be_switched_off(self):
         self.settings.preset = "portrait-400"
         await self.camera.apply_look()
