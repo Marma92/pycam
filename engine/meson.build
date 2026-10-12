@@ -18,6 +18,9 @@ deps = [
     dependency('nlohmann_json'),
     dependency('boost', modules : ['program_options']),
     dependency('threads'),
+    dependency('libavformat'),
+    dependency('libavcodec'),
+    dependency('libavutil'),
 ]
 
 lj92_inc = include_directories('third_party/lj92', is_system : true)
@@ -54,6 +57,7 @@ executable('pycam-engine',
                'src/look.cpp',
                'src/stack.cpp',
                'src/develop.cpp',
+               'src/video_player.cpp',
            ),
            # Vendored code (see its README): a system include, its warnings are not ours.
            include_directories : lj92_inc,

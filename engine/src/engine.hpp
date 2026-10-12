@@ -24,6 +24,7 @@
 #include "ipc_server.hpp"
 #include "look.hpp"
 #include "stack.hpp"
+#include "video_player.hpp"
 
 namespace pycam
 {
@@ -136,6 +137,7 @@ private:
 	IpcServer ipc_;
 	CaptureWriter writer_;
 	std::unique_ptr<Display> display_; // null without a screen
+	std::unique_ptr<VideoPlayer> player_; // made with the first video; before display_ goes
 	Clock::time_point next_display_try_ {};
 	bool display_failure_logged_ = false;
 	FocusAids focus_aids_; // drawn into the viewfinder frames, on the display thread

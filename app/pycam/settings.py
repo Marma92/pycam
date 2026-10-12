@@ -22,7 +22,8 @@ PEAKING_COLORS = ("red", "yellow", "green", "blue", "white")
 PEAKING_SENSITIVITIES = ("low", "medium", "high")
 REVIEW_SECONDS = (0, 1, 2, 4)  # 0: no review after the shot
 HISTOGRAMS = ("rgb", "luma")
-BULB_MODES = ("hold", "toggle")  # B: held shutter, or one press to start and one to stop
+BULB_MODES = ("hold", "toggle")
+SCREEN_OFF = (10, 30, 60, 0)  # B: held shutter, or one press to start and one to stop
 # What the Fn1 and Fn2 buttons can do: actions of Camera.on_action.
 FN_ACTIONS = ("peaking", "zebra", "awb_lock", "grid", "strategy", "raw", "drive")
 
@@ -50,6 +51,13 @@ class Settings:
     bracket_shots: int = 3  # drive.BRACKET_SHOTS
     bracket_step: int = 3  # thirds of a stop, drive.BRACKET_STEPS
     bulb_mode: str = "hold"  # BULB_MODES
+    timelapse_interval: int = 5  # drive.TL_INTERVALS, seconds
+    timelapse_frames: int = 250  # drive.TL_COUNTS, 0: until stopped
+    timelapse_fps: int = 25  # drive.TL_FPS
+    timelapse_aspect: str = "16:9"  # drive.TL_ASPECTS
+    timelapse_deflicker: bool = True  # smooth the brightness of the frames in the video
+    timelapse_photos: str = "video"  # drive.TL_PHOTOS
+    screen_off: int = 30  # SCREEN_OFF: seconds without a press before the screen sleeps in a long capture, 0: never
     display: str = "detailed"
     grid: bool = True
     peaking: bool = False
@@ -137,6 +145,8 @@ def load_settings(path):
         settings.histogram = defaults.histogram
     if settings.bulb_mode not in BULB_MODES:
         settings.bulb_mode = defaults.bulb_mode
+    if settings.screen_off not in SCREEN_OFF:
+        settings.screen_off = defaults.screen_off
     for name in ("fn1", "fn2"):
         if getattr(settings, name) not in FN_ACTIONS:
             setattr(settings, name, getattr(defaults, name))
@@ -152,6 +162,11 @@ def load_settings(path):
         ("interval_count", drive.COUNTS),
         ("bracket_shots", drive.BRACKET_SHOTS),
         ("bracket_step", drive.BRACKET_STEPS),
+        ("timelapse_interval", drive.TL_INTERVALS),
+        ("timelapse_frames", drive.TL_COUNTS),
+        ("timelapse_fps", drive.TL_FPS),
+        ("timelapse_aspect", drive.TL_ASPECTS),
+        ("timelapse_photos", drive.TL_PHOTOS),
     ):
         if getattr(settings, name) not in allowed:
             setattr(settings, name, getattr(defaults, name))

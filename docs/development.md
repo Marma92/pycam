@@ -113,7 +113,7 @@ cd ~/pycam/engine && meson test -C build --print-errorlogs
 
 ## Dépendances installées sur le Pi (2026-10-11)
 
-- **Build** : `librpicam-app-dev libcamera-dev libdrm-dev nlohmann-json3-dev libboost-program-options-dev libjpeg-dev libtiff-dev libexif-dev libpng-dev ccache`. gcc, meson et ninja étaient déjà présents.
+- **Build** : `librpicam-app-dev libcamera-dev libdrm-dev nlohmann-json3-dev libboost-program-options-dev libjpeg-dev libtiff-dev libexif-dev libpng-dev libavcodec-dev libavformat-dev libavutil-dev ccache` (libav pour la lecture des vidéos, ajoutée le 2026-10-12). ffmpeg (déjà installé sur Pi OS) assemble les timelapses. gcc, meson et ninja étaient déjà présents.
 - **Python** : `python3-evdev python3-aiohttp` ; Pillow et numpy étaient déjà présents. On utilise les paquets Debian plutôt qu'un venv.
 - **Outils** : `socat i2c-tools`.
 

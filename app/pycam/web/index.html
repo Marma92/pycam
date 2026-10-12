@@ -70,6 +70,7 @@
   </section>
 
   <section id="photos">
+    <div class="panel" id="videos" style="display:none"></div>
     <p class="muted" id="photos-count"></p>
     <div class="grid" id="grid"></div>
   </section>
@@ -132,6 +133,8 @@ async function refreshState() {
     const parts = [["Mode", s.mode], ["Vitesse", s.shutter], ["", s.iso], ["Correction", s.ev || "—"], ["Balance", s.awb],
                    ["Format", s.formats], ["Vues restantes", s.shots]];
     if (s.writing) parts.push(["Écriture", s.writing]);
+    if (s.task) parts.push(["", s.task]);
+    if (!s.screen) parts.push(["", "écran en veille"]);
     if (s.drive) parts.unshift(["", s.countdown ? `${s.drive} · ${s.countdown}` : s.drive]);
     if (s.exposure_timer) parts.unshift([s.exposure_label, s.exposure_timer]);
     const bulb = s.exposure_label === "POSE B";
@@ -171,12 +174,34 @@ $("grain").onchange = async (e) => { await post("/api/grain", {on: e.target.valu
 // --- Photos
 
 async function loadPhotos() {
+  loadVideos();
   photos = await api("/api/photos");
   $("photos-count").textContent = photos.length ? `${photos.length} photo${photos.length > 1 ? "s" : ""}, la plus récente d'abord.` : "Aucune photo sur la carte.";
   $("grid").innerHTML = photos.map((p, i) =>
     `<figure data-i="${i}"><img loading="lazy" src="/api/thumb/${p.folder}/${p.name}.JPG" alt="${p.name}">` +
     `<figcaption>${p.name}${p.dng ? " · DNG" : ""}</figcaption></figure>`).join("");
   $("grid").querySelectorAll("figure").forEach((f) => f.onclick = () => openPhoto(photos[+f.dataset.i]));
+}
+
+function size(bytes) {
+  return bytes >= 1e9 ? (bytes / 1e9).toFixed(1) + " Go" : (bytes / 1e6).toFixed(1) + " Mo";
+}
+
+async function loadVideos() {
+  const videos = await api("/api/videos");
+  $("videos").style.display = videos.length ? "" : "none";
+  $("videos").innerHTML = "<b>Vidéos (timelapses)</b>" + videos.map((v) => {
+    const url = `/api/photo/${v.folder}/${v.name}`;
+    return `<div class="preset"><div>${v.name}<div class="muted">${v.folder} · ${size(v.size)} · ` +
+      `${new Date(v.time * 1000).toLocaleString("fr-FR")}</div></div><div class="row">` +
+      `<a class="btn" href="${url}" target="_blank">Lire</a><a class="btn" href="${url}?download=1">Télécharger</a>` +
+      `<button class="btn danger" data-video="${url}">Supprimer</button></div></div>`;
+  }).join("");
+  $("videos").querySelectorAll("button[data-video]").forEach((b) => b.onclick = async () => {
+    if (!confirm("Supprimer cette vidéo ? Les vues du timelapse restent sur la carte.")) return;
+    try { await api(b.dataset.video, {method: "DELETE"}); toast("Vidéo supprimée"); loadVideos(); }
+    catch (e) { toast(e.message); }
+  });
 }
 
 async function openPhoto(p) {

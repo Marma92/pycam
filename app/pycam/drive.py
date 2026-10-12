@@ -5,6 +5,8 @@
   writing queue sets the pace), at least one and at most BURST_MAX;
 - self2, self10: a countdown, then one photo;
 - interval: one photo every `interval_seconds`, `interval_count` times (0: until stopped);
+- timelapse: the same, into a folder of its own, then a video of them (timelapse.py);
+  by default lighter frames (JPEG 3 Mpx, enough for 1080p and quicker to write);
 - bracket: 3 or 5 photos around the exposure measured, `bracket_step` thirds of a stop
   apart. The exposure is frozen (manual speed and gain) and the speed varies (the gain
   in S, where the speed is the user's): immediate and exact, where moving the
@@ -28,18 +30,25 @@ from . import exposure as exp
 
 log = logging.getLogger(__name__)
 
-MODES = ("single", "burst", "self2", "self10", "interval", "bracket")
+MODES = ("single", "burst", "self2", "self10", "interval", "timelapse", "bracket")
 LABELS = {
     "single": "Vue par vue",
     "burst": "Rafale",
     "self2": "Retardateur 2 s",
     "self10": "Retardateur 10 s",
     "interval": "Intervallomètre",
+    "timelapse": "Timelapse",
     "bracket": "Bracketing",
 }
 SELF_TIMERS = {"self2": 2, "self10": 10}
 INTERVALS = (2, 5, 10, 30, 60, 300)  # seconds
 COUNTS = (10, 25, 50, 100, 250, 0)  # 0: until stopped
+TL_INTERVALS = (1, 2, 3, 5, 10, 15, 30, 60)  # seconds
+TL_COUNTS = (100, 250, 500, 750, 1000, 1500, 0)  # 0: until stopped
+TL_FPS = (24, 25, 30)
+TL_ASPECTS = ("16:9", "4:3")
+TL_PHOTOS = ("video", "full")  # frames for the video only (TL_FRAME_SIZE, JPEG), or full photos
+TL_FRAME_SIZE = [2028, 1520]  # 3 Mpx, the JPEG size S
 BRACKET_SHOTS = (3, 5)
 BRACKET_STEPS = (1, 2, 3)  # thirds of a stop
 BURST_MAX = 20
@@ -66,6 +75,8 @@ def short_label(settings):
         return f"RET {SELF_TIMERS[mode]} s"
     if mode == "interval":
         return f"INT {format_interval(settings.interval_seconds)}"
+    if mode == "timelapse":
+        return f"TL {format_interval(settings.timelapse_interval)}"
     if mode == "bracket":
         return f"BKT {settings.bracket_shots} × {format_step(settings.bracket_step)}"
     return ""
@@ -157,6 +168,7 @@ class Drive:
             "self2": self._self_timer,
             "self10": self._self_timer,
             "interval": self._interval,
+            "timelapse": self._timelapse,
             "bracket": self._bracket,
         }[mode]
         self.task = asyncio.get_running_loop().create_task(self._run(sequence(mode)))
@@ -186,12 +198,12 @@ class Drive:
         self.status, self.countdown = status, countdown
         self.camera.redraw()
 
-    async def _shoot(self):
+    async def _shoot(self, **options):
         """One photo, once the engine can take it (the writing queue may be full): its
-        capture id, or None."""
+        capture id, or None. options: for Camera.capture."""
         deadline = self.clock() + BUSY_WAIT + (self.camera.settings.exposure.shutter or 0)
         while True:
-            capture_id = await self.camera.capture(quiet=True)
+            capture_id = await self.camera.capture(quiet=True, **options)
             if capture_id is not None or self.camera.capture_error != "busy" or self.clock() > deadline:
                 return capture_id
             await self.sleep(0.1)
@@ -236,24 +248,54 @@ class Drive:
 
     async def _interval(self, mode):
         s = self.camera.settings
-        every, total = s.interval_seconds, s.interval_count
+        taken = await self._repeat(s.interval_seconds, s.interval_count, "INT")
+        if taken is not None:
+            self.camera.show_message(f"Intervallomètre terminé : {taken} vues")
+
+    async def _repeat(self, every, total, tag, frames=None, **options):
+        """One photo every `every` seconds, `total` times (0: until stopped); their JPEGs
+        added to `frames`. The number taken, or None if the camera could not shoot."""
         of = f"/{total}" if total else ""
         due, taken = self.clock(), 0
         while total == 0 or taken < total:
             while (left := due - self.clock()) > 0:
-                self._show(f"INT {taken}{of} · {math.ceil(left)} s")
+                self._show(f"{tag} {taken}{of} · {math.ceil(left)} s")
                 await self.sleep(min(left, 1.0))
-            self._show(f"INT {taken + 1}{of}")
-            if await self._shoot() is None:
-                self.camera.show_message("Intervallomètre arrêté", warning=True)
-                return
+            self._show(f"{tag} {taken + 1}{of}")
+            if await self._shoot(**options) is None:
+                self.camera.show_message(f"{LABELS[self.running]} arrêté : déclenchement impossible", warning=True)
+                return None
             taken += 1
+            if frames is not None:
+                frames.append(self.camera.last_capture_path + ".JPG")
             # A whole interval late (the writing queue was full): the next one an interval
             # from now, rather than catching up the ones missed in a burst.
             due += every
             if due < self.clock():
                 due = self.clock() + every
-        self.camera.show_message(f"Intervallomètre terminé : {taken} vues")
+        return taken
+
+    async def _timelapse(self, mode):
+        cam, s = self.camera, self.camera.settings
+        cam.storage.new_folder()  # its frames and its video on their own
+        light = s.timelapse_photos == "video"
+        if light:
+            options = {"formats": ["jpeg"], "keep_base": False}
+            await cam.configure_still(still_size=TL_FRAME_SIZE)
+        else:  # the photos as set, but a JPEG is needed for the video
+            options = {"formats": s.formats if "jpeg" in s.formats else ["jpeg"] + s.formats}
+        frames = []
+        try:
+            await self._repeat(s.timelapse_interval, s.timelapse_frames, "TL", frames, **options)
+        finally:  # whether it ends or is stopped
+            if light:
+                cam.spawn(cam.apply_still_config())  # the photos' size again
+            cam.storage.new_folder()  # the next photos elsewhere
+            cam.save_soon()
+            if len(frames) >= 2:
+                cam.spawn(cam.make_timelapse(frames))
+            elif frames:
+                cam.show_message("Une seule vue : pas de vidéo", warning=True)
 
     async def _bracket(self, mode):
         cam, s = self.camera, self.camera.settings

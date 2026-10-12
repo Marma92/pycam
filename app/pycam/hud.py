@@ -90,6 +90,9 @@ class Hud:
         return bins(photo.convert("L").histogram()), [bins(rgb[c * 256 : (c + 1) * 256]) for c in range(3)]
 
     def draw(self, view):
+        if view.video_playing:
+            self._draw_video(view)
+            return
         if view.review:
             self._draw_review(view)
             return
@@ -135,10 +138,52 @@ class Hud:
             d.text((x + self.px(24), y + h - bar_h // 2), view.review_info, font=self.font_bold, fill=WHITE, anchor="lm")
             if view.playback:
                 d.text((x + w - self.px(24), y + h - bar_h // 2), view.playback, font=self.font_bold, fill=AMBER, anchor="rm")
+        if view.video_hint and path == view.review and photo is not None:
+            self._play_button(d, x + w / 2, y + h / 2, view.video_hint)
         if view.display == "detailed":
             self._histogram(d, view)
         if view.loupe > 1:
             self._loupe(d, view)
+        if view.message:
+            self._message(d, view.message, view.warning)
+        self.shm[:] = img.tobytes()
+
+    def _play_button(self, d, cx, cy, hint):
+        """A video's first frame: a play sign in the middle, and how to play it."""
+        r = self.px(70)
+        d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(0, 0, 0, 150), outline=WHITE, width=self.px(4))
+        t = r * 0.45
+        d.polygon([(cx - t * 0.7, cy - t), (cx - t * 0.7, cy + t), (cx + t, cy)], fill=WHITE)
+        d.text((cx, cy + r + self.px(16)), hint, font=self.font, fill=WHITE, anchor="ma",
+               stroke_width=self.px(3), stroke_fill=(0, 0, 0, 160))  # fmt: skip
+
+    def _draw_video(self, view):
+        """A video played by the engine on the video plane, in the image area, under this
+        HUD: transparent there but for a bar at the bottom (name, time, progress) and the
+        pause sign; black around, as for the photos."""
+        img = self._background(False).copy()
+        d = ImageDraw.Draw(img)
+        x0, y0, sw, sh = self.rect
+        if view.video_paused:
+            cx, cy, r = x0 + sw / 2, y0 + sh / 2, self.px(70)
+            d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(0, 0, 0, 150), outline=WHITE, width=self.px(4))
+            bw, bh = r * 0.22, r * 0.9
+            for side in (-1, 1):
+                bx = cx + side * r * 0.25
+                d.rectangle([bx - bw / 2, cy - bh / 2, bx + bw / 2, cy + bh / 2], fill=WHITE)
+        if view.display != "clean":
+            bar_h = self.px(68)
+            top = y0 + sh - bar_h
+            d.rectangle([x0, top, x0 + sw, y0 + sh], fill=BAR)
+            line = self.px(6)
+            d.rectangle([x0, top - line, x0 + sw, top], fill=(255, 255, 255, 70))
+            d.rectangle([x0, top - line, x0 + round(sw * view.video_progress), top], fill=AMBER)
+            d.text((x0 + self.px(24), top + bar_h // 2), view.review_info, font=self.font_bold, fill=WHITE, anchor="lm")
+            right = x0 + sw - self.px(24)
+            if view.playback:
+                d.text((right, top + bar_h // 2), view.playback, font=self.font_bold, fill=AMBER, anchor="rm")
+                right -= d.textlength(view.playback, font=self.font_bold) + self.px(36)
+            d.text((right, top + bar_h // 2), view.video_time, font=self.font_bold, fill=WHITE, anchor="rm")
         if view.message:
             self._message(d, view.message, view.warning)
         self.shm[:] = img.tobytes()
@@ -276,6 +321,8 @@ class Hud:
             badge(view.drive, AMBER if view.drive_running else WHITE)
         if view.viewfinder_auto:  # the exposure is too long to be shown
             badge("VISÉE AUTO", AMBER)
+        if view.task:
+            badge(view.task, AUTO)
         if view.zsl:
             badge("ZSL", AMBER)
         if view.peaking:

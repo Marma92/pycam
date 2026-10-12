@@ -34,7 +34,8 @@ PREVIEW = "/run/pycam/web-preview.jpg"  # tmpfs, written by the engine
 PREVIEW_MAX_AGE = 0.5  # seconds: two browsers watching share the same frame
 MAX_UPLOAD = 32 * 1024**2
 FOLDER = re.compile(r"^\d{3}PYCAM$")
-SHOT = re.compile(r"^PY[CB]_\d{4}\.(JPG|DNG)$")
+SHOT = re.compile(r"^(PY[CB]_\d{4}\.(JPG|DNG)|PYT_\d{4}\.MP4)$")
+VIDEO = re.compile(r"^PYT_\d{4}\.MP4$")
 PRESET_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,47}$")
 
 
@@ -83,6 +84,7 @@ class WebServer:
                 web.post("/api/grain", self.grain),
                 web.get("/api/preview.jpg", self.preview),
                 web.get("/api/photos", self.photos),
+                web.get("/api/videos", self.videos),
                 web.get("/api/thumb/{folder}/{name}", self.thumb),
                 web.get("/api/photo/{folder}/{name}", self.photo),
                 web.delete("/api/photo/{folder}/{name}", self.delete_photo),
@@ -123,6 +125,8 @@ class WebServer:
                 "shots": view.shots,
                 "writing": view.writing,
                 "drive": view.drive,
+                "task": view.task,
+                "screen": self.camera.screen_on,
                 "drive_running": view.drive_running,
                 "countdown": view.countdown,
                 "exposure_timer": view.exposure_timer,
@@ -194,6 +198,25 @@ class WebServer:
             )
         return web.json_response(out)
 
+    async def videos(self, request):
+        """The timelapse videos, the last one first."""
+        root = self.camera.storage.root
+        out = []
+        try:
+            folders = sorted(f for f in os.listdir(root) if FOLDER.match(f))
+        except OSError:
+            folders = []
+        for folder in folders:
+            try:
+                names = sorted(n for n in os.listdir(os.path.join(root, folder)) if VIDEO.match(n))
+            except OSError:
+                continue
+            for name in names:
+                st = os.stat(os.path.join(root, folder, name))
+                out.append({"folder": folder, "name": name, "size": st.st_size, "time": int(st.st_mtime)})
+        out.sort(key=lambda v: v["time"], reverse=True)
+        return web.json_response(out)
+
     async def thumb(self, request):
         path = self._path(request)
         folder, name = request.match_info["folder"], request.match_info["name"]
@@ -214,10 +237,11 @@ class WebServer:
 
     async def delete_photo(self, request):
         path = self._path(request)
-        if not path.endswith(".JPG") or os.path.basename(path).startswith("PYB_"):
+        video = path.endswith(".MP4")
+        if not video and (not path.endswith(".JPG") or os.path.basename(path).startswith("PYB_")):
             raise web.HTTPBadRequest(text="On supprime une prise par son JPEG.")
         removed = []
-        for f in companions(path):
+        for f in [path] if video else companions(path):
             try:
                 os.remove(f)
                 removed.append(os.path.basename(f))

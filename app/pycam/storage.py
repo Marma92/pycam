@@ -42,6 +42,19 @@ class Storage:
         folder, name = os.path.split(base)
         return os.path.join(folder, "PYB_" + name[4:])
 
+    def new_folder(self):
+        """The next photos in a folder of their own (a timelapse, and what follows it): the
+        next folder, unless the current one holds nothing yet."""
+        folder = self.settings.folder_number
+        path = os.path.join(self.root, f"{folder}PYCAM")
+        try:
+            used = any(name.upper().endswith(EXTENSIONS + (".MP4",)) for name in os.listdir(path))
+        except OSError:
+            used = False
+        if used:
+            self.settings.folder_number = folder + 1 if folder < 999 else 100
+        return self.settings.folder_number
+
     def commit(self, folder, number):
         """The photo (folder, number) was taken: the next one comes after."""
         self.settings.folder_number, self.settings.next_number = _after(folder, number)

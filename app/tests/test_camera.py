@@ -141,6 +141,19 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         await self.settle()
         self.assertEqual(self.engine.last("configure")["still_denoise"], "cdn_fast")
 
+    async def test_still_settings_wait_for_the_capture(self):
+        self.engine.refuse["configure"] = "busy"  # a photo being taken
+        self.menu_line("Réduction du bruit")
+        self.camera.on_action("front_dial_minus")
+        await asyncio.sleep(0.6)
+        self.assertGreater([name for name, _ in self.engine.calls].count("configure"), 1)  # tried again
+        del self.engine.refuse["configure"]
+        await asyncio.sleep(0.4)
+        self.assertEqual(self.engine.last("configure")["still_denoise"], "cdn_fast")
+        sent = [name for name, _ in self.engine.calls].count("configure")
+        await asyncio.sleep(0.4)
+        self.assertEqual([name for name, _ in self.engine.calls].count("configure"), sent)  # and no more
+
     async def test_full_menu(self):
         self.camera.on_action("menu")
         view = self.camera.view()
