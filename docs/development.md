@@ -77,7 +77,7 @@ cd ~/pycam/engine && meson test -C build --print-errorlogs
 ## Boucle de travail
 
 1. On édite sur le poste Windows, dans ce dépôt.
-2. `sh tools/deploy.sh` copie `engine/`, `app/`, `tools/`, `system/` et `docs/` vers `~/pycam` sur le Pi (`tar | ssh`), puis compile le moteur **sur le Pi**. Avec `--no-build`, il copie seulement.
+2. `sh tools/deploy.sh` copie `engine/`, `app/`, `tools/`, `system/` et `docs/` vers `~/pycam` sur le Pi (`tar | ssh`), puis compile le moteur **sur le Pi**. Avec `--no-build`, il copie seulement. La compilation arrête les services pycam et ne lance qu'un compilateur à la fois : deux des gros fichiers (`engine.cpp`, `develop.cpp`) en parallèle saturent le Gio du Pi 3B, qui ne répond alors plus, même en SSH (vu le 2026-10-12). `PYCAM_JOBS=2` en lance deux.
    - Compilation : meson + ninja, `ccache`, `-j2` pour ne pas saturer 1 Go de RAM.
    - Une recompilation complète prend ~1 min. Une recompilation incrémentale, quelques secondes.
    - Si les services sont installés, il les redémarre pour prendre le nouveau code.
