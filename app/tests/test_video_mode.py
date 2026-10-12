@@ -1,10 +1,15 @@
 import asyncio
+import datetime
 import os
+import shutil
+import subprocess
 import tempfile
 import unittest
 
 from pycam import video
+from pycam.camera import Video
 from pycam.settings import Settings, load_settings
+from pycam.view import guide_rect
 from tests.test_drive import DriveCase
 
 
@@ -166,7 +171,56 @@ class VideoModeTest(DriveCase):
         self.assertIn("impossible", self.camera.view().message)
 
 
+    @unittest.skipUnless(shutil.which("ffmpeg"), "ffmpeg")
+    async def test_extract_a_frame(self):
+        try:
+            from PIL import Image
+        except ImportError:
+            self.skipTest("Pillow")
+        folder = os.path.join(self.settings.dcim, "100PYCAM")
+        os.makedirs(folder)
+        path = os.path.join(folder, "PYV_0001.MP4")
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-t", "2", "-c:v", "mpeg4",
+             "-metadata", "creation_time=2026-10-12T10:00:00.000000Z", path],
+            check=True,
+        )  # fmt: skip
+        self.settings.next_number = 2
+        self.camera.on_action("play")
+        self.assertEqual(self.camera.playback.current, path)
+        self.camera.video = Video(path, duration=2, position=1.04, paused=True)  # paused at 1 s
+        self.camera.on_action("menu")
+        menu = self.camera.menu
+        self.assertEqual((menu.item.label, dict(menu.rows())["Extraire cette image"]), ("Extraire cette image", "à 0:01.0"))
+        self.assertIsNone(self.camera.video)  # stopped to show the menu
+        self.camera.on_action("front_dial_plus")
+        self.assertIsNone(self.camera.menu)
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if "extraite" in self.camera.view().message:
+                break
+        frame = os.path.join(folder, "PYC_0002.JPG")
+        self.assertEqual(self.camera.view().message, "PYC_0002 extraite")
+        with Image.open(frame) as im:
+            self.assertEqual(im.size, (320, 240))
+            taken = im.getexif().get_ifd(0x8769)[36867]
+        expected = datetime.datetime.fromtimestamp(datetime.datetime(2026, 10, 12, 10, 0, 1, tzinfo=datetime.timezone.utc).timestamp())
+        self.assertEqual(taken, expected.strftime("%Y:%m:%d %H:%M:%S"))  # the video's start, plus 1 s
+        self.assertEqual(self.settings.next_number, 3)
+        self.assertEqual(self.camera.playback.photos, [frame, path])  # in the list, the video still shown
+        self.assertEqual(self.camera.playback.current, path)
+
+
 class HelpersTest(unittest.TestCase):
+    def test_framing_guides(self):
+        rect = (240, 0, 1440, 1080)  # a 4:3 image
+        self.assertEqual(guide_rect(rect, "none"), rect)
+        self.assertEqual(guide_rect(rect, "9:16"), (656, 0, 608, 1080))
+        self.assertEqual(guide_rect(rect, "1:1"), (420, 0, 1080, 1080))
+        self.assertEqual(guide_rect((0, 0, 1920, 1080), "2.39:1"), (0, 138, 1920, 803))
+        s = Settings()
+        self.assertEqual(s.guide, "none")
+
     def test_bitrates_and_time_left(self):
         s = Settings(video_resolution="720p", video_quality="high")
         self.assertEqual(video.engine_setup(s), {"width": 1280, "height": 720, "fps": 25, "bitrate": 10_000_000})

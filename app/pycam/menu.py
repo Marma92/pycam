@@ -178,6 +178,12 @@ LENS_SHADING = Item("Correction de l'ombrage", "lens_shading", (False, True), ("
 LENS = Item("Objectif", "lens", _lens_options)
 APERTURE = Item("Ouverture", "aperture", _aperture_options)
 GRID = Item("Grille des tiers", "grid", *YES_NO)
+GUIDE = Item(
+    "Repères de cadrage",
+    "guide",
+    ("none", "9:16", "4:5", "1:1", "2.39:1"),
+    ("Aucun", "9:16 · stories, reels", "4:5 · portrait Instagram", "1:1 · carré", "2.39:1 · cinéma"),
+)
 HISTOGRAM = Item("Histogramme", "histogram", ("rgb", "luma"), ("RVB", "Luminance"))
 SCREEN_OFF = Item(
     "Écran en longue prise",
@@ -215,6 +221,7 @@ QUICK_VIDEO = (
     KELVIN,
     PEAKING,
     ZEBRA,
+    GUIDE,
 )
 APPLICATIONS = Item("Applications", kind="open", target=lambda camera: camera.apps_menu(), text=lambda camera: "›")
 FULL = (
@@ -276,6 +283,7 @@ FULL = (
     WEB,
     Item("Affichage"),
     GRID,
+    GUIDE,
     HISTOGRAM,
     SCREEN_OFF,
     Item("Boutons"),

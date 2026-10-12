@@ -65,7 +65,13 @@ class AssembleTest(unittest.IsolatedAsyncioTestCase):
     async def test_a_video_with_progress(self):
         out = os.path.join(self.tmp.name, "PYT_0001.MP4")
         seen = []
+        os.utime(self.frames[0], (1791800000, 1791800000))  # when the first frame was taken
         self.assertTrue(await timelapse.assemble(self.frames, out, 25, "16:9", True, seen.append))
+        tags = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format_tags=creation_time", "-of", "json", out],
+            capture_output=True, text=True, check=True,
+        ).stdout  # fmt: skip
+        self.assertEqual(json.loads(tags)["format"]["tags"]["creation_time"], "2026-10-12T10:13:20.000000Z")
         stream = self.probe(out)
         self.assertEqual((stream["codec_name"], stream["width"], stream["height"]), ("h264", 1920, 1080))
         self.assertEqual(int(stream["nb_read_frames"]), 12)

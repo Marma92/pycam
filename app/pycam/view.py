@@ -2,6 +2,23 @@
 
 from dataclasses import dataclass
 
+# Framing guides: the crop of another format, in the image (stories, Instagram, cinema).
+GUIDES = ("none", "9:16", "4:5", "1:1", "2.39:1")
+
+
+def guide_rect(rect, guide):
+    """(x, y, w, h): the largest frame of the guide's format centred in rect, or rect."""
+    x, y, w, h = rect
+    if guide in ("", "none"):
+        return rect
+    a, b = (float(v) for v in guide.split(":"))
+    ratio = a / b
+    if w / h > ratio:  # narrower than the image: full height
+        gw = round(h * ratio)
+        return x + (w - gw) // 2, y, gw, h
+    gh = round(w / ratio)
+    return x, y + (h - gh) // 2, w, gh
+
 
 @dataclass(frozen=True)
 class HudView:
@@ -9,6 +26,7 @@ class HudView:
 
     display: str = "detailed"  # detailed | simple | clean
     grid: bool = True
+    guide: str = ""  # GUIDES: a framing guide, shaded outside (the grid then divides it)
     mode: str = "P"
     metering: str = "centre"  # centre | spot | matrix
     shutter: str = "--"

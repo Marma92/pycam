@@ -11,6 +11,7 @@ import os
 from dataclasses import dataclass, field, fields
 
 from . import drive, picture, video
+from .view import GUIDES
 from .exposure import Exposure
 from .lenses import DEFAULT_LENSES, clean_lens
 
@@ -72,6 +73,7 @@ class Settings:
     screen_off: int = 30  # SCREEN_OFF: seconds without a press before the screen sleeps in a long capture, 0: never
     display: str = "detailed"
     grid: bool = True
+    guide: str = "none"  # view.GUIDES: a framing guide on the viewfinder
     peaking: bool = False
     peaking_color: str = "red"
     peaking_sensitivity: str = "medium"
@@ -188,6 +190,7 @@ def load_settings(path):
         ("video_iso", video.ISO_VALUES),
         ("video_fps", video.FRAME_RATES),
         ("video_shutter", video.SHUTTERS),
+        ("guide", GUIDES),
         ("stack_frames", drive.STACK_COUNTS),
     ):
         if getattr(settings, name) not in allowed:

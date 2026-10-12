@@ -9,6 +9,8 @@ import os
 
 from PIL import Image, ImageDraw, ImageFont
 
+from .view import guide_rect
+
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
@@ -18,6 +20,8 @@ AMBER = (255, 190, 60, 255)
 RED = (255, 90, 70, 255)
 BAR = (0, 0, 0, 150)
 GRID = (255, 255, 255, 80)
+OUTSIDE_GUIDE = (0, 0, 0, 120)  # what a framing guide leaves out, darkened
+GUIDE = (255, 255, 255, 170)
 TRANSPARENT = (0, 0, 0, 0)
 OPAQUE_BLACK = (0, 0, 0, 255)
 PEAKING_COLOURS = {
@@ -96,7 +100,7 @@ class Hud:
         if view.review:
             self._draw_review(view)
             return
-        img = self._background(view.grid and view.display != "clean", view.video_mode).copy()
+        img = self._background(view.grid and view.display != "clean", view.video_mode, view.guide).copy()
         d = ImageDraw.Draw(img)
         if view.display != "clean":
             self._info_bar(d, view)
@@ -213,15 +217,20 @@ class Hud:
         vh = min(h, round(w * 9 / 16)) & ~1
         return x, y + (h - vh) // 2, w, vh
 
-    def _background(self, grid, video=False):
+    def _background(self, grid, video=False, guide=""):
         """Black margins, transparent image, maybe the rule of thirds: drawn once, then copied.
-        video: the 16:9 image of the video mode, black above and below it."""
-        key = (grid, video)
+        video: the 16:9 image of the video mode, black above and below it. guide: a framing
+        guide (view.GUIDES), the image around it darkened, the thirds in it."""
+        key = (grid, video, guide)
         if key not in self._backgrounds:
             img = Image.new("RGBA", self.size, OPAQUE_BLACK)
             d = ImageDraw.Draw(img)
             x, y, w, h = self.video_rect() if video else self.rect
             d.rectangle([x, y, x + w - 1, y + h - 1], fill=TRANSPARENT)
+            if guide:
+                d.rectangle([x, y, x + w - 1, y + h - 1], fill=OUTSIDE_GUIDE)
+                x, y, w, h = guide_rect((x, y, w, h), guide)
+                d.rectangle([x, y, x + w - 1, y + h - 1], fill=TRANSPARENT, outline=GUIDE, width=self.px(2))
             if grid:
                 for i in (1, 2):
                     d.line([(x + w * i // 3, y), (x + w * i // 3, y + h)], fill=GRID, width=self.px(2))

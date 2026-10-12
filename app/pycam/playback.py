@@ -7,6 +7,7 @@ magnifies (fit, 100 %, 200 %) and the dials then move the magnified area; on a v
 two presses. LECTURE, MENU or the shutter leave (the shutter still shoots).
 """
 
+import datetime
 import json
 import os
 import re
@@ -101,6 +102,47 @@ def exif_text(value):
         return value.encode("latin-1").decode("utf-8")
     except (UnicodeEncodeError, UnicodeDecodeError):
         return value
+
+
+def extract_frame(video, position, out):
+    """The video's image at `position` seconds as a JPEG photo at `out`, with when it was
+    shot (the video's start, plus the position) in its EXIF; True if made. Slow (~1 s):
+    off the event loop."""
+    from PIL import Image
+
+    command = ["ffprobe", "-v", "error", "-show_entries", "format=duration:format_tags=creation_time", "-of", "json", video]
+    try:
+        info = json.loads(subprocess.run(command, check=True, timeout=10, capture_output=True, text=True).stdout)["format"]
+        duration = float(info.get("duration", 0))
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError):
+        return False
+    start = os.path.getmtime(video) - duration  # the file is ended when the recording stops
+    created = info.get("tags", {}).get("creation_time", "")
+    try:
+        start = datetime.datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        pass  # a video made before the date was written: its file's date
+    taken = datetime.datetime.fromtimestamp(start + position)  # EXIF: local time
+    png = out + ".part.png"
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", f"{position:.3f}", "-i", video,
+               "-frames:v", "1", png]  # fmt: skip
+    try:
+        subprocess.run(command, check=True, timeout=60, capture_output=True)
+        exif = Image.Exif()
+        exif[271], exif[272], exif[305] = "Raspberry Pi", "imx477", "pycam"
+        exif[306] = taken.strftime("%Y:%m:%d %H:%M:%S")
+        exif[0x8769] = {36867: exif[306], 36868: exif[306]}  # DateTimeOriginal, DateTimeDigitized
+        part = out + ".part"
+        with Image.open(png) as im:
+            im.convert("RGB").save(part, "JPEG", quality=95, exif=exif)
+        os.replace(part, out)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        for leftover in (png, out + ".part"):
+            if os.path.exists(leftover):
+                os.remove(leftover)
+    return True
 
 
 def describe(path):

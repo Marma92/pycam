@@ -13,7 +13,7 @@ from . import exposure as exp
 from . import lenses, looks, meter, picture, timelapse, video
 from .engine_client import EngineError, call_blocking
 from .menu import Item, Menu
-from .playback import PIXEL_SCALES, Playback, describe, describe_video, poster
+from .playback import PIXEL_SCALES, Playback, describe, describe_video, extract_frame, list_photos, poster
 from .settings import DISPLAY_MODES, save_settings
 from .storage import Storage
 from .view import HudView
@@ -637,13 +637,40 @@ class Camera:
         self.spawn(self.load_shown())
         self.redraw()
 
-    def photo_menu(self):
-        """MENU in playback: what the applications can do with the photo shown (share it...)."""
+    def photo_menu(self, position=0.0):
+        """MENU in playback: what can be done with the shot shown: a video's image at
+        `position` extracted as a photo; the applications' (share a photo...)."""
         path = self.playback.current
         items = [item for app in self.apps for item in app.photo_items(self, path)]
+        if self.playback.video:
+            at = f"à {exp.format_duration(int(position))}.{int(position * 10) % 10}"
+            items.insert(0, Item("Extraire cette image", kind="run", target=lambda c: c.extract_frame(path, position), text=lambda c: at))
         if not items:
             items = [Item("Rien à faire de cette prise", kind="info")]
         return Menu(self.settings, items=items, title=os.path.basename(path)[:-4], context=self)
+
+    def extract_frame(self, video_path, position):
+        """The video's image at `position` as a photo (the next number), back in playback."""
+        self.menu, self.menu_stack = None, []
+        self.spawn(self._extract_frame(video_path, position))
+
+    async def _extract_frame(self, video_path, position):
+        base, folder, number = self.storage.next_photo()
+        out = base + ".JPG"
+        self.show_message("Extraction…")
+        if not await asyncio.to_thread(extract_frame, video_path, position, out):
+            self.show_message("Extraction impossible", warning=True)
+            return
+        self.storage.commit(folder, number)
+        self.save_now()
+        log.info("frame of %s at %.1f s: %s", os.path.basename(video_path), position, out)
+        p = self.playback
+        if p:  # in the list, the video still shown
+            current = p.current
+            p.photos = list_photos(self.storage.root, videos=True)
+            p.index = p.photos.index(current) if current in p.photos else len(p.photos) - 1
+        self.show_message(f"{os.path.basename(base)} extraite")
+        self.wake_apps()
 
     def close_playback(self):
         self.stop_video()
@@ -667,8 +694,10 @@ class Camera:
             self.redraw()
             return True
         if action == "menu":
+            v = self.video  # where a video is: its image can be extracted
+            position = max(0.0, v.position - (0.1 if v.ended else 0)) if v and v.path == p.current else 0.0
             self.stop_video()
-            self.menu, self.menu_stack = self.photo_menu(), []
+            self.menu, self.menu_stack = self.photo_menu(position), []
             self.redraw()
             return True
         if action == "q":
@@ -956,6 +985,7 @@ class Camera:
         return HudView(
             display=s.display,
             grid=s.grid,
+            guide="" if s.guide == "none" else s.guide,
             video_mode=True,
             recording=recording,
             mode="V",
@@ -1360,6 +1390,7 @@ class Camera:
         return HudView(
             display=s.display,
             grid=s.grid and self.loupe == 1,  # the rule of thirds means nothing in the loupe
+            guide="" if s.guide == "none" or self.loupe > 1 else s.guide,
             mode=e.mode,
             metering=e.metering,
             shutter="B" if e.bulb else exp.format_shutter(shutter),

@@ -10,6 +10,7 @@ by libx264 if it fails. Measured on a Pi 3B: ~6.6 frames a second from 3 Mpx JPE
 """
 
 import asyncio
+import datetime
 import logging
 import os
 import shutil
@@ -36,15 +37,22 @@ def video_filters(aspect, deflicker):
     return ",".join(filters)
 
 
-def ffmpeg_command(pattern, out, fps, aspect, deflicker, encoder):
+def creation_time(first_frame):
+    """When the timelapse began (UTC), for the MP4: galleries sort videos by it."""
+    taken = datetime.datetime.fromtimestamp(os.path.getmtime(first_frame), datetime.timezone.utc)
+    return taken.strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+
+
+def ffmpeg_command(pattern, out, fps, aspect, deflicker, encoder, created=""):
     """The command line; `pattern`: numbered frames (frame_%06d.jpg), `out`: written as MP4
-    whatever its extension."""
+    whatever its extension; created: its creation_time."""
     return [
         "nice", "-n", "10", "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
         "-framerate", str(fps), "-start_number", "0", "-i", pattern,
         "-vf", video_filters(aspect, deflicker),
         *encoder,
         "-r", str(fps), "-movflags", "+faststart", "-f", "mp4",
+        *(["-metadata", f"creation_time={created}"] if created else []),
         "-progress", "pipe:1",
         out,
     ]  # fmt: skip
@@ -69,7 +77,8 @@ async def assemble(frames, out, fps=25, aspect="16:9", deflicker=True, progress=
             os.symlink(os.path.abspath(frame), os.path.join(tmp, f"frame_{i:06d}.jpg"))
         part = out + ".part"
         for encoder in ENCODERS:
-            command = ffmpeg_command(os.path.join(tmp, "frame_%06d.jpg"), part, fps, aspect, deflicker, encoder)
+            created = creation_time(frames[0])
+            command = ffmpeg_command(os.path.join(tmp, "frame_%06d.jpg"), part, fps, aspect, deflicker, encoder, created)
             if await _run(command, len(frames), progress):
                 _sync(part)
                 os.replace(part, out)

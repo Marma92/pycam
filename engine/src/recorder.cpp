@@ -1,6 +1,7 @@
 #include "recorder.hpp"
 
 #include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <stdexcept>
 #include <vector>
@@ -168,6 +169,14 @@ void Recorder::StartFile(uint8_t const *data, size_t size)
 	stream_->codecpar->extradata = static_cast<uint8_t *>(av_mallocz(headers.size() + AV_INPUT_BUFFER_PADDING_SIZE));
 	std::copy(headers.begin(), headers.end(), stream_->codecpar->extradata);
 	stream_->codecpar->extradata_size = headers.size();
+	// When it was shot (UTC): galleries and clouds sort videos by it, not by the date the
+	// file was copied.
+	std::time_t const now = std::time(nullptr);
+	std::tm utc {};
+	gmtime_r(&now, &utc);
+	char creation[32];
+	std::strftime(creation, sizeof(creation), "%Y-%m-%dT%H:%M:%S.000000Z", &utc);
+	av_dict_set(&format_->metadata, "creation_time", creation, 0);
 	if (avformat_write_header(format_, nullptr) < 0)
 		throw std::runtime_error("cannot write the MP4 header");
 	started_ = true;
