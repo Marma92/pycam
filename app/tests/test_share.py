@@ -5,10 +5,8 @@ import asyncio
 import json
 import os
 import stat
-import sys
 import tempfile
 import time
-import types
 import unittest
 import urllib.parse
 from unittest import mock
@@ -231,47 +229,62 @@ class FakeFlickr:
         return web.Response(text=f'<?xml version="1.0"?><rsp stat="ok"><photoid>{770 + len(self.uploads)}</photoid></rsp>')
 
 
-def fake_instagrapi():
-    """A stand-in for instagrapi: a device in its settings, a sessionid that works."""
-    module = types.ModuleType("instagrapi")
+# A stand-in for instagrapi, installed where tools/install-share.sh puts the real one: it
+# runs in instagram_worker.py's process. A device in its settings, a sessionid that works;
+# the uploads go to the file $FAKE_INSTAGRAM_LOG.
+FAKE_INSTAGRAPI = """
+import json, os, time, types
 
-    class LoginRequired(Exception):
-        pass
 
-    class ChallengeRequired(Exception):
-        pass
+class LoginRequired(Exception):
+    pass
 
-    class Client:
-        uploads = []
 
-        def __init__(self):
-            self.settings = {"uuids": {"phone_id": f"device-{time.monotonic_ns()}"}}
-            self.username = None
+class ChallengeRequired(Exception):
+    pass
 
-        def load_settings(self, path):
-            with open(path) as f:
-                self.settings = json.load(f)
 
-        def dump_settings(self, path):
-            with open(path, "w") as f:
-                json.dump(self.settings, f)
+class Client:
+    def __init__(self):
+        self.settings = {"uuids": {"phone_id": "device-%d" % time.monotonic_ns()}}
+        self.username = None
 
-        def login_by_sessionid(self, sessionid):
-            if sessionid != "SID":
-                raise LoginRequired("bad session")
-            self.username = "ann_ig"
-            self.settings["cookies"] = {"sessionid": sessionid}
+    def load_settings(self, path):
+        with open(path) as f:
+            self.settings = json.load(f)
 
-        def login(self, user, password):
-            raise ChallengeRequired("checkpoint")
+    def dump_settings(self, path):
+        with open(path, "w") as f:
+            json.dump(self.settings, f)
 
-        def photo_upload(self, path, text):
-            assert os.path.exists(path)
-            Client.uploads.append((path, text))
-            return types.SimpleNamespace(code=f"C{len(Client.uploads)}")
+    def login_by_sessionid(self, sessionid):
+        if sessionid != "SID":
+            raise LoginRequired("bad session")
+        self.username = "ann_ig"
+        self.settings["cookies"] = {"sessionid": sessionid}
 
-    module.Client = Client
-    return module
+    def login(self, user, password):
+        raise ChallengeRequired("checkpoint")
+
+    def photo_upload(self, path, caption):
+        assert os.path.exists(path)
+        with open(os.environ["FAKE_INSTAGRAM_LOG"], "a") as f:
+            f.write(json.dumps({"path": path, "caption": caption, "device": self.settings["uuids"]["phone_id"]}) + "\\n")
+        with open(os.environ["FAKE_INSTAGRAM_LOG"]) as f:
+            return types.SimpleNamespace(code="C%d" % len(f.readlines()))
+"""
+
+
+def install_fake_instagrapi(data_home):
+    package = os.path.join(data_home, "pycam", "vendor", "instagrapi")
+    os.makedirs(package)
+    with open(os.path.join(package, "__init__.py"), "w") as f:
+        f.write(FAKE_INSTAGRAPI)
+
+
+def instagram_uploads(log):
+    with open(log) as f:
+        return [json.loads(line) for line in f]
 
 
 @unittest.skipUnless(HAVE_AIOHTTP and HAVE_PILLOW, "aiohttp, Pillow")
@@ -280,6 +293,8 @@ class ShareTest(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.servers = []
         self.bluesky, self.flickr = FakeBluesky(), FakeFlickr()
+        self.instagram_log = os.path.join(self.tmp.name, "instagram.log")
+        install_fake_instagrapi(os.path.join(self.tmp.name, "xdg"))
         self.bluesky.base = await self.serve(self.bluesky)
         flickr = await self.serve(self.flickr)
         self.patches = [
@@ -287,7 +302,7 @@ class ShareTest(unittest.IsolatedAsyncioTestCase):
             mock.patch.multiple(
                 publishers.Flickr, OAUTH=flickr + "/services/oauth", REST=flickr + "/services/rest/", UPLOAD=flickr + "/services/upload/"
             ),
-            mock.patch.dict(sys.modules, {"instagrapi": fake_instagrapi()}),
+            mock.patch.dict(os.environ, {"XDG_DATA_HOME": os.path.join(self.tmp.name, "xdg"), "FAKE_INSTAGRAM_LOG": self.instagram_log}),
         ]
         for p in self.patches:
             p.start()
@@ -385,8 +400,10 @@ class ShareTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("🎞️ Cinéma 800T.", fields["description"])
         with open(self.photo, "rb") as f:
             self.assertEqual(data, f.read())  # the original
-        path, text = sys.modules["instagrapi"].Client.uploads[0]
-        self.assertIn("#pycam #film", text)
+        (upload,) = instagram_uploads(self.instagram_log)
+        self.assertIn("#pycam #film", upload["caption"])
+        with open(os.path.join(self.share.data_dir, "instagram.json")) as f:
+            self.assertEqual(json.load(f)["uuids"]["phone_id"], upload["device"])  # the device kept since connecting
         self.assertFalse(os.listdir(os.path.join(self.share.data_dir, "prepared")))  # cleaned
         self.assertEqual(self.share.photo_status(self.photo), "Publiée · Instagram, Flickr, Bluesky")
 

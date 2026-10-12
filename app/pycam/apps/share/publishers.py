@@ -5,8 +5,9 @@
 - Flickr: its API with the user's own key, OAuth 1.0a with a code to paste (nothing to
   redirect to on a camera); the original file.
 - Instagram: its private API through instagrapi, as SPP does (personal accounts have no
-  official way to post); a 1440² square. Signed in with a browser's sessionid rather than
-  the password, past the verification Instagram asks of a new device.
+  official way to post), in a process of its own (instagram_worker.py); a 1440² square.
+  Signed in with a browser's sessionid rather than the password, past the verification
+  Instagram asks of a new device.
 
 Each says what it publishes of a caption (render(): no network, for the preview) and
 raises ShareError (worth trying again: the network, the platform busy) or Refused (the
@@ -18,6 +19,8 @@ import base64
 import datetime
 import hashlib
 import hmac
+import importlib.util
+import json
 import logging
 import os
 import secrets
@@ -299,6 +302,9 @@ class Flickr(Publisher):
 
 # --- Instagram
 
+WORKER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "instagram_worker.py")
+WORKER_TIMEOUT = 300  # seconds: signing in, then a photo, on a Pi 3B
+
 
 def vendor_dir():
     """Where instagrapi is installed for the camera (tools/install-share.sh): out of the
@@ -308,95 +314,78 @@ def vendor_dir():
 
 
 def instagrapi_missing():
-    """Why Instagram cannot be used here, or ""."""
-    vendor = vendor_dir()
-    if os.path.isdir(vendor) and vendor not in sys.path:
-        sys.path.append(vendor)
-    try:
-        import instagrapi  # noqa: F401
-    except ImportError:
-        return "instagrapi n'est pas installé (tools/install-share.sh)"
-    return ""
+    """Why Instagram cannot be used here, or "". Not imported here: it runs in a process of
+    its own (instagram_worker.py)."""
+    if os.path.isdir(os.path.join(vendor_dir(), "instagrapi")) or importlib.util.find_spec("instagrapi"):
+        return ""
+    return "instagrapi n'est pas installé (tools/install-share.sh)"
 
 
-# instagrapi's exceptions that mean: sign in again (by their names: it need not be there).
+# instagrapi's exceptions that mean: sign in again (by their names: it is not imported here).
 AUTH_FAILURES = ("LoginRequired", "ChallengeRequired", "BadPassword", "TwoFactorRequired", "ChallengeUnknownStep",
                  "SelectContactPointRecoveryForm", "RecaptchaChallengeForm", "ReloginAttemptExceeded")  # fmt: skip
-RETRY_LATER = ("PleaseWaitFewMinutes", "ConnectionError", "Timeout", "ReadTimeout", "ConnectTimeout")
+# Worth trying again: Instagram asking to slow down, or the network (requests', curl_cffi's).
+RETRY_LATER = ("PleaseWaitFewMinutes", "ConnectionError", "Timeout", "ReadTimeout", "ConnectTimeout", "CurlError",
+               "RequestsError")  # fmt: skip
 
 
 class Instagram(Publisher):
     name, label, image_label = "instagram", "Instagram", "carré de 1440 px, bandes blanches"
     limit = 2200
 
-    def __init__(self, config, session, data_dir=""):
-        super().__init__(config, session, data_dir)
-        self._client = None
-
     @property
     def settings_path(self):
         """instagrapi's device and session: Instagram recognises the camera by it."""
         return os.path.join(self.data_dir, "instagram.json")
 
-    def _dump(self, client):
-        os.makedirs(self.data_dir, exist_ok=True)
-        client.dump_settings(self.settings_path)
-        os.chmod(self.settings_path, 0o600)
-
-    def _connect(self):
+    async def _run(self, **request):
+        """One request to instagram_worker.py; its answer, or instagrapi's error as ours."""
         if missing := instagrapi_missing():
             raise Refused(missing)
-        from instagrapi import Client
-
-        client = Client()
-        if os.path.exists(self.settings_path):
-            client.load_settings(self.settings_path)
-        else:
-            # The device made now is kept before signing in: a verification aborts the
-            # login, and coming back as another device only brings another (SPP).
-            self._dump(client)
         c = self.config
+        os.makedirs(self.data_dir, exist_ok=True)
+        request = {
+            "settings": self.settings_path,
+            "user": c.instagram_user,
+            "password": c.instagram_password,
+            "sessionid": c.instagram_sessionid,
+            **request,
+        }
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, WORKER, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
         try:
-            if c.instagram_sessionid:
-                client.login_by_sessionid(c.instagram_sessionid)
-            else:
-                client.login(c.instagram_user, c.instagram_password)
-        finally:
-            self._dump(client)
-        return client
-
-    def _call(self, work):
-        """work(client) in this thread, signed in; instagrapi's errors as ours."""
-        try:
-            if self._client is None:
-                self._client = self._connect()
-            try:
-                return work(self._client)
-            finally:
-                self._dump(self._client)
-        except ShareError:
+            out, err = await asyncio.wait_for(proc.communicate(json.dumps(request).encode()), WORKER_TIMEOUT)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise ShareError("Instagram ne répond pas")
+        except asyncio.CancelledError:
+            proc.kill()
             raise
-        except Exception as e:  # instagrapi's own, and requests'
-            kind = type(e).__name__
-            message = f"Instagram : {kind} {e}".strip()
-            if kind in AUTH_FAILURES:
-                self._client = None
-                if kind.startswith("Challenge") or "Form" in kind:
-                    message = "Instagram demande une vérification : se connecter avec le sessionid d'un navigateur"
-                raise AuthError(message) from e
-            raise (ShareError if kind in RETRY_LATER else Refused)(message) from e
+        try:
+            answer = json.loads(out.decode(errors="replace").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            tail = err.decode(errors="replace").strip().splitlines()[-1:] or ["sans réponse"]
+            raise Refused(f"Instagram : {tail[0]}")
+        if answer.get("ok"):
+            return answer
+        kind, message = answer.get("error", ""), answer.get("message", "")
+        text = f"Instagram : {kind} {message}".strip()
+        if kind in AUTH_FAILURES:
+            if kind.startswith("Challenge") or "Form" in kind:
+                text = "Instagram demande une vérification : se connecter avec le sessionid d'un navigateur"
+            raise AuthError(text)
+        if kind in ("ImportError", "ModuleNotFoundError"):
+            raise Refused(f"instagrapi ne se charge pas : {message}")
+        raise (ShareError if kind in RETRY_LATER else Refused)(text)
 
     async def check(self):
-        def who(client):
-            return client.username or self.config.instagram_user
-
-        return await asyncio.to_thread(self._call, who)
+        return (await self._run(action="check"))["username"]
 
     async def publish(self, post, image, text):
-        def upload(client):
-            return f"https://www.instagram.com/p/{client.photo_upload(image, text).code}/"
-
-        return await asyncio.to_thread(self._call, upload)
+        code = (await self._run(action="upload", image=image, caption=text))["code"]
+        return f"https://www.instagram.com/p/{code}/"
 
 
 PUBLISHERS = {cls.name: cls for cls in (Instagram, Flickr, Bluesky)}
