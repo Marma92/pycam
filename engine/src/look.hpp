@@ -29,7 +29,10 @@ struct Look
 	std::shared_ptr<const Lut3D> lut; // none: the base
 	float vignette = 0; // darkening of the corners, 0..1
 	float grain = 0; // 0..1
-	float grain_size = 1; // in pixels of the full resolution image
+	float grain_size = 1; // in pixels of the full resolution image (scaled for smaller JPEGs)
+	float grain_colour = 0; // chroma grain against the luma grain, 0..1 (0: black and white)
+	float grain_shadows = 0; // 0: grain strongest in the mid-tones, 1: lower, in the shadows
+	float grain_clumps = 0; // share of coarser clumps, 0..1
 
 	bool Empty() const { return !lut && vignette <= 0 && grain <= 0; }
 };

@@ -120,6 +120,54 @@ int main()
 		expect(max_difference(a, grey) > 3, "grain: visible");
 	}
 
+	// Film grain: colour (chroma) grain only when asked, more in the shadows when asked,
+	// clumps change the pattern, still reproducible.
+	{
+		auto chroma_moved = [](std::vector<uint8_t> const &frame)
+		{
+			uint8_t const *u = frame.data() + stride * h;
+			for (size_t i = 0; i < 2 * size_t(stride / 2) * (h / 2); i++)
+				if (u[i] != 128)
+					return true;
+			return false;
+		};
+		std::vector<uint8_t> grey(frame_size, 128);
+		Look mono;
+		mono.grain = 0.6f;
+		auto a = grey;
+		apply_look(mono, a.data(), w, h, stride, 3, 2);
+		expect(!chroma_moved(a), "grain: black and white leaves the chroma");
+		Look colour = mono;
+		colour.grain_colour = 1;
+		auto b = grey;
+		apply_look(colour, b.data(), w, h, stride, 3, 2);
+		expect(chroma_moved(b), "grain: colour grain in the chroma");
+
+		auto spread = [](std::vector<uint8_t> const &frame, int level)
+		{
+			double sum = 0;
+			for (unsigned y = 0; y < h; y++)
+				for (unsigned x = 0; x < w; x++)
+					sum += std::abs(frame[y * stride + x] - level);
+			return sum / (w * h);
+		};
+		std::vector<uint8_t> dark(frame_size, 128);
+		std::fill_n(dark.begin(), stride * h, 70);
+		Look mids = mono, shadows = mono;
+		shadows.grain_shadows = 1;
+		auto c = dark, d = dark;
+		apply_look(mids, c.data(), w, h, stride, 3, 2);
+		apply_look(shadows, d.data(), w, h, stride, 3, 2);
+		expect(spread(d, 70) > spread(c, 70) * 1.05, "grain: more in the shadows when asked");
+
+		Look clumpy = mono;
+		clumpy.grain_clumps = 0.5f;
+		auto e = grey, f = grey;
+		apply_look(clumpy, e.data(), w, h, stride, 3, 2);
+		apply_look(clumpy, f.data(), w, h, stride, 3, 3);
+		expect(e == f && e != a, "grain: clumps, reproducible");
+	}
+
 	// The viewfinder preview.
 	{
 		Preview identity;

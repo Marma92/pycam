@@ -12,6 +12,8 @@ Statut : **orientations décidées le 2026-10-11** (§10). Les mesures datent du
 
 - les premières versions des pellicules (méthode A, §6) : Portrait 400, Velours 50, Cinéma 800T, Cinéma 800T +2 et Triple-X 400.
 
+- le grain des pellicules : intensité, finesse, grain coloré, répartition selon les tons, amas ; réglage « Simuler le grain », avec la finesse affichée dans le menu.
+
 **Reste** : affiner les pellicules sur de vraies photos de l'appareil ; la balance des blancs fixe d'une pellicule (le tungstène de la Cinéma 800T) ; la halation ; `pycam_preset.py fit` pour la méthode B.
 
 **Ajouter un preset** : copier son dossier dans `~/.config/pycam/presets/`. Il apparaît à la prochaine ouverture d'un menu, et un preset du même nom de dossier qu'un preset intégré le remplace. Un preset illisible est ignoré, avec un avertissement dans le journal (`journalctl -u pycam`).
@@ -112,9 +114,12 @@ green = [-8, 0.85, 0.03]         # les verts vers le jaune, moins saturés, un p
 blue = [-12, 0.85, 0.05]         # les ciels vers le cyan
 split_toning = { shadows = [190, 0.04], highlights = [45, 0.03] }  # teinte, intensité
 
-[grain]
-amount = 0.25
-size = 1.2
+[grain]                          # le grain de la pellicule (réglage « Simuler le grain »)
+amount = 0.25                    # intensité, 0-1
+size = 1.2                       # finesse : taille en pixels de l'image pleine résolution
+colour = 0.35                    # grain coloré (les trois couches d'un film couleur) ; 0 : noir et blanc
+shadows = 0.5                    # 0 : surtout dans les tons moyens (diapositive) ; 1 : dans les ombres (négatif)
+clumps = 0.15                    # part des amas, plus gros que le grain fin
 
 [vignette]
 amount = 0.1
@@ -124,6 +129,7 @@ amount = 0.1
 - Les courbes par canal s'écrivent `red_curve`, `green_curve` et `blue_curve`, sur le modèle de `tone_curve`.
 - `[look.colours]` règle huit familles de couleurs, comme le panneau TSL d'un logiciel photo : `red` (0°), `orange` (30°), `yellow` (60°), `green` (120°), `aqua` (180°), `blue` (225°), `purple` (270°), `magenta` (315°). Une couleur entre deux familles reçoit un mélange des deux réglages ; les gris ne bougent pas.
 - Ordre d'application, comme dans un boîtier argentique : la LUT du preset, le mélange noir et blanc, les courbes, les familles de couleurs et la saturation, le virage (`split_toning`), le mélange avec la base (`strength`), puis le contraste et la saturation du menu.
+- **Le grain** (`[grain]`) ne passe pas par la LUT : le moteur le dessine sur le JPEG, différent à chaque photo et sans motif répété. Il a cinq caractéristiques : l'intensité, la finesse (taille), la part de grain coloré, sa répartition selon les tons, et la part d'amas. Un JPEG réduit (tailles M et S) reçoit un grain plus fin d'autant. Le menu indique la finesse du grain du preset choisi (« Oui · fin »), calculée d'après l'intensité et la taille : aucun, très fin, fin, moyen, marqué. Le grain ne se voit pas dans la visée, trop petite : il apparaît dans la loupe de la lecture, à 100 %.
 - Coût sur le Pi : ~2,7 s pour compiler un preset avec des familles de couleurs, une fois (gardé en mémoire et sur disque) ; un cran de contraste ou de saturation dans le menu, ~0,5 s.
 - Tout est optionnel : un preset peut n'être qu'une LUT, ou qu'une recette.
 

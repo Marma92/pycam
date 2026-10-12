@@ -30,6 +30,9 @@ blue = [6, 1.12, -0.08]
 purple = [0, 1.1, -0.04]
 magenta = [0, 1.05, 0.0]
 
-[grain]
+[grain]  # le plus fin de la série : une diapositive 50 ISO
 amount = 0.06
-size = 1.0
+size = 0.9
+colour = 0.25
+shadows = 0.0  # une diapositive le montre plutôt dans les tons moyens
+clumps = 0.05

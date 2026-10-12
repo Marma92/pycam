@@ -237,10 +237,10 @@ Pendant la revue après la prise, toute touche la ferme ; le déclencheur la fer
 
 **Les menus** (`menu.py`). La molette arrière choisit la ligne, la molette avant change la valeur, qui s'applique tout de suite.
 
-- **Q, réglages rapides** : les 12 réglages de prise de vue. Simulation (le preset), mesure de la lumière, balance des blancs, température, peaking (coupé ou sa couleur), netteté, contraste, saturation (dont N&B), réduction du bruit, format, déclenchement (bascule ou ZSL), ouverture.
+- **Q, réglages rapides** : les 12 réglages de prise de vue. Simulation (le preset), simuler le grain, mesure de la lumière, balance des blancs, température, peaking (coupé ou sa couleur), netteté, contraste, saturation (dont N&B), réduction du bruit, format, ouverture. Le déclenchement (bascule ou ZSL) est dans MENU, et attribuable à Fn.
 - **MENU, menu complet** : tous les réglages, par section, la configuration comprise.
   - Exposition : mesure, balance des blancs, température.
-  - Simulation : le preset (`presets.md`).
+  - Simulation : le preset (`presets.md`), simuler le grain.
   - Mise au point : peaking, sensibilité du peaking, zébras.
   - Image : netteté, contraste, saturation, réduction du bruit.
   - Fichiers : format, taille et qualité JPEG, compression du RAW.

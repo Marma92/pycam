@@ -27,6 +27,9 @@ blue = [-12, 1.08, 0.0]
 purple = [0, 1.0, 0.0]
 magenta = [0, 1.05, 0.0]
 
-[grain]
-amount = 0.45
+[grain]  # marqué : la poussée de deux diaphragmes grossit le grain, surtout dans les ombres
+amount = 0.42
 size = 1.7
+colour = 0.55
+shadows = 0.7
+clumps = 0.4

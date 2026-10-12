@@ -84,8 +84,10 @@ inline float noise_at(uint32_t x, uint32_t y, uint32_t seed)
 
 struct Grain
 {
-	float strength[256]; // amplitude for each luma level, in levels
-	float inv_size;
+	float strength[256]; // luma grain amplitude for each luma level, in levels
+	float inv_size; // 1 / the grain size, in pixels of this image
+	float colour; // grain in the chroma, against the luma grain (colour films: three dye layers)
+	float clumps; // share of the coarser clumps
 	uint32_t seed;
 };
 
@@ -95,14 +97,15 @@ struct Grain
 class GrainRows
 {
 public:
-	GrainRows(Grain const &grain, unsigned width) : grain_(grain), width_(width), x0_(width), tx_(width)
+	GrainRows(float inv_size, uint32_t seed, unsigned width)
+		: inv_size_(inv_size), seed_(seed), width_(width), x0_(width), tx_(width)
 	{
-		unsigned const points = static_cast<unsigned>(width * grain.inv_size) + 2;
+		unsigned const points = static_cast<unsigned>(width * inv_size) + 2;
 		for (auto &row : grid_)
 			row.values.resize(points);
 		for (unsigned x = 0; x < width; x++)
 		{
-			float const fx = x * grain.inv_size;
+			float const fx = x * inv_size;
 			x0_[x] = static_cast<uint32_t>(fx);
 			tx_[x] = fx - x0_[x];
 		}
@@ -110,13 +113,13 @@ public:
 
 	void Fill(unsigned y, float *out)
 	{
-		if (grain_.inv_size >= 1)
+		if (inv_size_ >= 1)
 		{
 			for (unsigned x = 0; x < width_; x++)
-				out[x] = noise_at(x, y, grain_.seed);
+				out[x] = noise_at(x, y, seed_);
 			return;
 		}
-		float const fy = y * grain_.inv_size;
+		float const fy = y * inv_size_;
 		uint32_t const y0 = static_cast<uint32_t>(fy);
 		float const ty = fy - y0;
 		float const *r0 = GridRow(y0), *r1 = GridRow(y0 + 1);
@@ -151,11 +154,12 @@ private:
 		CachedRow &row = *top;
 		row.y = y;
 		for (unsigned x = 0; x < row.values.size(); x++)
-			row.values[x] = noise_at(x, y, grain_.seed);
+			row.values[x] = noise_at(x, y, seed_);
 		return row.values.data();
 	}
 
-	Grain const &grain_;
+	float inv_size_;
+	uint32_t seed_;
 	unsigned width_;
 	std::vector<uint32_t> x0_;
 	std::vector<float> tx_;
@@ -169,12 +173,29 @@ void apply_rows(Look const &look, Grain const *grain, uint8_t *frame, unsigned w
 	uint8_t *const u_plane = frame + static_cast<size_t>(stride) * height;
 	uint8_t *const v_plane = u_plane + static_cast<size_t>(uv_stride) * (height / 2);
 	float const cx = width / 2.0f, cy = height / 2.0f, inv_r2 = 1.0f / (cx * cx + cy * cy);
-	std::optional<GrainRows> grain_rows;
-	std::vector<float> noise[2];
+	// Grain: fine noise, maybe mixed with coarser clumps; for colour films, two more noises
+	// on the chroma, per 2x2 block (there, the grain is half as many blocks).
+	std::optional<GrainRows> fine, coarse, chroma[2];
+	std::vector<float> noise[2], clumps, chroma_noise[2];
+	float fine_share = 1, clump_share = 0;
 	if (grain)
 	{
-		grain_rows.emplace(*grain, width);
+		fine.emplace(grain->inv_size, grain->seed, width);
 		noise[0].resize(width), noise[1].resize(width);
+		if (grain->clumps > 0)
+		{
+			coarse.emplace(grain->inv_size / 2.5f, grain->seed ^ 0x9e3779b9u, width);
+			clumps.resize(width);
+			// Two independent noises mixed: keep the overall amplitude.
+			float const norm = 1 / std::hypot(1 - grain->clumps, grain->clumps);
+			fine_share = (1 - grain->clumps) * norm, clump_share = grain->clumps * norm;
+		}
+		if (grain->colour > 0)
+			for (int c = 0; c < 2; c++)
+			{
+				chroma[c].emplace(grain->inv_size * 2, grain->seed ^ (c ? 0xc2b2ae35u : 0x85ebca6bu), width / 2);
+				chroma_noise[c].resize(width / 2);
+			}
 	}
 
 	for (unsigned y = row0; y < row1; y += 2)
@@ -184,7 +205,20 @@ void apply_rows(Look const &look, Grain const *grain, uint8_t *frame, unsigned w
 		uint8_t *v = v_plane + static_cast<size_t>(y / 2) * uv_stride;
 		float const dy = y + 1 - cy;
 		if (grain)
-			grain_rows->Fill(y, noise[0].data()), grain_rows->Fill(y + 1, noise[1].data());
+		{
+			for (unsigned j = 0; j < 2; j++)
+			{
+				fine->Fill(y + j, noise[j].data());
+				if (coarse)
+				{
+					coarse->Fill(y + j, clumps.data());
+					for (unsigned x = 0; x < width; x++)
+						noise[j][x] = fine_share * noise[j][x] + clump_share * clumps[x];
+				}
+			}
+			if (grain->colour > 0)
+				chroma[0]->Fill(y / 2, chroma_noise[0].data()), chroma[1]->Fill(y / 2, chroma_noise[1].data());
+		}
 		for (unsigned bx = 0; bx < width / 2; bx++)
 		{
 			unsigned const x = 2 * bx;
@@ -222,8 +256,15 @@ void apply_rows(Look const &look, Grain const *grain, uint8_t *frame, unsigned w
 				*px[p] = to_u8(out[p]);
 			float const sr = 0.25f * (r[0] + r[1] + r[2] + r[3]), sg = 0.25f * (g[0] + g[1] + g[2] + g[3]),
 						sb = 0.25f * (b[0] + b[1] + b[2] + b[3]);
-			u[bx] = to_u8(128 - 0.168736f * sr - 0.331264f * sg + 0.5f * sb);
-			v[bx] = to_u8(128 + 0.5f * sr - 0.418688f * sg - 0.081312f * sb);
+			float uu = 128 - 0.168736f * sr - 0.331264f * sg + 0.5f * sb;
+			float vv = 128 + 0.5f * sr - 0.418688f * sg - 0.081312f * sb;
+			if (grain && grain->colour > 0)
+			{
+				float const a = grain->colour * 0.5f * grain->strength[to_u8(0.25f * (out[0] + out[1] + out[2] + out[3]))];
+				uu += a * chroma_noise[0][bx], vv += a * chroma_noise[1][bx];
+			}
+			u[bx] = to_u8(uu);
+			v[bx] = to_u8(vv);
 		}
 	}
 }
@@ -323,13 +364,22 @@ void apply_look(Look const &look, uint8_t *frame, unsigned width, unsigned heigh
 	if (look.grain > 0)
 	{
 		grain = std::make_unique<Grain>();
-		grain->inv_size = 1.0f / std::max(look.grain_size, 0.5f);
+		// Sizes are given for the full sensor: a smaller JPEG (sizes M, S) has smaller grains,
+		// and a little less of them, averaged by the downscaling.
+		float const scale = std::clamp(width / 4056.0f, 0.25f, 1.0f);
+		grain->inv_size = 1.0f / std::max(look.grain_size * scale, 0.5f);
+		grain->colour = look.grain_colour;
+		grain->clumps = look.grain_clumps;
 		grain->seed = static_cast<uint32_t>(seed * 2654435761u);
-		// Like film grain, strongest in the mid-tones, still visible in the shadows.
+		// Like film grain: strongest in the mid-tones (slides), or lower down, in the shadows
+		// (negatives: the thin parts of the negative); still a little in the blacks.
+		float const amplitude = look.grain * 24.0f * std::sqrt(scale);
 		for (int level = 0; level < 256; level++)
 		{
 			float const t = level / 255.0f;
-			grain->strength[level] = look.grain * 24.0f * (0.3f + 0.7f * 4 * t * (1 - t));
+			float const mids = 4 * t * (1 - t), shadows = 6.75f * t * (1 - t) * (1 - t);
+			grain->strength[level] =
+				amplitude * (0.3f + 0.7f * ((1 - look.grain_shadows) * mids + look.grain_shadows * shadows));
 		}
 	}
 	threads = std::max(1u, threads);

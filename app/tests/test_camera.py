@@ -482,6 +482,19 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.settings.preset = "gone"  # a deleted preset: back to the default one
         self.assertEqual(self.camera.preset().id, "standard")
 
+    async def test_grain_can_be_switched_off(self):
+        self.settings.preset = "portrait-400"
+        await self.camera.apply_look()
+        look = self.engine.last("look")
+        self.assertGreater(look["grain"], 0)
+        self.assertGreater(look["grain_colour"], 0)  # a colour film
+        self.menu_line("Simuler le grain", quick=True)
+        self.assertEqual(dict(self.camera.view().menu)["Simuler le grain"], "Oui · fin")
+        self.camera.on_action("front_dial_minus")
+        look = await self.look_settled()
+        self.assertEqual(look["grain"], 0)  # the look stays, without its grain
+        self.assertEqual(look["name"], "Portrait 400")
+
     async def test_keep_base_writes_a_neutral_jpeg(self):
         self.settings.keep_base = True
         self.camera.on_action("shutter")
@@ -547,7 +560,7 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_strategy_from_the_menu(self):
         self.engine.refuse["configure"] = "busy"
-        self.menu_line("Déclenchement", quick=True)
+        self.menu_line("Déclenchement")  # in MENU: Q has the grain instead
         self.camera.on_action("front_dial_plus")
         await self.settle()
         self.assertEqual(self.settings.strategy, "switch")

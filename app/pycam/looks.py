@@ -83,8 +83,11 @@ class Preset:
     base: str = BASE
     exposure_bias: float = 0.0  # stops, added to the compensation (protects the highlights)
     look: tuple = ()  # the [look] table, as sorted (key, value) pairs
-    grain: float = 0.0
-    grain_size: float = 1.0
+    grain: float = 0.0  # strength, 0..1
+    grain_size: float = 1.0  # in pixels of the full sensor image: the finer the grain, the smaller
+    grain_colour: float = 0.0  # chroma grain against the luma grain (colour films: three dye layers)
+    grain_shadows: float = 0.0  # 0: strongest in the mid-tones (slides), 1: in the shadows (negatives)
+    grain_clumps: float = 0.0  # share of coarser clumps
     vignette: float = 0.0
     digest: str = ""  # of the files that make the preset: the compiled LUT's cache key
 
@@ -189,6 +192,9 @@ def load_preset(folder):
         look=tuple(sorted((k, _freeze(v)) for k, v in look.items())),
         grain=_number(grain, "amount", 0.0, 0, 1, "grain."),
         grain_size=_number(grain, "size", 1.0, 0.5, 8, "grain."),
+        grain_colour=_number(grain, "colour", 0.0, 0, 1, "grain."),
+        grain_shadows=_number(grain, "shadows", 0.0, 0, 1, "grain."),
+        grain_clumps=_number(grain, "clumps", 0.0, 0, 1, "grain."),
         vignette=_number(vignette, "amount", 0.0, 0, 1, "vignette."),
         digest=hasher.hexdigest()[:16],
     )
@@ -200,6 +206,15 @@ def _freeze(value):
     if isinstance(value, dict):
         return tuple(sorted((k, _freeze(v)) for k, v in value.items()))
     return value
+
+
+def grain_label(preset):
+    """How fine the preset's grain is, in words: its visibility grows with the strength
+    and, more slowly, with the size."""
+    index = preset.grain * preset.grain_size**0.5 * 100
+    if index <= 0:
+        return "aucun"
+    return "très fin" if index < 8 else "fin" if index < 18 else "moyen" if index < 35 else "marqué"
 
 
 def find_presets(folders=None):

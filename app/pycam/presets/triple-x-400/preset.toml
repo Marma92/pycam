@@ -17,6 +17,9 @@ tone_curve = [
     [0.8, 0.80], [0.92, 0.88], [1.0, 0.93],
 ]
 
-[grain]
-amount = 0.38
-size = 1.5
+[grain]  # marqué et net, en amas : le grain classique de la Tri-X ; neutre (noir et blanc)
+amount = 0.35
+size = 1.4
+colour = 0.0
+shadows = 0.3
+clumps = 0.35

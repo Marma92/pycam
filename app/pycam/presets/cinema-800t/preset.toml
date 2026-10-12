@@ -27,6 +27,9 @@ blue = [-8, 0.95, 0.0]
 purple = [0, 0.9, 0.0]
 magenta = [0, 0.9, 0.0]
 
-[grain]
-amount = 0.3
+[grain]  # moyen : une 800 ISO cinéma, sans couche anti-halo
+amount = 0.25
 size = 1.4
+colour = 0.45
+shadows = 0.5
+clumps = 0.25

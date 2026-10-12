@@ -40,6 +40,20 @@ class LooksTest(unittest.TestCase):
         self.assertAlmostEqual(grey[0], 0.638, places=2)  # the standard curve, as computed
         self.assertEqual(grey[0], grey[2])
 
+    def test_film_grain(self):
+        presets = looks.find_presets([looks.BUILTIN_DIR])
+        labels = {pid: looks.grain_label(p) for pid, p in presets.items()}
+        self.assertEqual(labels["standard"], "aucun")
+        self.assertEqual(labels["velours-50"], "très fin")
+        self.assertEqual(labels["portrait-400"], "fin")
+        self.assertEqual(labels["cinema-800t"], "moyen")
+        self.assertEqual(labels["cinema-800t-plus2"], "marqué")
+        self.assertEqual(presets["triple-x-400"].grain_colour, 0)  # black and white: neutral grain
+        grain = self.preset("[grain]\namount = 0.2\ncolour = 0.5\nshadows = 1\nclumps = 0.3\n")
+        self.assertEqual((grain.grain_colour, grain.grain_shadows, grain.grain_clumps), (0.5, 1.0, 0.3))
+        with self.assertRaises(looks.PresetError):
+            self.preset("[grain]\nclumps = 2\n", "bad")
+
     def test_monochrome_and_mixer(self):
         preset = self.preset("[look]\nmonochrome = true\nmixer = [1, 0, 0]\n")  # a red filter, all the way
         table = looks.compile_look(preset, size=5)

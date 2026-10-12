@@ -41,6 +41,13 @@ def _preset_options(settings):
     return tuple((preset_id, preset.name) for preset_id, preset in looks.registry().items())
 
 
+def _grain_options(settings):
+    presets = looks.registry()
+    preset = presets.get(settings.preset) or presets.get(looks.DEFAULT)
+    label = looks.grain_label(preset) if preset else "aucun"
+    return ((False, "Non"), (True, f"Oui · {label}"))
+
+
 def _aperture_options(settings):
     if not 0 <= settings.lens < len(settings.lenses):
         return ((None, "Choisir l'objectif"),)
@@ -87,6 +94,8 @@ SHARPNESS = Item("Netteté", "sharpness", tuple(picture.SHARPNESS), _levels(pict
 CONTRAST = Item("Contraste", "contrast", tuple(picture.CONTRAST), _levels(picture.CONTRAST), "look")
 SATURATION = Item("Saturation", "saturation", tuple(picture.SATURATION), _levels(picture.SATURATION, True), "look")
 SIMULATION = Item("Simulation", "preset", _preset_options, push="look")
+# The preset's film grain on the JPEG; shows how fine it is ("Oui · fin").
+GRAIN = Item("Simuler le grain", "grain", _grain_options, push="look")
 DENOISE = Item(
     "Réduction du bruit", "denoise", tuple(picture.DENOISE), ("Aucune", "Légère", "Rapide", "Haute qualité"), "config"
 )
@@ -109,6 +118,7 @@ FN2 = Item("Bouton Fn2", "fn2", FN_ACTIONS, tuple(FN_LABELS[a] for a in FN_ACTIO
 
 QUICK = (
     SIMULATION,
+    GRAIN,
     METERING,
     WHITE_BALANCE,
     KELVIN,
@@ -118,7 +128,6 @@ QUICK = (
     SATURATION,
     DENOISE,
     FORMAT,
-    STRATEGY,
     APERTURE,
 )
 FULL = (
@@ -128,6 +137,7 @@ FULL = (
     KELVIN,
     Item("Simulation"),
     SIMULATION,
+    GRAIN,
     Item("Mise au point"),
     PEAKING,
     PEAKING_SENSITIVITY,

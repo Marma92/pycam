@@ -52,6 +52,7 @@ class Settings:
     review_seconds: int = 2
     histogram: str = "rgb"  # HISTOGRAMS, in the detailed display
     preset: str = "standard"  # the look of the JPEGs: a folder name (looks.py)
+    grain: bool = True  # simulate the preset's film grain
     keep_base: bool = False  # also write the JPEG without the look (PYB_0001.JPG)
     lens_shading: bool = False  # correct the lens shading (another ISP tuning)
     fn1: str = "peaking"  # FN_ACTIONS

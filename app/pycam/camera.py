@@ -227,8 +227,12 @@ class Camera:
                     name=preset.name,
                     lut=compiled.lut,
                     preview=compiled.preview,
-                    grain=preset.grain,
+                    # "Simuler le grain" off: the look without its grain.
+                    grain=preset.grain if s.grain else 0.0,
                     grain_size=preset.grain_size,
+                    grain_colour=preset.grain_colour,
+                    grain_shadows=preset.grain_shadows,
+                    grain_clumps=preset.grain_clumps,
                     vignette=preset.vignette,
                 )
             except ConnectionError:

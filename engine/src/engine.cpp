@@ -729,6 +729,9 @@ void Engine::SetLook(json const &command)
 	look->vignette = std::clamp(command.value("vignette", 0.0f), 0.0f, 1.0f);
 	look->grain = std::clamp(command.value("grain", 0.0f), 0.0f, 1.0f);
 	look->grain_size = std::clamp(command.value("grain_size", 1.0f), 0.5f, 8.0f);
+	look->grain_colour = std::clamp(command.value("grain_colour", 0.0f), 0.0f, 1.0f);
+	look->grain_shadows = std::clamp(command.value("grain_shadows", 0.0f), 0.0f, 1.0f);
+	look->grain_clumps = std::clamp(command.value("grain_clumps", 0.0f), 0.0f, 1.0f);
 	std::shared_ptr<Preview> preview;
 	if (command.contains("preview") && !command["preview"].is_null())
 	{
@@ -758,6 +761,9 @@ json Engine::LookState() const
 			 { "vignette", look_->vignette },
 			 { "grain", look_->grain },
 			 { "grain_size", look_->grain_size },
+			 { "grain_colour", look_->grain_colour },
+			 { "grain_shadows", look_->grain_shadows },
+			 { "grain_clumps", look_->grain_clumps },
 			 { "preview", preview_ != nullptr } };
 }
 
