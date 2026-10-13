@@ -28,7 +28,7 @@ strip "$stage/$name/engine/build/pycam-engine"
 # application's. The camera installs those it lacks (app/pycam/updater.py), and brings
 # libcamera and rpicam up to the versions the engine was compiled against.
 libs="$(readelf -d "$build/pycam-engine" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"
-engine_pkgs="$(for lib in $libs; do dpkg -S "/$lib" 2>/dev/null | cut -d: -f1; done | sort -u)"
+engine_pkgs="$(for lib in $libs; do dpkg -S "*/$lib" 2>/dev/null | cut -d: -f1; done | sort -u)"
 [ -n "$engine_pkgs" ] || { echo "paquets du moteur introuvables" >&2; exit 1; }
 app_pkgs="python3 python3-aiohttp python3-evdev python3-pil ffmpeg fonts-dejavu-core"
 
