@@ -103,7 +103,9 @@ class Updates:
             await self._install_at_start(said)
         while True:
             await self.step()
-            delay = FAST_POLL if time.monotonic() < self._fast_until else POLL
+            # Root at work (after a restart too: the installation is checked once this
+            # version says it works): its result is followed closely.
+            delay = FAST_POLL if time.monotonic() < self._fast_until or self.state in WORKING else POLL
             try:
                 await asyncio.wait_for(self._wake.wait(), delay)
             except TimeoutError:
@@ -163,6 +165,7 @@ class Updates:
             text = new.get("message", "")
         if not text:
             return False
+        log.info("update: %s", text)
         self._asked = False
         s.update_seen = new["time"]
         self.camera.save_soon()
@@ -176,6 +179,7 @@ class Updates:
         whichever fits (the menu's line). What happens, in a few words."""
         if not self.managed:
             return "Installation de développement : tools/deploy.sh"
+        self.status = self.read()  # root may have finished since the last look
         if self.state in WORKING:
             return self.state_text()
         self._asked = True

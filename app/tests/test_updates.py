@@ -154,6 +154,21 @@ class UpdatesTest(unittest.IsolatedAsyncioTestCase):
         self.camera.updates = None  # the tests of the camera
         self.assertEqual(lines["État"].text(self.camera), "—")
 
+    async def test_the_installation_told_once_root_has_checked_it(self):
+        # After the restart, root still waits for this version to say it works.
+        self.camera.settings.update_checked = time.time()
+        self.write_status(state="installing", current=__version__)
+        pause = asyncio.sleep
+        task = asyncio.create_task(self.updates.run())
+        await pause(0.05)
+        self.assertEqual(self.camera.messages, [])
+        self.write_status(state="installed", current=__version__)
+        with mock.patch("pycam.updates.FAST_POLL", 0.01):
+            self.updates.wake()  # the first wait was taken before the patch
+            await pause(0.1)
+        task.cancel()
+        self.assertEqual(self.camera.messages, [f"pycam {__version__} installé"])
+
     def test_a_stale_status(self):
         self.updates.status = {"state": "installing", "time": time.time() - 7200}
         self.assertEqual(self.updates.state, "error")
