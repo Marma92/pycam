@@ -1,6 +1,7 @@
 """The camera: settings, actions and HUD, driving the engine (docs/architecture.md §5)."""
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -8,6 +9,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 
+from . import __version__
 from . import drive as drives
 from . import exposure as exp
 from . import lenses, looks, meter, picture, timelapse, video
@@ -137,6 +139,8 @@ class Camera:
         self.menu = None  # Menu while open
         self.menu_stack = []  # the menus it was opened from (MENU goes back)
         self.apps = []  # the applications (apps/), started with the camera
+        self.updates = None  # updates.Updates, on a camera installed from a release
+        self.ready_path = None  # written once the camera works, for the updates (updater.py)
         self.playback = None  # Playback while open (the LECTURE button)
         self._shown = None  # Review of the photo shown in playback, once loaded
         self._delete_armed_until = 0.0  # deleting takes two presses of Q
@@ -169,7 +173,7 @@ class Camera:
         self._snapshots = {}  # path -> future, until the engine has written it
 
     async def run(self, inputs):
-        apps = [self._supervise(app) for app in self.apps]
+        apps = [self._supervise(app) for app in self.apps + ([self.updates] if self.updates else [])]
         self.spawn(self._prune_caches())
         await asyncio.gather(self.engine.run(), inputs.run(), self.hud_loop(), self.screen_loop(), *apps)
 
@@ -200,6 +204,11 @@ class Camera:
     def shutdown(self):
         """Settings saved, and the engine's default HUD back on the screen."""
         self.save_now()
+        if self.ready_path:
+            try:
+                os.remove(self.ready_path)
+            except OSError:
+                pass
         if self.hud:
             try:
                 self.hud.draw_default()
@@ -229,6 +238,20 @@ class Camera:
         if self.settings.mode != "video":  # no loupe in video
             await self.apply_loupe()
         await self.setup_hud()
+        self._mark_ready()
+
+    def _mark_ready(self):
+        """The engine answered and everything was pushed: this version works. The updates
+        wait for it after an installation, else they go back (updater.py)."""
+        if not self.ready_path:
+            return
+        tmp = self.ready_path + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"version": __version__, "pid": os.getpid()}, f)
+            os.replace(tmp, self.ready_path)
+        except OSError as e:
+            log.warning("cannot write %s: %s", self.ready_path, e)
 
     async def _take_over_recording(self):
         """The application restarted (an error) while the engine was recording: that

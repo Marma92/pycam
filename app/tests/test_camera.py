@@ -250,7 +250,7 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view.menu_index, 1)  # the first line, not its section title
         self.assertEqual(view.menu[1], ("Applications", "›"))  # it opens a menu
         self.camera.on_action("rear_dial_plus")  # around, to the last line
-        self.assertEqual(self.camera.menu.item.label, "Bouton Fn2")
+        self.assertEqual(self.camera.menu.item.label, "Mise à jour")
         self.camera.on_action("rear_dial_minus")
         self.camera.on_action("rear_dial_minus")
         self.assertEqual(self.camera.menu.item.label, "Mesure de la lumière")
@@ -276,7 +276,7 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.engine.last("focus_aids")["peaking"])
         self.menu_line("Bouton Fn2")
         self.camera.on_action("front_dial_plus")  # zebras -> lock the white balance
-        self.assertEqual(self.camera.view().menu[-1], ("Bouton Fn2", "Mémoriser la balance"))
+        self.assertIn(("Bouton Fn2", "Mémoriser la balance"), self.camera.view().menu)
         self.camera.on_action("menu")
         self.camera.on_event({"event": "stats", "colour_gains": [2.0, 1.5]})
         self.camera.on_action("fn2")

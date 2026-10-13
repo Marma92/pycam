@@ -13,8 +13,8 @@ or only inform. MENU goes back from a menu opened in another one.
 
 from dataclasses import dataclass
 
-from . import drive, exposure, lenses, looks, picture, video
-from .settings import FN_ACTIONS, PEAKING_COLORS, PEAKING_SENSITIVITIES
+from . import __version__, drive, exposure, lenses, looks, picture, video
+from .settings import FN_ACTIONS, PEAKING_COLORS, PEAKING_SENSITIVITIES, UPDATE_MODES
 
 
 @dataclass(frozen=True)
@@ -224,6 +224,23 @@ QUICK_VIDEO = (
     GUIDE,
 )
 APPLICATIONS = Item("Applications", kind="open", target=lambda camera: camera.apps_menu(), text=lambda camera: "›")
+# The updates (updates.py): camera.updates; None in the tests, as the camera may be.
+def _updates(camera):
+    return getattr(camera, "updates", None)
+
+
+UPDATE_MODE = Item("Mises à jour", "update_mode", UPDATE_MODES, ("Automatiques · au démarrage", "Proposées", "Désactivées"))
+SYSTEM = (
+    Item("Version", kind="info", text=lambda c: _updates(c).version_text() if _updates(c) else __version__),
+    UPDATE_MODE,
+    Item("État", kind="info", text=lambda c: _updates(c).state_text() if _updates(c) else "—"),
+    Item(
+        "Mise à jour",
+        kind="run",
+        target=lambda c: _updates(c) and c.show_message(_updates(c).act()),
+        text=lambda c: _updates(c).action_text() if _updates(c) else "—",
+    ),
+)
 FULL = (
     Item("Applications"),
     APPLICATIONS,
@@ -289,6 +306,8 @@ FULL = (
     Item("Boutons"),
     FN1,
     FN2,
+    Item("Système"),
+    *SYSTEM,
 )
 
 

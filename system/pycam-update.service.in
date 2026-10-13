@@ -1,0 +1,16 @@
+# pycam updates, as root: started by pycam-update.path when the application asks (it
+# writes /run/pycam/update-request). Installed by app/pycam/updater.py, on a camera
+# installed from a release (tools/install.sh); @USER@ and @PYCAM@ filled in.
+[Unit]
+Description=pycam updates (look for, download, install, go back)
+Documentation=file://@PYCAM@/docs/architecture.md
+
+[Service]
+Type=oneshot
+# -I: nothing from anyone's environment; the updater only uses the standard library.
+ExecStart=/usr/bin/python3 -I @PYCAM@/app/pycam/updater.py request
+# Downloads in the background of the camera, never before it.
+Nice=10
+IOSchedulingClass=idle
+# A release needing new Debian packages installs them (apt).
+TimeoutStartSec=45min

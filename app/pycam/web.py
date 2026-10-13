@@ -35,7 +35,7 @@ from aiohttp import web
 
 from . import looks
 from .playback import companions, describe, list_photos, thumbs_dir
-from .settings import CLOUD_MODES
+from .settings import CLOUD_MODES, UPDATE_MODES
 
 log = logging.getLogger(__name__)
 
@@ -152,6 +152,8 @@ class WebServer:
                 web.post("/api/share/instagram", self.share_instagram),
                 web.post("/api/share/defaults", self.share_defaults),
                 web.delete("/api/share/account/{platform}", self.share_disconnect),
+                web.get("/api/system", self.system_state),
+                web.post("/api/system", self.system_update),
             ]
         )
         self.app = app
@@ -455,6 +457,30 @@ class WebServer:
         await self._cloud().disconnect()
         return web.json_response({"ok": True})
 
+
+    # --- Système: the version and the updates (updates.py)
+
+    def _updates(self):
+        if not self.camera.updates:
+            raise web.HTTPNotFound(text="Pas de mises à jour sur cet appareil.")
+        return self.camera.updates
+
+    async def system_state(self, request):
+        return web.json_response(self._updates().to_dict())
+
+    async def system_update(self, request):
+        updates = self._updates()
+        mode, action = await self._fields(request, "mode", "action")
+        if mode:
+            if mode not in UPDATE_MODES:
+                raise web.HTTPBadRequest(text="Mode inconnu.")
+            self.camera.settings.update_mode = mode
+            self.camera.save_soon()
+            updates.wake()
+            return web.json_response({"ok": True})
+        if action not in ("check", "install"):
+            raise web.HTTPBadRequest(text="Action inconnue.")
+        return web.json_response({"ok": True, "message": updates.act(action)})
 
     # --- Partage (apps/share): the secrets come in, never go out
 

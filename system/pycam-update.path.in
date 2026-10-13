@@ -1,0 +1,12 @@
+# Starts pycam-update.service as long as the application has a request waiting (the
+# service removes it). Installed by app/pycam/updater.py, with @USER@ and @PYCAM@.
+[Unit]
+Description=pycam updates, on the application's request
+Documentation=file://@PYCAM@/docs/architecture.md
+
+[Path]
+PathExists=/run/pycam/update-request
+Unit=pycam-update.service
+
+[Install]
+WantedBy=multi-user.target

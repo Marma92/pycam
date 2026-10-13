@@ -1,5 +1,6 @@
 #!/bin/sh
-# Installe et démarre les services pycam (moteur + application) sur le Pi.
+# Installe et démarre les services pycam (moteur + application) sur le Pi, depuis un
+# dossier de développement (tools/deploy.sh). Une release s'installe par tools/install.sh.
 # Usage, sur le Pi, depuis le dossier du projet :
 #   sudo sh tools/install-services.sh             installe, active au démarrage, démarre
 #   sudo sh tools/install-services.sh --remove    arrête, désactive, désinstalle
@@ -31,5 +32,8 @@ done
 systemctl daemon-reload
 systemctl enable $units
 systemctl restart $units
+# A development tree: updated by tools/deploy.sh, not by the releases' updates
+# (tools/install.sh brings them back).
+systemctl disable --now pycam-update.path 2>/dev/null || true
 echo "services pycam installés pour $user ($pycam), actifs au démarrage"
 systemctl --no-pager --lines=0 status $units || true

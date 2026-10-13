@@ -61,6 +61,7 @@
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line);
            padding: 10px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 9; }
   #toast.on { opacity: 1; }
+  #sys-notes { white-space: pre-wrap; font: inherit; margin: 10px 0 0; }
 </style>
 </head>
 <body>
@@ -72,6 +73,7 @@
     <button data-tab="presets">Presets</button>
     <button data-tab="cloud">Cloud</button>
     <button data-tab="sharing">Partage</button>
+    <button data-tab="system">Système</button>
   </nav>
 </header>
 <main>
@@ -150,6 +152,20 @@
       </div>
       <label>Dossier dans le cloud <input type="text" id="cloud-folder" value="pycam" autocomplete="off"></label>
       <div class="row"><button class="btn" id="cloud-connect">Connecter</button><button class="btn danger" id="cloud-disconnect" hidden>Déconnecter</button></div>
+    </div>
+  </section>
+
+  <section id="system">
+    <div class="panel">
+      <b>pycam <span id="sys-version"></span></b> <span class="muted" id="sys-state"></span>
+      <label>Mises à jour <select id="sys-mode">
+        <option value="auto">Automatiques · installées au démarrage</option><option value="notify">Proposées</option><option value="off">Désactivées</option>
+      </select></label>
+      <p class="muted" style="margin:4px 0 10px">L'appareil cherche une nouvelle version dès qu'il trouve Internet (jamais sur un réseau facturé), au plus toutes les six heures, et la télécharge.
+        Automatiques : elle s'installe au démarrage suivant, avant la première photo. Proposées : seulement d'ici ou de MENU › Système.
+        Si l'appareil ne repart pas correctement sur la nouvelle version, il revient tout seul à la précédente.</p>
+      <div class="row"><button class="btn" id="sys-check">Rechercher</button><button class="btn" id="sys-install" hidden>Installer</button></div>
+      <pre id="sys-notes" class="muted" hidden></pre>
     </div>
   </section>
 
@@ -256,6 +272,7 @@ document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
   if (tab === "presets") loadPresets();
   if (tab === "cloud") followCloud();
   if (tab === "sharing") followShare();
+  if (tab === "system") followSystem();
 });
 
 // --- Viewfinder and state
@@ -483,6 +500,42 @@ $("cloud-disconnect").onclick = async () => {
   if (!confirm("Déconnecter ce compte ? Les fichiers déjà envoyés restent dans le cloud.")) return;
   try { await api("/api/cloud", {method: "DELETE"}); toast("Compte déconnecté"); } catch (e) { toast(e.message); }
   loadCloud();
+};
+
+// --- Système
+
+async function loadSystem() {
+  const s = await api("/api/system");
+  $("sys-version").textContent = s.version + (s.managed ? "" : " · développement");
+  $("sys-state").textContent = s.state_text + (s.state === "failed" && s.message ? " — " + s.message : "");
+  if (document.activeElement !== $("sys-mode")) $("sys-mode").value = s.mode;
+  $("sys-mode").disabled = $("sys-check").disabled = !s.managed;
+  $("sys-install").hidden = !s.available;
+  $("sys-install").textContent = "Installer " + s.available;
+  $("sys-notes").hidden = !s.notes;
+  $("sys-notes").textContent = s.notes;
+}
+
+async function followSystem() {
+  if (tab !== "system") return;
+  try { await loadSystem(); } catch (e) { $("sys-state").textContent = e.message; }
+  clearTimeout(followSystem.timer);
+  followSystem.timer = setTimeout(followSystem, 2000);
+}
+
+$("sys-mode").onchange = async (e) => {
+  try { await post("/api/system", {mode: e.target.value}); toast("Mises à jour : " + e.target.selectedOptions[0].textContent); }
+  catch (err) { toast(err.message); }
+  loadSystem();
+};
+$("sys-check").onclick = async () => {
+  try { toast((await post("/api/system", {action: "check"})).message); } catch (e) { toast(e.message); }
+  loadSystem();
+};
+$("sys-install").onclick = async () => {
+  if (!confirm("Installer maintenant ? L'appareil redémarre, une vingtaine de secondes ; la page se reconnectera d'elle-même.")) return;
+  try { toast((await post("/api/system", {action: "install"})).message); } catch (e) { toast(e.message); }
+  loadSystem();
 };
 
 // --- Partage

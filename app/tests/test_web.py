@@ -69,6 +69,25 @@ class WebTest(unittest.IsolatedAsyncioTestCase):
         looks.refresh()
         self.tmp.cleanup()
 
+    async def test_system_and_updates(self):
+        from pycam.updates import Updates
+
+        r = await self.client.get("/api/system")
+        self.assertEqual(r.status, 404)  # no updates (the tests)
+        self.camera.updates = updates = Updates(self.camera, status_path=os.path.join(self.tmp.name, "status.json"), managed=True)
+        updates.request_path = os.path.join(self.tmp.name, "update-request")
+        state = await (await self.client.get("/api/system")).json()
+        self.assertEqual((state["managed"], state["mode"], state["state_text"]), (True, "auto", "Jamais vérifié"))
+        r = await self.client.post("/api/system", json={"mode": "notify"})
+        self.assertEqual((r.status, self.settings.update_mode), (200, "notify"))
+        self.assertEqual((await self.client.post("/api/system", json={"mode": "always"})).status, 400)
+        r = await (await self.client.post("/api/system", json={"action": "check"})).json()
+        self.assertEqual(r["message"], "Recherche…")
+        with open(updates.request_path) as f:
+            self.assertEqual(f.read().strip(), "check")
+        r = await (await self.client.post("/api/system", json={"action": "install"})).json()
+        self.assertEqual(r["message"], "Aucune mise à jour à installer")
+
     async def test_only_from_its_own_page(self):
         # A page of another site, in a browser on the same network: refused.
         r = await self.client.post("/api/shutter", headers={"Origin": "https://evil.example"})

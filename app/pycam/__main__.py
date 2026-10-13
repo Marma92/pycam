@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 
+from . import __version__
 from .camera import Camera
 from .engine_client import DEFAULT_SOCKET, EngineClient
 from .settings import default_path, load_settings
@@ -18,13 +19,25 @@ def main():
     parser.add_argument("--socket", default=DEFAULT_SOCKET, help=f"socket du moteur (défaut {DEFAULT_SOCKET})")
     parser.add_argument("--settings", default=default_path(), help="fichier de réglages")
     parser.add_argument("-v", "--verbose", action="store_true", help="journal détaillé")
+    parser.add_argument("--version", action="version", version=f"pycam {__version__}")
+    parser.add_argument("--check", action="store_true", help="tout charger, donner la version et s'arrêter (mises à jour)")
     args = parser.parse_args()
+    if args.check:
+        check()
+        return
     # Under systemd the journal already timestamps and names each line.
     fmt = "%(levelname)s %(name)s: %(message)s"
     if not os.environ.get("JOURNAL_STREAM"):
         fmt = "%(asctime)s pycam " + fmt
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format=fmt)
     asyncio.run(run(args))
+
+
+def check():
+    """Before an update is installed (updater.py): everything the camera loads, loaded."""
+    from . import apps, hud, inputs, updates, web  # noqa: F401
+
+    print(f"pycam {__version__}")
 
 
 async def run(args):
@@ -41,6 +54,10 @@ async def run(args):
         camera.apps = make_apps(camera)
     except ImportError as e:  # no aiohttp
         log.warning("no applications: %s", e)
+    from .updates import Updates
+
+    camera.updates = Updates(camera)
+    camera.ready_path = os.path.join(os.path.dirname(args.socket), "ready")
 
     main_task = asyncio.current_task()
     loop = asyncio.get_running_loop()
@@ -58,7 +75,7 @@ async def run(args):
             log.warning("no web interface: %s", e)
             web_server = None
 
-    log.info("started, settings in %s", args.settings)
+    log.info("pycam %s started, settings in %s", __version__, args.settings)
     try:
         await camera.run(inputs)
     except asyncio.CancelledError:
