@@ -2,6 +2,7 @@ import asyncio
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from pycam import looks
 from pycam.camera import Camera
@@ -87,11 +88,99 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
             self.camera.on_action("rear_dial_minus")
         self.fail(f"no line {label}")
 
+    async def test_a_recording_kept_by_the_engine_is_taken_over(self):
+        # The application restarted (an error) while the engine was recording.
+        path = os.path.join(self.settings.dcim, "100PYCAM", "PYV_0007.MP4")
+        call = self.engine.call
+
+        async def engine(cmd, timeout=10.0, **params):
+            if cmd == "get_state":
+                self.engine.calls.append((cmd, params))
+                return {"ok": True, "state": {"recording": {"path": path, "duration": 42.0, "bytes": 9}}}
+            return await call(cmd, timeout, **params)
+
+        self.engine.call = engine
+        await self.camera.sync_engine()
+        self.assertEqual((self.camera.recording.path, self.settings.mode), (path, "video"))
+        self.assertEqual(self.camera.view().recording, "0:42")
+        self.assertNotIn("video_mode", [name for name, _ in self.engine.calls])  # it is running: left as it is
+        self.camera.on_action("shutter")  # stops it
+        await asyncio.sleep(0.01)
+        self.assertIn("record_stop", [name for name, _ in self.engine.calls])
+
+    async def test_failures_stay_where_they_are(self):
+        # An application that fails starts again, without the camera.
+        runs = []
+
+        class Flaky:
+            title = "Flaky"
+
+            async def run(self):
+                runs.append(1)
+                if len(runs) == 1:
+                    raise RuntimeError("boom")
+                await asyncio.sleep(3600)
+
+        with mock.patch("pycam.camera.APP_RESTART", 0.01):
+            task = asyncio.create_task(self.camera._supervise(Flaky()))
+            await asyncio.sleep(0.1)
+            self.assertEqual(len(runs), 2)
+            task.cancel()
+        # A HUD that fails to draw keeps the loop going.
+        class BrokenHud(FakeHud):
+            def draw(self, view):
+                raise OSError("font")
+
+        self.camera.hud = BrokenHud()
+        with mock.patch("pycam.camera.asyncio.sleep", new=mock.AsyncMock()):
+            loop = asyncio.create_task(self.camera.hud_loop())
+            self.camera.redraw()
+            await asyncio.sleep(0.05)
+            self.assertFalse(loop.done())
+            loop.cancel()
+
+    async def test_a_menu_with_nothing_to_choose(self):
+        folder = os.path.join(self.settings.dcim, "100PYCAM")
+        os.makedirs(folder)
+        open(os.path.join(folder, "PYC_0001.JPG"), "w").close()
+        self.camera.on_action("play")
+        self.camera.on_action("menu")  # a photo, no application: only information
+        self.camera.on_action("front_dial_plus")  # was an AttributeError
+        self.assertIsNotNone(self.camera.menu)  # still open, nothing happened
+
+    async def test_the_meter_learns_in_photo_only(self):
+        k = self.settings.meter_k
+        stats = {"event": "stats", "lux": 400, "exposure_us": 20000, "analogue_gain": 2.0, "ae_converged": True}
+        self.settings.mode = "video"
+        self.camera.on_event(stats)
+        self.assertEqual(self.settings.meter_k, k)
+        self.settings.mode = "photo"
+        self.camera.on_event(stats)
+        self.assertNotEqual(self.settings.meter_k, k)
+
+    async def test_no_photo_past_the_reserve(self):
+        self.camera.storage.free_bytes = lambda: 100 * 1024**2  # under the reserve
+        self.assertIsNone(await self.camera.capture())
+        self.assertEqual((self.camera.capture_error, self.camera.view().message), ("full", "Carte pleine"))
+        self.assertNotIn("capture", [name for name, _ in self.engine.calls])
+
+    async def test_the_clean_display_redraws_for_what_it_shows(self):
+        from pycam.view import visible
+
+        self.settings.display = "clean"
+        self.camera.on_event({"event": "stats", "exposure_us": 10000, "analogue_gain": 2.0})
+        first = visible(self.camera.view())
+        self.camera.on_event({"event": "stats", "exposure_us": 12000, "analogue_gain": 2.9})
+        self.assertEqual(visible(self.camera.view()), first)  # nothing drawn changed
+        self.settings.display = "detailed"
+        self.camera.on_event({"event": "stats", "exposure_us": 10000, "analogue_gain": 2.02})
+        self.assertEqual(self.camera.view().iso, "ISO 200")  # 202: as cameras show it
+
     async def test_sync_pushes_the_whole_state(self):
         await self.camera.sync_engine()
         names = [name for name, _ in self.engine.calls]
         self.assertEqual(
-            names, ["list_controls", "configure", "set_controls", "set_controls", "look", "focus_aids", "loupe"]
+            names, ["list_controls", "configure", "get_state", "set_controls", "set_controls", "look", "focus_aids", "loupe"]
         )
         self.assertEqual(self.engine.last("loupe")["zoom"], 1)
         configure = self.engine.last("configure")
@@ -286,7 +375,7 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view.review, base + ".JPG")
         self.assertIn("1/125", view.review_info)
         self.assertIn("ISO 400", view.review_info)
-        self.assertEqual([c[0] for c in view.histogram_rgb], [1, 2, 3])
+        self.assertEqual([c[0] for c in view.histogram_rgb], [21, 43, 64])  # 1, 2, 3 as the HUD scales them
         self.settings.histogram = "luma"
         self.assertEqual((len(self.camera.view().histogram), self.camera.view().histogram_rgb), (64, ()))
 
@@ -294,13 +383,19 @@ class CameraTest(unittest.IsolatedAsyncioTestCase):
         rgb = [[i] * 64 for i in range(3)]
         self.camera.on_event({"event": "stats", "histogram": [9] * 64, "histogram_rgb": rgb})
         view = self.camera.view()
-        self.assertEqual((view.histogram, view.histogram_rgb), ((), tuple(tuple(c) for c in rgb)))
+        # Scaled as the HUD draws them: the highest inner class at the top (64).
+        self.assertEqual((view.histogram, view.histogram_rgb), ((), ((0,) * 64, (32,) * 64, (64,) * 64)))
         self.settings.histogram = "luma"
         view = self.camera.view()
-        self.assertEqual((view.histogram, view.histogram_rgb), ((9,) * 64, ()))
+        self.assertEqual((view.histogram, view.histogram_rgb), ((64,) * 64, ()))
         self.settings.histogram = "rgb"
         self.camera.on_event({"event": "stats", "histogram": [9] * 64})  # an older engine: luminance only
-        self.assertEqual(self.camera.view().histogram, (9,) * 64)
+        self.assertEqual(self.camera.view().histogram, (64,) * 64)
+        # The noise of a measure redraws nothing: the same drawing.
+        self.camera.on_event({"event": "stats", "histogram": [9] * 63 + [9], "histogram_rgb": [[i * 1000 + 3] * 64 for i in range(3)]})
+        first = self.camera.view().histogram_rgb
+        self.camera.on_event({"event": "stats", "histogram": [9] * 64, "histogram_rgb": [[i * 1000 + 5] * 64 for i in range(3)]})
+        self.assertEqual(self.camera.view().histogram_rgb, first)
         self.settings.display = "simple"
         view = self.camera.view()
         self.assertEqual((view.histogram, view.histogram_rgb), ((), ()))

@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from pycam.playback import Playback, companions, list_photos
+from pycam.playback import Playback, companions, list_photos, posters_dir, prune_caches, thumbs_dir
 
 
 def touch(path):
@@ -25,6 +25,26 @@ class PlaybackTest(unittest.TestCase):
             "misc/PYC_0005.JPG",  # not a camera folder
         ):
             touch(os.path.join(self.root, path))
+
+    def test_caches_pruned(self):
+        old = os.environ.get("XDG_CACHE_HOME")
+        os.environ["XDG_CACHE_HOME"] = os.path.join(self.root, "cache")
+        try:
+            touch(os.path.join(self.root, "101PYCAM", "PYV_0002.MP4"))
+            mtime = int(os.path.getmtime(os.path.join(self.root, "101PYCAM", "PYV_0002.MP4")))
+            jpeg_mtime = int(os.path.getmtime(os.path.join(self.root, "101PYCAM", "PYC_0001.JPG")))
+            keep = [os.path.join(posters_dir(), f"PYV_0002_{mtime}.jpg"), os.path.join(thumbs_dir(), f"101PYCAM_PYC_0001_{jpeg_mtime}.jpg")]
+            gone = [os.path.join(posters_dir(), "PYV_0042_1.jpg"), os.path.join(thumbs_dir(), "101PYCAM_PYC_0001_1.jpg"),
+                    os.path.join(thumbs_dir(), "100PYCAM_PYC_0007_5.jpg")]  # fmt: skip
+            for path in keep + gone:
+                touch(path)
+            self.assertEqual(prune_caches(self.root), 3)
+            self.assertEqual([os.path.exists(p) for p in keep + gone], [True, True, False, False, False])
+        finally:
+            if old is None:
+                os.environ.pop("XDG_CACHE_HOME", None)
+            else:
+                os.environ["XDG_CACHE_HOME"] = old
 
     def test_photos_in_order(self):
         names = [os.path.relpath(p, self.root).replace(os.sep, "/") for p in list_photos(self.root)]

@@ -437,6 +437,25 @@ class CloudSyncTest(Base):
         self.assertEqual(sorted(os.listdir(os.path.join(self.root, "100PYCAM"))), ["PYC_0004.JPG", "notes.txt"])
         self.assertFalse(os.path.exists(os.path.join(self.root, "101PYCAM")))  # emptied, and not the current folder
 
+    async def test_offload_keeps_what_another_application_needs(self):
+        photo = os.path.join(self.root, "100PYCAM", "PYC_0002.JPG")
+
+        class Sharing:  # a photo waiting to be shared
+            def files_in_use(self):
+                return {photo}
+
+            async def run(self):
+                pass
+
+        self.camera.apps = [self.app, Sharing()]
+        self.settings.cloud_mode = "offload"
+        self.app._check_mode()
+        self.app._mode_since -= sync.MODE_DELAY
+        await self.app._pass("auto")
+        self.assertTrue(os.path.exists(photo))  # sent, kept
+        self.assertIn("100PYCAM/PYC_0002.JPG", self.remote())
+        self.assertFalse(os.path.exists(os.path.join(self.root, "100PYCAM", "PYC_0001.JPG")))
+
     async def test_offload_keeps_what_changed_since(self):
         await self.app._pass("sync")
         shot = sync.scan(self.root)[0]

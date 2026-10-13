@@ -14,6 +14,7 @@ no microphone. H.264 in MP4, by the VideoCore's encoder (the engine's Recorder).
 """
 
 from . import exposure as exp
+from .storage import RESERVE_BYTES
 
 FRAME_RATES = (24, 25, 30, 50)
 FPS_LABELS = {24: "24 i/s · cinéma", 25: "25 i/s", 30: "30 i/s · scintille sous 50 Hz", 50: "50 i/s · 720p",
@@ -32,9 +33,9 @@ BITRATES = {  # bit/s
 }
 ISO_VALUES = (0,) + exp.ISO_VALUES  # 0: automatic
 MAX_BITRATE = 25_000_000  # the engine's limit
-# Left free on the card: the end of the MP4 (its index) is written when it stops, and a
-# file that cannot be ended is lost whole. Warned a minute before, stopped 10 s before.
-RESERVE_BYTES = 64 * 1024**2
+# The card's reserve (storage.RESERVE_BYTES) is kept: the end of the MP4 (its index) is
+# written when it stops, and a file that cannot be ended is lost whole. Warned a minute
+# before, stopped 10 s before.
 WARN_SECONDS, STOP_SECONDS = 60, 10
 
 

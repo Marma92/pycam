@@ -13,14 +13,16 @@ from . import exposure as exp
 from . import lenses, looks, meter, picture, timelapse, video
 from .engine_client import EngineError, call_blocking
 from .menu import Item, Menu
-from .playback import PIXEL_SCALES, Playback, describe, describe_video, extract_frame, list_photos, poster
+from .playback import PIXEL_SCALES, Playback, describe, describe_video, extract_frame, list_photos, poster, prune_caches
 from .settings import DISPLAY_MODES, save_settings
 from .storage import Storage
-from .view import HudView
+from .view import HudView, visible
 
 log = logging.getLogger(__name__)
 
 HUD_MIN_INTERVAL = 0.2  # at most 5 HUD renders per second
+APP_RESTART = 30  # seconds before an application that failed starts again
+HISTOGRAM_LEVELS = 64  # the histograms as the HUD draws them: a change below redraws nothing
 MESSAGE_SECONDS = 1.5
 SAVE_DELAY = 1.0  # settings are written once the dials stop turning
 
@@ -157,6 +159,7 @@ class Camera:
         self.video = None  # Video, while one is played in playback
         self.recording = None  # Recording, in video mode
         self.video_lock = None  # (seconds, ISO): the video's exposure locked (AE-L, the S key)
+        self._sent_picture = None  # the ISP controls last sent (picture.controls)
         self._video_setup_deferred = False  # video settings changed while recording
         self.screen_on = True  # off during long captures, to save power (check_screen)
         self._last_input = time.monotonic()
@@ -166,8 +169,33 @@ class Camera:
         self._snapshots = {}  # path -> future, until the engine has written it
 
     async def run(self, inputs):
-        apps = [app.run() for app in self.apps]
+        apps = [self._supervise(app) for app in self.apps]
+        self.spawn(self._prune_caches())
         await asyncio.gather(self.engine.run(), inputs.run(), self.hud_loop(), self.screen_loop(), *apps)
+
+    async def _supervise(self, app):
+        """An application's background work: an error stops it, not the camera (a sequence
+        running would be lost); it starts again a little later."""
+        while True:
+            try:
+                await app.run()
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("application %s failed; started again in %d s", app.title, APP_RESTART)
+                await asyncio.sleep(APP_RESTART)
+
+    async def _prune_caches(self):
+        """Once the camera is up: the thumbnails and first frames of shots gone, removed."""
+        await asyncio.sleep(60)
+        removed = await asyncio.to_thread(prune_caches, self.storage.root)
+        if removed:
+            log.info("caches: %d stale thumbnails and first frames removed", removed)
+
+    def files_in_use(self):
+        """Files an application still needs (a photo waiting to be shared): kept on the card."""
+        return set().union(*(app.files_in_use() for app in self.apps))
 
     def shutdown(self):
         """Settings saved, and the engine's default HUD back on the screen."""
@@ -189,16 +217,34 @@ class Camera:
         if isinstance(exposure_max, (int, float)) and exposure_max > 0:
             self.slowest_shutter = exposure_max / 1e6
         await self.engine.call("configure", strategy=self.settings.strategy, **picture.engine_config(self.settings))
-        self.recording = None  # a new engine records nothing
-        if self.settings.mode == "video":
+        self._sent_picture = None  # the engine may be a new one
+        await self._take_over_recording()
+        if self.settings.mode == "video" and not self.recording:
             await self.apply_mode()
         await self.apply_exposure()
         await self.apply_picture()
         await self.apply_look()
         await self.apply_focus_aids()
         self.loupe = 1
-        await self.apply_loupe()
+        if self.settings.mode != "video":  # no loupe in video
+            await self.apply_loupe()
         await self.setup_hud()
+
+    async def _take_over_recording(self):
+        """The application restarted (an error) while the engine was recording: that
+        recording is followed again (its time, the card's space, the shutter to stop it)
+        rather than forgotten. A new engine records nothing."""
+        try:
+            running = (await self.engine.call("get_state")).get("state", {}).get("recording")
+        except EngineError:
+            running = None
+        if not running or not running.get("path"):
+            self.recording = None
+            return
+        duration = running.get("duration", 0)
+        self.recording = Recording(running["path"], time.monotonic() - duration, duration, running.get("bytes", 0))
+        self.settings.mode = "video"
+        log.warning("recording %s still running in the engine: taken over", os.path.basename(running["path"]))
 
     async def setup_hud(self):
         """At connection, or when the engine gets the screen later ("display_ready")."""
@@ -223,8 +269,9 @@ class Camera:
         if kind == "stats":
             self.stats = msg
             e = self.settings.exposure
-            if e.mode == "P" and not self.drive.freezes_exposure:
-                # Fully automatic: learn the meter constant (saved with the settings).
+            if e.mode == "P" and self.settings.mode == "photo" and not self.drive.freezes_exposure:
+                # Fully automatic: learn the meter constant (saved with the settings). Not
+                # in video: its exposure has no preset's shift, and may be locked.
                 self.settings.meter_k = meter.calibrate(self.settings.meter_k, msg, e.ev + self.preset().exposure_bias)
             self.redraw()
         elif kind == "captured":
@@ -337,9 +384,13 @@ class Camera:
         except EngineError as e:
             log.error("exposure refused: %s", e)
 
-    async def apply_picture(self):
+    def _picture_controls(self):
         s = self.settings
-        controls = picture.controls(s, video=s.mode == "video", monochrome=bool(self._look and self._look.monochrome))
+        return picture.controls(s, video=s.mode == "video", monochrome=bool(self._look and self._look.monochrome))
+
+    async def apply_picture(self):
+        controls = self._picture_controls()
+        self._sent_picture = controls
         try:
             await self.engine.call("set_controls", controls=controls)
         except ConnectionError:
@@ -623,7 +674,7 @@ class Camera:
             elif item.kind in ("run", "toggle"):
                 if action == "front_dial_plus" or item.kind == "toggle":
                     item.target(self)
-            else:
+            elif item.attr:  # not a line that only informs (a menu with nothing to choose)
                 self.change_setting(+1 if action == "front_dial_plus" else -1)
         # Any other key does nothing while a menu is open.
         self.redraw()
@@ -861,6 +912,8 @@ class Camera:
         """In video, the picture changed (contrast, saturation, sharpness, a black and white
         preset): the recording would take it at once, the screen only when the camera starts
         again (~0.3 s). During a recording: after it, so that the take stays as it began."""
+        if self._picture_controls() == self._sent_picture:
+            return  # the grain, or a preset of the same colours: nothing for the ISP
         if self.recording:
             self._video_setup_deferred = True
             self.show_message("Appliqué après l'enregistrement")
@@ -993,7 +1046,7 @@ class Camera:
         if self.video_lock:
             speed, iso = self.video_lock
         else:
-            speed, iso = fixed or self.measured_shutter(), s.video_iso or round(self.measured_iso())
+            speed, iso = fixed or self.measured_shutter(), s.video_iso or exp.nominal_iso(self.measured_iso())
         # The meter, as a warning only: the exposure cannot reach the right one (at 180° in
         # full sun: an ND filter is wanted), or, locked, the scene has gone away from it.
         meter_value, meter_warning = None, False
@@ -1134,14 +1187,18 @@ class Camera:
         (a timelapse's frames)."""
         async with self._capture_lock:  # two quick presses must not get the same name
             self.capture_error = None
+            keep_base = self.settings.keep_base if keep_base is None else keep_base
             if not self.engine.connected:
                 self.capture_error = "unavailable"
                 self.show_message("Moteur indisponible", warning=True)
                 return None
-            base, folder, number = self.storage.next_photo()
             s, preset = self.settings, self.preset()
             formats = formats or s.formats
-            keep_base = s.keep_base if keep_base is None else keep_base
+            if self.storage.shots_remaining(formats, s.dng_compression, keep_base) <= 0:
+                self.capture_error = "full"
+                self.show_message("Carte pleine", warning=True)
+                return None
+            base, folder, number = self.storage.next_photo()
             extra = {"base_jpeg": Storage.base_copy(base)} if keep_base and "jpeg" in formats else {}
             if stack:
                 extra["stack"] = stack
@@ -1382,7 +1439,7 @@ class Camera:
         if s.mode == "video":
             return self._video_view(message, warning)
         shutter = e.shutter if e.shutter is not None else self.measured_shutter()
-        iso = e.iso if e.iso is not None else round(self.measured_iso())
+        iso = e.iso if e.iso is not None else exp.nominal_iso(self.measured_iso())
         # The meter: always in M (but B: no duration); in the other modes, only when the
         # automatic exposure cannot reach its aim (out of range), as a warning. In M, from
         # the settings: the viewfinder may not run at them (long exposures).
@@ -1454,7 +1511,18 @@ class Camera:
     def _histograms(self, luma, rgb, live=True):
         """The one histogram the HUD draws: in the detailed display, RGB when chosen and known.
         Live, the engine measures the base: it is corrected with the look's curves of the
-        greys, to show roughly what the JPEG will be (the review measures the JPEG itself)."""
+        greys, to show roughly what the JPEG will be (the review measures the JPEG itself).
+        Scaled as the HUD scales it, in HISTOGRAM_LEVELS steps: the noise of each measure
+        does not redraw it."""
+        histograms = self._raw_histograms(luma, rgb, live)
+        channels = histograms.get("histogram_rgb") or ((histograms["histogram"],) if histograms.get("histogram") else ())
+        if not channels:
+            return histograms
+        peak = max((max(c[1:-1]) for c in channels), default=0) or max(max(c) for c in channels) or 1
+        scaled = tuple(tuple(min(HISTOGRAM_LEVELS, round(HISTOGRAM_LEVELS * v / peak)) for v in c) for c in channels)
+        return {"histogram_rgb": scaled} if "histogram_rgb" in histograms else {"histogram": scaled[0]}
+
+    def _raw_histograms(self, luma, rgb, live):
         if self.settings.display != "detailed":
             return {}
         curves = self._look.curves if live and self._look else None
@@ -1489,14 +1557,17 @@ class Camera:
                 shown = None
                 continue
             if hud is not None:
-                view = self.view()
+                view = visible(self.view())
                 if view != shown:
                     try:
-                        await asyncio.to_thread(hud.draw, view)  # ~0.1 s at 1080p: off the event loop
+                        await asyncio.to_thread(hud.draw, view)  # ~0.015 s at 1080p: off the event loop
                         await self.engine.call("hud_commit")
                         shown = view
                     except (EngineError, ConnectionError, TimeoutError, ValueError) as e:  # ValueError: HUD closed meanwhile
                         log.debug("HUD not shown: %s", e)
+                    except Exception:  # a drawing that fails: the next view may not
+                        log.exception("HUD not drawn")
+                        await asyncio.sleep(1)
             await asyncio.sleep(HUD_MIN_INTERVAL)
 
     def close_hud(self):
