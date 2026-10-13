@@ -1,5 +1,6 @@
 project('pycam-engine', 'cpp',
-        version : '0.1.0',
+        # The version of pycam, engine and application: the VERSION file at the root.
+        version : files('../VERSION'),
         meson_version : '>= 1.0',
         default_options : ['cpp_std=c++20', 'warning_level=2', 'buildtype=release'])
 
@@ -42,6 +43,11 @@ test('stack', executable('stack-test',
 # Development tool: an engine look on any picture (tools/look_apply.py), not installed.
 executable('look-apply', files('tests/look_apply.cpp', 'src/look.cpp'),
            dependencies : [dependency('threads'), dependency('nlohmann_json')])
+
+# Only main.cpp includes it: a new version does not rebuild the engine.
+version_conf = configuration_data()
+version_conf.set_quoted('PYCAM_VERSION', meson.project_version())
+configure_file(output : 'version.h', configuration : version_conf)
 
 executable('pycam-engine',
            files(

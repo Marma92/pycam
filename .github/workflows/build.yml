@@ -1,0 +1,84 @@
+# Builds pycam for the Pi, as the camera would (Raspberry Pi OS 64 bits = Debian Trixie +
+# the Raspberry Pi archive, on an ARM runner), runs the tests, and makes the release's
+# archive. A tag vX.Y.Z publishes it as a GitHub release: the cameras find it there
+# (app/pycam/updater.py). docs/development.md, « Publier une release ».
+name: Build
+
+on:
+  push:
+    branches: [master, engine-m0]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    container: debian:trixie
+    steps:
+      - name: Git
+        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates git
+
+      - uses: actions/checkout@v4
+
+      # The Raspberry Pi archive's key as the keyring package installs it on the Pi, signed
+      # in SHA-512: the one on their site is still signed in SHA-1, which Trixie refuses.
+      - name: Raspberry Pi archive and dependencies
+        run: |
+          install -m 644 .github/raspberrypi-archive-keyring.pgp /usr/share/keyrings/
+          echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.pgp] http://archive.raspberrypi.com/debian/ trixie main" \
+            > /etc/apt/sources.list.d/raspi.list
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            g++ meson ninja-build pkg-config binutils \
+            librpicam-app-dev libcamera-dev libdrm-dev nlohmann-json3-dev libboost-program-options-dev \
+            libjpeg-dev libtiff-dev libexif-dev libpng-dev libavcodec-dev libavformat-dev libavutil-dev \
+            python3 python3-aiohttp python3-pil python3-evdev fonts-dejavu-core
+
+      - name: Engine
+        run: |
+          meson setup engine/build engine
+          ninja -C engine/build
+          meson test -C engine/build --print-errorlogs
+          engine/build/pycam-engine --version
+
+      - name: Application
+        run: cd app && python3 -m unittest discover -s tests -t .
+
+      - name: Archive
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          sh tools/package.sh engine/build dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pycam-arm64
+          path: dist/
+          retention-days: 30
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: pycam-arm64
+          path: dist
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(cat VERSION)"
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "le tag $GITHUB_REF_NAME n'est pas la version $version (VERSION)" >&2; exit 1; }
+          # The notes: this version's section of CHANGELOG.md.
+          awk -v v="$version" '/^## /{f = index($0, "[" v "]") > 0; next} f' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --title "pycam $version" --notes-file notes.md

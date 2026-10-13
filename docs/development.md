@@ -15,9 +15,42 @@ tools/     déploiement, installation des services, audit, outils de test
 docs/
 ```
 
+## Installer une release (un appareil « normal »)
+
+Sur un Raspberry Pi OS Lite 64 bits (Trixie) neuf, caméra branchée, connecté à Internet :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Marma92/pycam/master/tools/install.sh | sudo sh
+```
+
+ou, avec une archive téléchargée depuis les releases GitHub : `sudo sh install.sh pycam-0.1.0-arm64.tar.gz`. L'appareil est ensuite dans `/opt/pycam`, démarre sur la visée, et se met à jour seul (`architecture.md` §8.1). Le journal des mises à jour : `journalctl -u pycam-update`, leur état : `/var/lib/pycam-update/status.json`.
+
+**Développement et release sur le même Pi.** `tools/deploy.sh` copie dans `~/pycam`, et `sudo sh tools/install-services.sh` y fait tourner les services : l'appareil est alors en développement et ne cherche plus de mise à jour. `sudo sh tools/install.sh` le remet sur les releases.
+
+## Publier une release
+
+1. Mettre le numéro dans `VERSION` (SemVer : `0.1.1` pour une correction, `0.2.0` pour des fonctions), et décrire la version dans `CHANGELOG.md` (une section `## [0.1.1] — date`) : ce sont ses notes.
+2. Fusionner dans `master`, puis poser le tag et le pousser :
+   ```bash
+   git tag v0.1.1 && git push origin v0.1.1
+   ```
+3. GitHub Actions (`.github/workflows/build.yml`) compile le moteur sur un runner ARM, dans Debian Trixie avec l'archive Raspberry Pi, lance les tests, fait l'archive (`tools/package.sh`) et publie la release, si le tag est bien la version de `VERSION`. Les appareils la trouvent à leur prochaine connexion.
+
+Sur chaque push d'une branche, la CI fait tout sauf la publication : l'archive est un artefact du run (`gh run download`), pour l'essayer sur un Pi avant de la publier (`sudo sh tools/install.sh <archive>`).
+
+**Essayer une mise à jour sans rien publier** (fait le 2026-10-13) : l'appareil installé depuis une archive de la CI, on fait passer `pycam-update.service` par un faux GitHub sur le Pi, avec une surcharge systemd :
+
+```ini
+# /etc/systemd/system/pycam-update.service.d/test.conf
+[Service]
+Environment=PYCAM_UPDATE_API=http://127.0.0.1:8765/repos/test/pycam/releases/latest
+```
+
+Le serveur rend un `releases/latest` au format de GitHub, et ses fichiers (seul `127.0.0.1` est admis hors HTTPS). Une fausse version se fait depuis l'archive de la CI : `VERSION`, `RELEASE.json` et la chaîne `pycam-engine 0.1.0` du moteur réécrits, sinon la préparation l'écarte, à raison. Ensuite, retirer la surcharge et **`/var/lib/pycam-update`** : il garde la liste des versions écartées, qui le resteraient pour de vrai.
+
 ## Services (l'appareil au quotidien)
 
-Le Pi démarre directement sur l'appareil photo : deux services systemd, `pycam-engine` (le moteur) et `pycam` (l'application), installés depuis `~/pycam` :
+Le Pi démarre directement sur l'appareil photo : deux services systemd, `pycam-engine` (le moteur) et `pycam` (l'application). En développement, installés depuis `~/pycam` :
 
 ```bash
 sudo sh tools/install-services.sh             # installer, activer au démarrage, démarrer
@@ -114,7 +147,7 @@ cd ~/pycam/engine && meson test -C build --print-errorlogs
 ## Dépendances installées sur le Pi (2026-10-11)
 
 - **Build** : `librpicam-app-dev libcamera-dev libdrm-dev nlohmann-json3-dev libboost-program-options-dev libjpeg-dev libtiff-dev libexif-dev libpng-dev libavcodec-dev libavformat-dev libavutil-dev ccache` (libav pour la lecture des vidéos, ajoutée le 2026-10-12). ffmpeg (déjà installé sur Pi OS) assemble les timelapses. gcc, meson et ninja étaient déjà présents.
-- **Python** : `python3-evdev python3-aiohttp` ; Pillow et numpy étaient déjà présents. On utilise les paquets Debian plutôt qu'un venv. Seule exception : instagrapi (publication sur Instagram), sans paquet Debian, installé à part par `sh tools/install-share.sh` dans `~/.local/share/pycam/vendor` (fait le 2026-10-12 : instagrapi 3.0.22), et chargé seulement dans le processus qui publie sur Instagram.
+- **Python** : `python3-evdev python3-aiohttp` ; Pillow était déjà présent. On utilise les paquets Debian plutôt qu'un venv. Seule exception : instagrapi (publication sur Instagram), sans paquet Debian, installé à part par `sh tools/install-share.sh` dans `~/.local/share/pycam/vendor` (fait le 2026-10-12 : instagrapi 3.0.22), et chargé seulement dans le processus qui publie sur Instagram.
 - **Outils** : `socat i2c-tools`.
 
 ## Audit de la cible
@@ -140,6 +173,20 @@ Le script fait l'inventaire de l'OS, de la mémoire et de la CMA, de la caméra,
 **Les en-têtes de `librpicam-app-dev` diffèrent du dépôt GitHub au même numéro de version.** C'est toujours sur le Pi qu'on vérifie une signature : `/usr/include/rpicam-apps/`.
 
 ## Droits sur le Pi
+
+L'application tourne sous l'utilisateur de l'appareil, sans root, avec deux droits précis, installés par `install-services.sh` (développement) ou `updater.py` (releases) :
+
+- `CAP_SYS_TIME`, par `AmbientCapabilities` dans `pycam.service` : régler l'horloge depuis le téléphone (`clock.py`). Lancée à la main, l'application ne l'a pas, et le dit dans le journal ;
+- une règle polkit, `/etc/polkit-1/rules.d/50-pycam.rules` : piloter le Wi-Fi par NetworkManager sans session (`wifi.py`). Pour vérifier ce que le service peut faire : `sudo systemd-run --wait --pipe --uid=ael nmcli general permissions`.
+
+**Essayer le point d'accès par SSH** : le Pi n'a qu'un émetteur Wi-Fi, et l'ouvrir coupe la connexion SSH s'il n'est pas sur câble. Programmer d'abord le retour, en root, détaché de la session :
+
+```bash
+printf '#!/bin/sh\nsleep 90\nnmcli connection down pycam-hotspot\nnmcli connection up <la connexion habituelle>\n' > /tmp/ap-revert.sh
+sudo systemd-run --unit=pycam-ap-revert sh /tmp/ap-revert.sh
+```
+
+puis ouvrir le point d'accès (MENU › Réseau, ou l'API du site), et regarder ensuite `journalctl -u NetworkManager -u wpa_supplicant` (`AP-ENABLED`). Même sans retour programmé, le point d'accès n'est pas rouvert au démarrage suivant : un redémarrage ramène le Pi sur son réseau.
 
 `ael` a un `sudo` sans mot de passe pendant le développement : `/etc/sudoers.d/010_ael-nopasswd`, créé par l'utilisateur le 2026-10-11. Pour le retirer :
 

@@ -1,6 +1,7 @@
 """The camera: settings, actions and HUD, driving the engine (docs/architecture.md §5)."""
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -8,9 +9,11 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 
+from . import __version__
 from . import drive as drives
 from . import exposure as exp
 from . import lenses, looks, meter, picture, timelapse, video
+from .clock import Clock
 from .engine_client import EngineError, call_blocking
 from .menu import Item, Menu
 from .playback import PIXEL_SCALES, Playback, describe, describe_video, extract_frame, list_photos, poster, prune_caches
@@ -99,6 +102,11 @@ class Video:
     ended: bool = False
 
 
+def app_label(app):
+    """Its name in the Applications menu: "(expérimental)" while it is one."""
+    return f"{app.title} (expérimental)" if getattr(app, "experimental", False) else app.title
+
+
 @dataclass
 class Recording:
     """A video being recorded (by the engine's Recorder)."""
@@ -137,6 +145,11 @@ class Camera:
         self.menu = None  # Menu while open
         self.menu_stack = []  # the menus it was opened from (MENU goes back)
         self.apps = []  # the applications (apps/), started with the camera
+        self.updates = None  # updates.Updates, on a camera installed from a release
+        self.wifi = None  # wifi.Wifi, with NetworkManager
+        self.web_access = None  # web_access.Access, set by the web interface
+        self.clock = Clock()
+        self.ready_path = None  # written once the camera works, for the updates (updater.py)
         self.playback = None  # Playback while open (the LECTURE button)
         self._shown = None  # Review of the photo shown in playback, once loaded
         self._delete_armed_until = 0.0  # deleting takes two presses of Q
@@ -169,7 +182,8 @@ class Camera:
         self._snapshots = {}  # path -> future, until the engine has written it
 
     async def run(self, inputs):
-        apps = [self._supervise(app) for app in self.apps]
+        services = [s for s in (self.updates, self.wifi) if s]
+        apps = [self._supervise(app) for app in self.apps + services]
         self.spawn(self._prune_caches())
         await asyncio.gather(self.engine.run(), inputs.run(), self.hud_loop(), self.screen_loop(), *apps)
 
@@ -200,6 +214,11 @@ class Camera:
     def shutdown(self):
         """Settings saved, and the engine's default HUD back on the screen."""
         self.save_now()
+        if self.ready_path:
+            try:
+                os.remove(self.ready_path)
+            except OSError:
+                pass
         if self.hud:
             try:
                 self.hud.draw_default()
@@ -229,6 +248,20 @@ class Camera:
         if self.settings.mode != "video":  # no loupe in video
             await self.apply_loupe()
         await self.setup_hud()
+        self._mark_ready()
+
+    def _mark_ready(self):
+        """The engine answered and everything was pushed: this version works. The updates
+        wait for it after an installation, else they go back (updater.py)."""
+        if not self.ready_path:
+            return
+        tmp = self.ready_path + ".tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"version": __version__, "pid": os.getpid()}, f)
+            os.replace(tmp, self.ready_path)
+        except OSError as e:
+            log.warning("cannot write %s: %s", self.ready_path, e)
 
     async def _take_over_recording(self):
         """The application restarted (an error) while the engine was recording: that
@@ -861,10 +894,23 @@ class Camera:
 
     def apps_menu(self):
         """The Applications menu: one line per application, opening its own menu."""
-        items = [Item(app.title, kind="open", target=app.menu, text=app.summary) for app in self.apps]
+        items = [Item(app_label(app), kind="open", target=app.menu, text=app.summary) for app in self.apps]
         if not items:
             items = [Item("Aucune application", kind="info")]
         return Menu(self.settings, items=items, title="Applications", context=self)
+
+    # --- The web interface's access (web_access.py)
+
+    def show_pairing_code(self, code, seconds):
+        """A browser asks to be paired: the code, on the screen (woken up if asleep)."""
+        self.set_screen(True)
+        self.show_message(f"Code du site : {code[:3]} {code[3:]}", seconds=seconds)
+
+    def forget_browsers(self):
+        """MENU › Réseau: no browser paired any more."""
+        if self.web_access:
+            count = self.web_access.forget()
+            self.show_message(f"{count} navigateur{'s' if count > 1 else ''} oublié{'s' if count > 1 else ''}" if count else "Aucun navigateur")
 
     def wake_apps(self):
         """New files on the card, or an application's setting changed."""
@@ -873,7 +919,8 @@ class Camera:
 
     def apps_hud(self):
         """What the applications at work show on the HUD ("CLOUD 40 %")."""
-        return " · ".join(text for text in (app.hud() for app in self.apps) if text)
+        shown = self.apps + ([self.wifi] if self.wifi else [])  # the access point, while open
+        return " · ".join(text for text in (app.hud() for app in shown) if text)
 
     # --- Video mode (video.py; the engine's video_mode and Recorder)
 
@@ -1541,9 +1588,9 @@ class Camera:
     def redraw(self):
         self._redraw.set()
 
-    def show_message(self, text, warning=False):
-        self._message = (text, warning, time.monotonic() + MESSAGE_SECONDS)
-        asyncio.get_running_loop().call_later(MESSAGE_SECONDS + 0.05, self.redraw)
+    def show_message(self, text, warning=False, seconds=MESSAGE_SECONDS):
+        self._message = (text, warning, time.monotonic() + seconds)
+        asyncio.get_running_loop().call_later(seconds + 0.05, self.redraw)
         self.redraw()
 
     async def hud_loop(self):

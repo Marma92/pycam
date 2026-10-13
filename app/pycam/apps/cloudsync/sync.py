@@ -107,6 +107,9 @@ def owncloud_url(url):
 class CloudSync:
     id = "cloudsync"
     title = "Cloud sync"
+    # Not yet tried against real accounts (only the tests' fake services): said in the
+    # Applications menu and on the web page.
+    experimental = True
 
     def __init__(self, camera, config_path=None, db_path=None):
         self.camera = camera
@@ -198,7 +201,7 @@ class CloudSync:
             Item("Déverser maintenant", kind="run", target=self._offload_pressed),
             Item("Arrêter l'envoi", kind="run", target=lambda c: c.show_message(self.stop())),
         )
-        return Menu(camera.settings, items=items, title="Cloud sync", context=camera)
+        return Menu(camera.settings, items=items, title="Cloud sync (expérimental)", context=camera)
 
     def pending_text(self):
         files, size = self.pending

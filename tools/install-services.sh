@@ -1,5 +1,6 @@
 #!/bin/sh
-# Installe et démarre les services pycam (moteur + application) sur le Pi.
+# Installe et démarre les services pycam (moteur + application) sur le Pi, depuis un
+# dossier de développement (tools/deploy.sh). Une release s'installe par tools/install.sh.
 # Usage, sur le Pi, depuis le dossier du projet :
 #   sudo sh tools/install-services.sh             installe, active au démarrage, démarre
 #   sudo sh tools/install-services.sh --remove    arrête, désactive, désinstalle
@@ -13,7 +14,7 @@ units="pycam-engine.service pycam.service"
 if [ "${1:-}" = "--remove" ]; then
 	systemctl disable --now $units 2>/dev/null || true
 	for unit in $units; do rm -f "/etc/systemd/system/$unit"; done
-	rm -f /etc/tmpfiles.d/pycam.conf
+	rm -f /etc/tmpfiles.d/pycam.conf /etc/polkit-1/rules.d/50-pycam.rules
 	systemctl daemon-reload
 	echo "services pycam désinstallés"
 	exit 0
@@ -24,6 +25,8 @@ fi
 fill() { sed -e "s|@USER@|$user|g" -e "s|@PYCAM@|$pycam|g" "$1"; }
 
 fill "$pycam/system/pycam.tmpfiles.in" > /etc/tmpfiles.d/pycam.conf
+# The Wi-Fi from the service (polkit reads its rules again by itself).
+fill "$pycam/system/pycam.polkit.rules.in" > /etc/polkit-1/rules.d/50-pycam.rules
 systemd-tmpfiles --create /etc/tmpfiles.d/pycam.conf
 for unit in $units; do
 	fill "$pycam/system/$unit.in" > "/etc/systemd/system/$unit"
@@ -31,5 +34,8 @@ done
 systemctl daemon-reload
 systemctl enable $units
 systemctl restart $units
+# A development tree: updated by tools/deploy.sh, not by the releases' updates
+# (tools/install.sh brings them back).
+systemctl disable --now pycam-update.path 2>/dev/null || true
 echo "services pycam installés pour $user ($pycam), actifs au démarrage"
 systemctl --no-pager --lines=0 status $units || true

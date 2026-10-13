@@ -13,12 +13,13 @@
 #include <thread>
 
 #include "engine.hpp"
+#include "version.h"
 
 static void usage()
 {
 	std::cerr << "usage: pycam-engine [--socket PATH] [--zsl] [--viewfinder WxH] [--lores WxH] [--queue N]\n"
 				 "                    [--zsl-buffers N] [--zsl-denoise D] [--still-denoise D]\n"
-				 "                    [--tuning-dir DIR] [--tuning NAME] [--no-display] [-v]\n"
+				 "                    [--tuning-dir DIR] [--tuning NAME] [--no-display] [-v] [--version]\n"
 				 "  --socket PATH     Unix socket to listen on (default /run/pycam/engine.sock)\n"
 				 "  --zsl             zero shutter lag: sensor at full resolution all the time\n"
 				 "  --viewfinder WxH  viewfinder stream size (default 1024x768)\n"
@@ -31,7 +32,8 @@ static void usage()
 				 "  --tuning NAME     tuning file at startup, without .json (default pycam-imx477);\n"
 				 "                    an empty name: libcamera's own tuning\n"
 				 "  --no-display      do not use the screen, even if there is one\n"
-				 "  -v               more logs (repeat for libcamera logs)\n";
+				 "  -v               more logs (repeat for libcamera logs)\n"
+				 "  --version        print the version and quit (without the camera)\n";
 }
 
 static bool parse_size(std::string const &s, unsigned &w, unsigned &h)
@@ -90,6 +92,11 @@ int main(int argc, char *argv[])
 				cfg.display = false;
 			else if (arg == "-v")
 				cfg.verbose++;
+			else if (arg == "--version")
+			{
+				std::cout << "pycam-engine " PYCAM_VERSION "\n";
+				return 0;
+			}
 			else if (arg == "-h" || arg == "--help")
 			{
 				usage();

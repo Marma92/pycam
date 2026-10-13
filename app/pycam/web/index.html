@@ -61,6 +61,14 @@
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line);
            padding: 10px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 9; }
   #toast.on { opacity: 1; }
+  #sys-notes { white-space: pre-wrap; font: inherit; margin: 10px 0 0; }
+  .panel.warn { border: 1px solid var(--accent); }
+  #pair { position: fixed; inset: 0; z-index: 8; background: var(--bg); display: none; align-items: center; justify-content: center; padding: 16px; }
+  #pair.on { display: flex; }
+  #pair .panel { max-width: 420px; width: 100%; }
+  #pair-code { width: 100%; font: 600 28px ui-monospace, monospace; letter-spacing: 6px; text-align: center; margin: 10px 0; }
+  .net { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .net:last-child { border-bottom: 0; }
 </style>
 </head>
 <body>
@@ -72,6 +80,7 @@
     <button data-tab="presets">Presets</button>
     <button data-tab="cloud">Cloud</button>
     <button data-tab="sharing">Partage</button>
+    <button data-tab="system">Système</button>
   </nav>
 </header>
 <main>
@@ -101,6 +110,10 @@
   </section>
 
   <section id="cloud">
+    <div class="panel warn">
+      <b>Expérimental.</b> Cloud sync n'a encore été essayé que contre de faux services, pas avec de vrais comptes.
+      Gardez une autre copie de vos photos, et préférez « Synchroniser » à « Déverser », qui efface la carte.
+    </div>
     <div class="panel">
       <div id="cloud-status" class="status" style="margin-top:0">…</div>
       <label>Mode <select id="cloud-mode"></select></label>
@@ -153,7 +166,49 @@
     </div>
   </section>
 
+  <section id="system">
+    <div class="panel">
+      <b>Heure</b> <span class="muted" id="clock-state"></span>
+      <p class="muted" style="margin:4px 0 8px">Sans horloge à pile, l'appareil prend l'heure du réseau ; sans réseau, celle du téléphone ou de l'ordinateur qui ouvre cette page.</p>
+      <button class="btn" id="clock-set" hidden>Régler sur ce téléphone</button>
+    </div>
+    <div class="panel">
+      <b>Wi-Fi</b> <span class="muted" id="wifi-state"></span>
+      <div id="wifi-error" class="over" hidden></div>
+      <label>Point d'accès de l'appareil <select id="wifi-hotspot"><option value="0">Coupé</option><option value="1">Activé</option></select></label>
+      <p class="muted" style="margin:0 0 8px">Son nom et son mot de passe sont dans MENU › Réseau. Sur le point d'accès, l'appareil n'est sur aucun autre réseau.</p>
+      <div class="row"><button class="btn" id="wifi-scan">Rechercher les réseaux</button></div>
+      <div id="wifi-networks"></div>
+      <div id="wifi-join" class="steps" hidden>
+        <label>Réseau <b id="wifi-ssid"></b></label>
+        <label>Mot de passe <input type="password" id="wifi-password" autocomplete="off"></label>
+        <div class="row"><button class="btn" id="wifi-connect">Se connecter</button><button class="btn" id="wifi-cancel">Annuler</button></div>
+      </div>
+      <div id="wifi-saved"></div>
+    </div>
+    <div class="panel">
+      <b>Navigateurs autorisés</b>
+      <p class="muted" style="margin:4px 0 8px">Ceux qui ont saisi un code affiché sur l'appareil (MENU › Réseau › Code d'accès du site).</p>
+      <div id="browsers"></div>
+    </div>
+    <div class="panel">
+      <b>pycam <span id="sys-version"></span></b> <span class="muted" id="sys-state"></span>
+      <label>Mises à jour <select id="sys-mode">
+        <option value="auto">Automatiques · installées au démarrage</option><option value="notify">Proposées</option><option value="off">Désactivées</option>
+      </select></label>
+      <p class="muted" style="margin:4px 0 10px">L'appareil cherche une nouvelle version dès qu'il trouve Internet (jamais sur un réseau facturé), au plus toutes les six heures, et la télécharge.
+        Automatiques : elle s'installe au démarrage suivant, avant la première photo. Proposées : seulement d'ici ou de MENU › Système.
+        Si l'appareil ne repart pas correctement sur la nouvelle version, il revient tout seul à la précédente.</p>
+      <div class="row"><button class="btn" id="sys-check">Rechercher</button><button class="btn" id="sys-install" hidden>Installer</button></div>
+      <pre id="sys-notes" class="muted" hidden></pre>
+    </div>
+  </section>
+
   <section id="sharing">
+    <div class="panel warn">
+      <b>Expérimental.</b> Partage n'a encore été essayé que contre de faux services, pas avec de vrais comptes Instagram, Flickr ou Bluesky.
+      Vérifiez la première publication sur chaque plateforme.
+    </div>
     <div class="panel">
       <b>Publications</b> <span class="muted" id="share-state"></span>
       <p class="muted" style="margin:4px 0 0">Depuis la galerie (bouton Partager d'une photo), ou sur l'appareil : en lecture, MENU › Partager.
@@ -228,6 +283,17 @@
     <button id="share-send" class="btn" style="width:100%;padding:14px;background:var(--accent);color:#111;font-weight:600">Publier</button>
   </div>
 </div>
+<div id="pair">
+  <div class="panel">
+    <h2 style="margin-top:0">pycam</h2>
+    <p>Pour utiliser l'appareil depuis ce navigateur, affichez un code sur son écran, puis saisissez-le ici.</p>
+    <button class="btn" id="pair-show">Afficher un code sur l'appareil</button>
+    <input type="text" id="pair-code" inputmode="numeric" maxlength="7" autocomplete="one-time-code" placeholder="000 000">
+    <button class="btn" id="pair-send" style="width:100%">Valider</button>
+    <p class="muted" id="pair-state"></p>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -243,6 +309,7 @@ function toast(text) {
 
 async function api(path, options = {}) {
   const r = await fetch(path, options);
+  if (r.status === 401) { showPair(); throw new Error("Code d'accès requis"); }
   if (!r.ok) throw new Error(await r.text() || r.statusText);
   return r.headers.get("content-type")?.includes("json") ? r.json() : r;
 }
@@ -256,6 +323,7 @@ document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
   if (tab === "presets") loadPresets();
   if (tab === "cloud") followCloud();
   if (tab === "sharing") followShare();
+  if (tab === "system") followSystem();
 });
 
 // --- Viewfinder and state
@@ -485,6 +553,114 @@ $("cloud-disconnect").onclick = async () => {
   loadCloud();
 };
 
+// --- Système
+
+async function loadClock() {
+  const c = await post("/api/clock", {now: Date.now()});
+  if (c.result === "set") toast("Heure de l'appareil réglée sur celle de ce téléphone");
+  $("clock-state").textContent = c.text;
+  $("clock-set").hidden = c.synchronized;
+}
+$("clock-set").onclick = () => loadClock().catch((e) => toast(e.message));
+
+let wifiJoin = "";
+async function loadWifi() {
+  let w;
+  try { w = await api("/api/wifi"); } catch (e) { $("wifi-state").textContent = e.message; return; }
+  $("wifi-state").textContent = w.busy === "connect" ? "connexion…" : w.hotspot ? `point d'accès ${w.hotspot_ssid}` : w.ssid ? `${w.ssid} · ${w.address}` : w.wired ? "câble" : "non connecté";
+  $("wifi-error").hidden = !w.error; $("wifi-error").textContent = w.error;
+  if (document.activeElement !== $("wifi-hotspot")) $("wifi-hotspot").value = w.hotspot ? "1" : "0";
+  $("wifi-hotspot").disabled = !!w.busy;
+  showNetworks(w.networks, w.ssid);
+  $("wifi-saved").innerHTML = w.saved.length ? "<p class='muted' style='margin:10px 0 0'>Réseaux connus :</p>" + w.saved.map((n) =>
+    `<div class="net"><span>${esc(n)}${n === w.connection ? " <span class='badge'>actuel</span>" : ""}</span><button class="btn danger" data-forget="${esc(n)}">Oublier</button></div>`).join("") : "";
+  document.querySelectorAll("[data-forget]").forEach((b) => b.onclick = async () => {
+    if (!confirm(`Oublier ${b.dataset.forget} ? L'appareil ne s'y connectera plus de lui-même.`)) return;
+    try { await post("/api/wifi/forget", {name: b.dataset.forget}); } catch (e) { toast(e.message); }
+    loadWifi();
+  });
+}
+function showNetworks(networks, current) {
+  $("wifi-networks").innerHTML = networks.map((n) =>
+    `<div class="net"><span>${esc(n.ssid)} <span class="muted">${n.signal} %${n.secure ? " · protégé" : " · ouvert"}</span></span>` +
+    (n.ssid === current ? "<span class='badge'>connecté</span>" : `<button class="btn" data-join="${esc(n.ssid)}" data-secure="${n.secure ? 1 : 0}">Choisir</button>`) + "</div>").join("");
+  document.querySelectorAll("[data-join]").forEach((b) => b.onclick = () => {
+    wifiJoin = b.dataset.join;
+    $("wifi-ssid").textContent = wifiJoin;
+    $("wifi-password").value = "";
+    $("wifi-password").parentElement.hidden = b.dataset.secure !== "1";
+    $("wifi-join").hidden = false;
+  });
+}
+$("wifi-scan").onclick = async () => {
+  $("wifi-scan").disabled = true;
+  try { const r = await post("/api/wifi/scan", {}); showNetworks(r.networks, ""); if (r.hotspot) toast("Sur le point d'accès : la liste d'avant son ouverture"); }
+  catch (e) { toast(e.message); }
+  $("wifi-scan").disabled = false;
+};
+$("wifi-cancel").onclick = () => { $("wifi-join").hidden = true; wifiJoin = ""; };
+$("wifi-connect").onclick = async () => {
+  try {
+    const r = await post("/api/wifi/connect", {ssid: wifiJoin, password: $("wifi-password").value});
+    $("wifi-password").value = ""; $("wifi-join").hidden = true; toast(r.message);
+  } catch (e) { toast(e.message); }
+  loadWifi();
+};
+$("wifi-hotspot").onchange = async (e) => {
+  const on = e.target.value === "1";
+  if (on && !confirm("Ouvrir le point d'accès ? L'appareil quitte son réseau Wi-Fi actuel : cette page le perdra si elle passe par lui.")) return loadWifi();
+  try { await post("/api/wifi/hotspot", {on}); toast(on ? "Ouverture du point d'accès…" : "Fermeture du point d'accès…"); } catch (err) { toast(err.message); }
+  setTimeout(loadWifi, 1500);
+};
+
+async function loadBrowsers() {
+  const r = await api("/api/access/browsers");
+  const day = (t) => new Date(t * 1000).toLocaleDateString();
+  $("browsers").innerHTML = !r.required ? "<p class='muted'>Code d'accès coupé : tout le réseau local a accès.</p>" : r.browsers.map((b) =>
+    `<div class="net"><span>${esc(b.name)}${b.current ? " <span class='badge'>celui-ci</span>" : ""} <span class="muted">depuis le ${day(b.created)}</span></span>` +
+    `<button class="btn danger" data-browser="${esc(b.id)}">Oublier</button></div>`).join("");
+  document.querySelectorAll("[data-browser]").forEach((b) => b.onclick = async () => {
+    try { await post("/api/access/forget", {id: b.dataset.browser}); } catch (e) { toast(e.message); }
+    loadBrowsers().catch(() => {});
+  });
+}
+
+async function loadSystem() {
+  if (!loadSystem.once) { loadSystem.once = true; loadClock().catch(() => {}); loadBrowsers().catch(() => {}); }
+  loadWifi();
+  const s = await api("/api/system");
+  $("sys-version").textContent = s.version + (s.managed ? "" : " · développement");
+  $("sys-state").textContent = s.state_text + (s.state === "failed" && s.message ? " — " + s.message : "");
+  if (document.activeElement !== $("sys-mode")) $("sys-mode").value = s.mode;
+  $("sys-mode").disabled = $("sys-check").disabled = !s.managed;
+  $("sys-install").hidden = !s.available;
+  $("sys-install").textContent = "Installer " + s.available;
+  $("sys-notes").hidden = !s.notes;
+  $("sys-notes").textContent = s.notes;
+}
+
+async function followSystem() {
+  if (tab !== "system") return;
+  try { await loadSystem(); } catch (e) { $("sys-state").textContent = e.message; }
+  clearTimeout(followSystem.timer);
+  followSystem.timer = setTimeout(followSystem, 2000);
+}
+
+$("sys-mode").onchange = async (e) => {
+  try { await post("/api/system", {mode: e.target.value}); toast("Mises à jour : " + e.target.selectedOptions[0].textContent); }
+  catch (err) { toast(err.message); }
+  loadSystem();
+};
+$("sys-check").onclick = async () => {
+  try { toast((await post("/api/system", {action: "check"})).message); } catch (e) { toast(e.message); }
+  loadSystem();
+};
+$("sys-install").onclick = async () => {
+  if (!confirm("Installer maintenant ? L'appareil redémarre, une vingtaine de secondes ; la page se reconnectera d'elle-même.")) return;
+  try { toast((await post("/api/system", {action: "install"})).message); } catch (e) { toast(e.message); }
+  loadSystem();
+};
+
 // --- Partage
 
 let sharing = null, sharePhoto = null, shareChosen = null;
@@ -609,8 +785,40 @@ $("share-send").onclick = async () => {
   } catch (e) { toast(e.message); }
 };
 
+// --- Pairing (web_access.py): a code shown on the camera's screen
+
+function showPair() { $("pair").classList.add("on"); }
+function browserName() {
+  const ua = navigator.userAgent;
+  const os = /iPhone|iPad/.test(ua) ? "iPhone / iPad" : /Android/.test(ua) ? "Android" : /Mac/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "";
+  const app = /Edg\//.test(ua) ? "Edge" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Navigateur";
+  return os ? `${app} · ${os}` : app;
+}
+$("pair-show").onclick = async () => {
+  try { $("pair-state").textContent = (await post("/api/access/code", {})).message; $("pair-code").focus(); }
+  catch (e) { $("pair-state").textContent = e.message; }
+};
+$("pair-send").onclick = async () => {
+  try {
+    await post("/api/access/pair", {code: $("pair-code").value, name: browserName()});
+    $("pair").classList.remove("on"); $("pair-code").value = ""; $("pair-state").textContent = "";
+    start();
+  } catch (e) { $("pair-state").textContent = e.message; }
+};
+$("pair-code").onkeydown = (e) => { if (e.key === "Enter") $("pair-send").click(); };
+
 async function followState() { await refreshState(); setTimeout(followState, running ? 1000 : 3000); }
-followState(); refreshViewfinder();
+async function start() {
+  try {
+    const a = await api("/api/access");
+    if (!a.paired) return showPair();
+  } catch (e) { return setTimeout(start, 3000); }
+  if (start.done) return;
+  start.done = true;
+  loadClock().catch(() => {});  // the camera's clock from this browser's, if the network gives none
+  followState(); refreshViewfinder();
+}
+start();
 </script>
 </body>
 </html>

@@ -9,7 +9,8 @@
 - Partage: a photo shared on Instagram, Flickr, Bluesky, with the preview of each; the accounts.
 
 Local network only: any other address is refused, IPv6 included (the camera may have a
-public IPv6 address, and nothing here asks for a password). And from its own page only: a
+public IPv6 address). And only the browsers paired by a code shown on the camera's screen
+(web_access.py), unless MENU › Réseau says otherwise. And from its own page only: a
 page of another site, open in a browser on the same network, could otherwise send it
 commands (connect a cloud account of its choosing, then empty the card into it). Requests
 that change something must come from this page (their Origin), and the camera must be
@@ -35,11 +36,11 @@ from aiohttp import web
 
 from . import looks
 from .playback import companions, describe, list_photos, thumbs_dir
-from .settings import CLOUD_MODES
+from .settings import CLOUD_MODES, UPDATE_MODES
+from .web_access import CODE_SECONDS, COOKIE, PORT, TOKEN_SECONDS, Access, PairingError
 
 log = logging.getLogger(__name__)
 
-PORT = 8080
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "index.html")
 PREVIEW = "/run/pycam/web-preview.jpg"  # tmpfs, written by the engine
 PREVIEW_MAX_AGE = 0.5  # seconds: two browsers watching share the same frame
@@ -108,17 +109,34 @@ def slug(text):
     return s[:48] or "preset"
 
 
+# Without a paired browser: the page itself, and what pairs one.
+OPEN_PATHS = ("/", "/api/access", "/api/access/code", "/api/access/pair")
+
+
 class WebServer:
-    def __init__(self, camera, port=PORT):
+    def __init__(self, camera, port=PORT, access_path=None):
         self.camera = camera
         self.port = port
         self.runner = None
         self._preview_lock = asyncio.Lock()
         self._preview_time = 0.0
-        app = web.Application(middlewares=[local_only, same_origin], client_max_size=MAX_UPLOAD)
+        settings_dir = os.path.dirname(os.path.abspath(camera.settings_path))
+        self.access = camera.web_access = Access(access_path or os.path.join(settings_dir, "web-browsers.json"))
+        app = web.Application(middlewares=[local_only, same_origin, self.paired_only], client_max_size=MAX_UPLOAD)
         app.add_routes(
             [
                 web.get("/", self.page),
+                web.get("/api/access", self.access_state),
+                web.post("/api/access/code", self.access_code),
+                web.post("/api/access/pair", self.access_pair),
+                web.get("/api/access/browsers", self.access_browsers),
+                web.post("/api/access/forget", self.access_forget),
+                web.post("/api/clock", self.clock),
+                web.get("/api/wifi", self.wifi_state),
+                web.post("/api/wifi/scan", self.wifi_scan),
+                web.post("/api/wifi/connect", self.wifi_connect),
+                web.post("/api/wifi/forget", self.wifi_forget),
+                web.post("/api/wifi/hotspot", self.wifi_hotspot),
                 web.get("/api/state", self.state),
                 web.post("/api/shutter", self.shutter),
                 web.post("/api/preset", self.choose_preset),
@@ -152,9 +170,20 @@ class WebServer:
                 web.post("/api/share/instagram", self.share_instagram),
                 web.post("/api/share/defaults", self.share_defaults),
                 web.delete("/api/share/account/{platform}", self.share_disconnect),
+                web.get("/api/system", self.system_state),
+                web.post("/api/system", self.system_update),
             ]
         )
         self.app = app
+
+    @web.middleware
+    async def paired_only(self, request, handler):
+        if self.camera.settings.web_code and request.path not in OPEN_PATHS:
+            browser = self.access.browser(request.cookies.get(COOKIE))
+            if browser is None:
+                raise web.HTTPUnauthorized(text="Code d'accès requis : ouvrir la page de l'appareil.")
+            request["browser"] = browser
+        return await handler(request)
 
     async def start(self):
         self.runner = web.AppRunner(self.app, access_log=None)
@@ -211,19 +240,19 @@ class WebServer:
         return web.json_response({"ok": True})
 
     async def choose_preset(self, request):
-        data = await request.json()
+        data = await self._json(request)
         if not self.camera.set_preset(str(data.get("id", ""))):
             raise web.HTTPNotFound(text="Preset inconnu.")
         return web.json_response({"ok": True})
 
     async def mode(self, request):
-        data = await request.json()
+        data = await self._json(request)
         if not self.camera.set_mode(str(data.get("mode", ""))):
             raise web.HTTPConflict(text="Impossible pendant un enregistrement.")
         return web.json_response({"ok": True})
 
     async def grain(self, request):
-        data = await request.json()
+        data = await self._json(request)
         self.camera.set_grain(bool(data.get("on")))
         return web.json_response({"ok": True})
 
@@ -396,8 +425,18 @@ class WebServer:
         return account
 
     @staticmethod
-    async def _fields(request, *names):
-        data = await request.json()
+    async def _json(request):
+        """The request's JSON object; a 400, not a 500, for anything else."""
+        try:
+            data = await request.json()
+        except (ValueError, UnicodeDecodeError) as e:
+            raise web.HTTPBadRequest(text="Requête illisible.") from e
+        if not isinstance(data, dict):
+            raise web.HTTPBadRequest(text="Requête illisible.")
+        return data
+
+    async def _fields(self, request, *names):
+        data = await self._json(request)
         return [str(data.get(name) or "") for name in names]
 
     async def cloud_state(self, request):
@@ -456,6 +495,136 @@ class WebServer:
         return web.json_response({"ok": True})
 
 
+    # --- Access: pairing a browser (web_access.py)
+
+    async def access_state(self, request):
+        required = self.camera.settings.web_code
+        browser = self.access.browser(request.cookies.get(COOKIE))
+        return web.json_response({"required": required, "paired": not required or browser is not None, "pending": self.access.code_pending})
+
+    async def access_code(self, request):
+        try:
+            code = self.access.new_code()
+        except PairingError as e:
+            raise web.HTTPTooManyRequests(text=str(e)) from e
+        if code:
+            self.camera.show_pairing_code(code, CODE_SECONDS)
+            log.info("web: pairing code shown for %s", request.remote)
+        return web.json_response({"ok": True, "message": "Code affiché sur l'appareil." if code else "Le code est déjà sur l'écran de l'appareil."})
+
+    async def access_pair(self, request):
+        code, name = await self._fields(request, "code", "name")
+        try:
+            token, _ = self.access.pair(code, name)
+        except PairingError as e:
+            raise web.HTTPForbidden(text=str(e)) from e
+        self.camera.show_message("Navigateur autorisé")
+        response = web.json_response({"ok": True})
+        response.set_cookie(COOKIE, token, max_age=TOKEN_SECONDS, httponly=True, samesite="Strict", path="/")
+        return response
+
+    async def access_browsers(self, request):
+        return web.json_response({"browsers": self.access.listing(request.get("browser")), "required": self.camera.settings.web_code})
+
+    async def access_forget(self, request):
+        data = await self._json(request)
+        current = request.get("browser")
+        if data.get("all"):
+            self.access.forget()
+        elif data.get("id"):
+            self.access.forget(str(data["id"]))
+        else:
+            raise web.HTTPBadRequest(text="Quel navigateur ?")
+        response = web.json_response({"ok": True})
+        if current and current not in self.access.browsers:
+            response.del_cookie(COOKIE, path="/")
+        return response
+
+    # --- The clock (clock.py): from the browser, when the network does not give it
+
+    async def clock(self, request):
+        (now,) = await self._fields(request, "now")
+        try:
+            result = self.camera.clock.from_browser(float(now))
+        except ValueError as e:
+            raise web.HTTPBadRequest(text="Heure illisible.") from e
+        if result == "set":
+            self.camera.show_message("Heure réglée sur le téléphone")
+        return web.json_response({"result": result, "synchronized": self.camera.clock.synchronized, "text": self.camera.clock.text()})
+
+    # --- Wi-Fi (wifi.py)
+
+    def _wifi(self):
+        if not self.camera.wifi:
+            raise web.HTTPNotFound(text="Pas de Wi-Fi géré sur cet appareil.")
+        return self.camera.wifi
+
+    async def wifi_state(self, request):
+        wifi = self._wifi()
+        if not wifi.busy:
+            await wifi.refresh()
+        return web.json_response(wifi.to_dict())
+
+    async def wifi_scan(self, request):
+        wifi = self._wifi()
+        return web.json_response({"networks": await wifi.scan(), "hotspot": wifi.hotspot})
+
+    async def wifi_connect(self, request):
+        wifi = self._wifi()
+        ssid, password = await self._fields(request, "ssid", "password")
+        if not ssid:
+            raise web.HTTPBadRequest(text="Quel réseau ?")
+        if password and not 8 <= len(password) <= 63:
+            raise web.HTTPBadRequest(text="Un mot de passe Wi-Fi a de 8 à 63 caractères.")
+        if wifi.busy:
+            raise web.HTTPConflict(text="Le Wi-Fi est occupé, un instant.")
+        # In the background: on the access point, this page loses the camera meanwhile.
+        self.camera.spawn(wifi.connect(ssid, password))
+        if wifi.hotspot:
+            message = (f"L'appareil quitte son point d'accès pour {ssid}. S'il n'y arrive pas d'ici une minute, "
+                       f"il le rouvre : reconnectez-vous à {wifi.hotspot_ssid} pour voir l'erreur.")  # fmt: skip
+        else:
+            message = f"Connexion à {ssid}…"
+        return web.json_response({"ok": True, "message": message})
+
+    async def wifi_forget(self, request):
+        (name,) = await self._fields(request, "name")
+        if not await self._wifi().forget(name):
+            raise web.HTTPBadRequest(text=self._wifi().error or "Réseau inconnu.")
+        return web.json_response({"ok": True})
+
+    async def wifi_hotspot(self, request):
+        wifi = self._wifi()
+        data = await self._json(request)
+        if wifi.busy:
+            raise web.HTTPConflict(text="Le Wi-Fi est occupé, un instant.")
+        self.camera.spawn(wifi.set_hotspot(bool(data.get("on"))))
+        return web.json_response({"ok": True})
+
+    # --- Système: the version and the updates (updates.py)
+
+    def _updates(self):
+        if not self.camera.updates:
+            raise web.HTTPNotFound(text="Pas de mises à jour sur cet appareil.")
+        return self.camera.updates
+
+    async def system_state(self, request):
+        return web.json_response(self._updates().to_dict())
+
+    async def system_update(self, request):
+        updates = self._updates()
+        mode, action = await self._fields(request, "mode", "action")
+        if mode:
+            if mode not in UPDATE_MODES:
+                raise web.HTTPBadRequest(text="Mode inconnu.")
+            self.camera.settings.update_mode = mode
+            self.camera.save_soon()
+            updates.wake()
+            return web.json_response({"ok": True})
+        if action not in ("check", "install"):
+            raise web.HTTPBadRequest(text="Action inconnue.")
+        return web.json_response({"ok": True, "message": updates.act(action)})
+
     # --- Partage (apps/share): the secrets come in, never go out
 
     def _share(self):
@@ -487,7 +656,7 @@ class WebServer:
         return web.json_response(self._share().status())
 
     async def share_preview(self, request):
-        data = await request.json()
+        data = await self._json(request)
         fields = data.get("fields") if isinstance(data.get("fields"), dict) else None
         post, platforms = await asyncio.to_thread(self._share().preview, self._shared_photo(data), fields)
         return web.json_response({"post": post.to_dict(), "platforms": platforms})
@@ -495,7 +664,7 @@ class WebServer:
     async def share_post(self, request):
         from .apps.share.config import PLATFORMS
 
-        data = await request.json()
+        data = await self._json(request)
         app, path = self._share(), self._shared_photo(data)
         platforms = [p for p in PLATFORMS if p in (data.get("platforms") or []) and app.config.ready(p)]
         if not platforms:
@@ -513,7 +682,7 @@ class WebServer:
         return web.json_response({"ok": True})
 
     async def share_bluesky(self, request):
-        data = await request.json()
+        data = await self._json(request)
         handle, password = str(data.get("handle") or ""), str(data.get("password") or "")
         if not (handle and password):
             raise web.HTTPBadRequest(text="Il faut l'identifiant et un mot de passe d'application.")
@@ -521,21 +690,21 @@ class WebServer:
         return web.json_response({"ok": True, "account": account})
 
     async def share_flickr_start(self, request):
-        data = await request.json()
+        data = await self._json(request)
         key, secret = str(data.get("key") or ""), str(data.get("secret") or "")
         if not (key and secret):
             raise web.HTTPBadRequest(text="Il faut la clé et le secret de l'API Flickr.")
         return web.json_response({"url": await self._share_call(self._share().flickr_start(key, secret))})
 
     async def share_flickr_finish(self, request):
-        code = str((await request.json()).get("code") or "")
+        code = str((await self._json(request)).get("code") or "")
         if not code:
             raise web.HTTPBadRequest(text="Il faut le code donné par Flickr.")
         account = await self._share_call(self._share().flickr_finish(code))
         return web.json_response({"ok": True, "account": account})
 
     async def share_instagram(self, request):
-        data = await request.json()
+        data = await self._json(request)
         user, password, sessionid = (str(data.get(k) or "") for k in ("user", "password", "sessionid"))
         if not (user and (password or sessionid)):
             raise web.HTTPBadRequest(text="Il faut l'identifiant, et le sessionid ou le mot de passe.")
@@ -543,7 +712,7 @@ class WebServer:
         return web.json_response({"ok": True, "account": account})
 
     async def share_defaults(self, request):
-        data = await request.json()
+        data = await self._json(request)
         self._share().set_defaults(tags=data.get("tags"), lang=data.get("lang"))
         return web.json_response({"ok": True})
 

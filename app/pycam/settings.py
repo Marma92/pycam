@@ -31,6 +31,9 @@ CAMERA_MODES = ("photo", "video")
 # Cloud sync (apps/cloudsync): only by hand, send and keep, send and free the card. Freeing
 # last, so that turning the dial from one to the other never goes through it.
 CLOUD_MODES = ("manual", "sync", "offload")
+# Updates (updates.py): found and installed at the next start, found and proposed, or only
+# when asked for.
+UPDATE_MODES = ("auto", "notify", "off")
 
 
 def default_path():
@@ -86,7 +89,12 @@ class Settings:
     keep_base: bool = False  # also write the JPEG without the look (PYB_0001.JPG)
     lens_shading: bool = False  # correct the lens shading (another ISP tuning)
     web: bool = True  # the web interface, on the local network (web.py)
+    web_code: bool = True  # only the browsers paired by a code shown on the screen (web_access.py)
+    hotspot_password: str = ""  # the camera's access point (wifi.py), made at its first use
     cloud_mode: str = "sync"  # CLOUD_MODES; nothing happens until an account is connected
+    update_mode: str = "auto"  # UPDATE_MODES
+    update_checked: float = 0.0  # when the last release was looked for (time.time())
+    update_seen: float = 0.0  # the updates' last result shown on the screen (its time)
     fn1: str = "peaking"  # FN_ACTIONS
     fn2: str = "zebra"
     lenses: list = field(default_factory=lambda: copy.deepcopy(DEFAULT_LENSES))  # edit to add yours
@@ -196,6 +204,7 @@ def load_settings(path):
         ("stack_mode", drive.STACK_MODES),
         ("mode", CAMERA_MODES),
         ("cloud_mode", CLOUD_MODES),
+        ("update_mode", UPDATE_MODES),
         ("video_resolution", tuple(video.RESOLUTIONS)),
         ("video_quality", video.QUALITIES),
         ("video_iso", video.ISO_VALUES),
