@@ -29,7 +29,8 @@ CHECK_EVERY = 6 * 3600
 POLL = 30  # seconds between two looks, while nothing happens
 FAST_POLL = 2  # while root works on a request
 FAST_FOR = 15 * 60
-START_GRACE = 20  # seconds, at most, waiting for the screen to say it installs
+START_GRACE = 20  # seconds, at most, waiting for the screen to say what happens
+MESSAGE_SECONDS = 4  # a result: longer than the camera's usual messages
 WORKING = ("checking", "downloading", "preparing", "installing")
 STALE = 3600  # a "working" status this old: the updater stopped on the way
 MODE_LABELS = {"auto": "Automatiques", "notify": "Proposées", "off": "Désactivées"}
@@ -96,9 +97,10 @@ class Updates:
         if not self.managed:
             return
         self.status = self.read()
-        self._announce({}, self.status)
+        await self._screen_ready()  # what happened before the restart: said once it shows
+        said = self._announce({}, self.status)
         if self.available and self.camera.settings.update_mode == "auto":
-            await self._install_at_start()
+            await self._install_at_start(said)
         while True:
             await self.step()
             delay = FAST_POLL if time.monotonic() < self._fast_until else POLL
@@ -108,13 +110,18 @@ class Updates:
                 pass
             self._wake.clear()
 
-    async def _install_at_start(self):
-        """Downloaded during an earlier session: installed now, before anything is shot."""
+    async def _screen_ready(self):
         deadline = time.monotonic() + START_GRACE
         while self.camera.hud is None and time.monotonic() < deadline:
             await asyncio.sleep(0.5)
+
+    async def _install_at_start(self, said):
+        """Downloaded during an earlier session: installed now, before anything is shot.
+        said: a result is on the screen (the last installation's), left to be read."""
         if not self._busy():
-            self.camera.show_message(f"Mise à jour {self.available}…")
+            if said:
+                await asyncio.sleep(MESSAGE_SECONDS)
+            self.camera.show_message(f"Mise à jour {self.available}…", seconds=MESSAGE_SECONDS)
             await asyncio.sleep(2)
             if not self._busy():
                 self.request("install")
@@ -141,10 +148,10 @@ class Updates:
 
     def _announce(self, old, new):
         """Each result once on the screen: an installation (after the restart), a failure,
-        an update ready; the rest only when the user asked."""
+        an update ready; the rest only when the user asked. True if one was shown."""
         s, state = self.camera.settings, self.state
         if new.get("time", 0) <= s.update_seen or state in WORKING:
-            return
+            return False
         text, warning = "", state in ("failed", "error")
         if state == "installed" and new.get("current") == __version__:
             text = f"pycam {__version__} installé"
@@ -155,11 +162,12 @@ class Updates:
         elif self._asked:
             text = new.get("message", "")
         if not text:
-            return
+            return False
         self._asked = False
         s.update_seen = new["time"]
         self.camera.save_soon()
-        self.camera.show_message(text, warning)
+        self.camera.show_message(text, warning, seconds=MESSAGE_SECONDS)
+        return True
 
     # --- The menu (MENU › Système) and the web page
 

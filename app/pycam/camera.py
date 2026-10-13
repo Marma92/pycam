@@ -1564,9 +1564,9 @@ class Camera:
     def redraw(self):
         self._redraw.set()
 
-    def show_message(self, text, warning=False):
-        self._message = (text, warning, time.monotonic() + MESSAGE_SECONDS)
-        asyncio.get_running_loop().call_later(MESSAGE_SECONDS + 0.05, self.redraw)
+    def show_message(self, text, warning=False, seconds=MESSAGE_SECONDS):
+        self._message = (text, warning, time.monotonic() + seconds)
+        asyncio.get_running_loop().call_later(seconds + 0.05, self.redraw)
         self.redraw()
 
     async def hud_loop(self):

@@ -25,7 +25,7 @@ class FakeCamera:
         self.messages = []
         self.updates = None
 
-    def show_message(self, text, warning=False):
+    def show_message(self, text, warning=False, seconds=1.5):
         self.messages.append(text)
 
     def redraw(self):

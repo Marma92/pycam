@@ -456,7 +456,7 @@ class Updater:
         return sorted(set(missing))
 
     def _switch(self, path, version, check_health):
-        before = self.target("current")
+        before, before_previous = self.target("current"), self.target("previous")
         was_ready = self.ready_version() is not None
         self.systemctl("stop", *SERVICES)
         self._remove_ready()
@@ -475,6 +475,10 @@ class Updater:
         self.systemctl("stop", *SERVICES)
         self._remove_ready()
         self._point("current", before)
+        if before_previous:  # the links as they were
+            self._point("previous", before_previous)
+        elif os.path.lexists(self.link("previous")):
+            os.remove(self.link("previous"))
         self.install_units()
         self.systemctl("start", *SERVICES)
         shutil.rmtree(path, ignore_errors=True)
@@ -599,7 +603,8 @@ def main(argv=None):
         if not args.tarball or not args.user:
             parser.error("install-file demande l'archive et --user")
         updater.install_file(args.tarball, args.user)
-    print(json.dumps(updater.load(), indent=1, ensure_ascii=False))
+    if args.action != "request":  # the service's journal has each step already
+        print(json.dumps(updater.load(), indent=1, ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -236,9 +236,17 @@ class UpdaterTest(unittest.TestCase):
         with open(os.path.join(self.updater.systemd, "pycam.service")) as f:
             self.assertIn("0.1.0", f.read())  # its units back too
         self.assertEqual(self.updater.ready_version(), "0.1.0")
+        self.assertEqual(self.updater.target("previous"), None)  # as it was before
         self.assertEqual(self.updater.check()["state"], "up_to_date")  # never proposed again
         self.github.publish("0.2.1", make_release("0.2.1"))  # the next one is
         self.assertEqual(self.updater.check()["state"], "ready")
+        self.assertEqual(self.updater.install()["state"], "installed")
+        # Once more, with a previous release: kept as it was.
+        self.github.publish("0.3.0", make_release("0.3.0"))
+        self.updater.check()
+        self.system.app_works = lambda version: version != "0.3.0"
+        self.assertEqual(self.updater.install()["current"], "0.2.1")
+        self.assertEqual(self.updater.release_version(self.updater.target("previous")), "0.1.0")
 
     def test_not_checked_when_the_camera_did_not_work_before(self):
         os.remove(os.path.join(self.updater.run_dir, "ready"))  # no camera module, say
