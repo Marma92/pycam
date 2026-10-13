@@ -38,6 +38,16 @@ ou, avec une archive téléchargée depuis les releases GitHub : `sudo sh instal
 
 Sur chaque push d'une branche, la CI fait tout sauf la publication : l'archive est un artefact du run (`gh run download`), pour l'essayer sur un Pi avant de la publier (`sudo sh tools/install.sh <archive>`).
 
+**Essayer une mise à jour sans rien publier** (fait le 2026-10-13) : l'appareil installé depuis une archive de la CI, on fait passer `pycam-update.service` par un faux GitHub sur le Pi, avec une surcharge systemd :
+
+```ini
+# /etc/systemd/system/pycam-update.service.d/test.conf
+[Service]
+Environment=PYCAM_UPDATE_API=http://127.0.0.1:8765/repos/test/pycam/releases/latest
+```
+
+Le serveur rend un `releases/latest` au format de GitHub, et ses fichiers (seul `127.0.0.1` est admis hors HTTPS). Une fausse version se fait depuis l'archive de la CI : `VERSION`, `RELEASE.json` et la chaîne `pycam-engine 0.1.0` du moteur réécrits, sinon la préparation l'écarte, à raison. Ensuite, retirer la surcharge et **`/var/lib/pycam-update`** : il garde la liste des versions écartées, qui le resteraient pour de vrai.
+
 ## Services (l'appareil au quotidien)
 
 Le Pi démarre directement sur l'appareil photo : deux services systemd, `pycam-engine` (le moteur) et `pycam` (l'application). En développement, installés depuis `~/pycam` :
