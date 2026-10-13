@@ -31,7 +31,7 @@ def make_release(version, engine="ok", app="ok", extra=None):
         "app/pycam/__init__.py": "",
         "app/pycam/__main__.py": main[app],
     }
-    for unit in UNITS + ("pycam.tmpfiles",):
+    for unit in UNITS + ("pycam.tmpfiles", "pycam.polkit.rules"):
         files[f"system/{unit}.in"] = f"# {unit} {version}\nUser=@USER@\nExecStart=@PYCAM@/engine/build/pycam-engine\n"
     files.update(extra or {})
     out = io.BytesIO()
@@ -135,6 +135,7 @@ class UpdaterTest(unittest.TestCase):
         os.makedirs(run_dir)
         self.updater = Updater(root=os.path.join(d, "opt"), state=os.path.join(d, "state"), run_dir=run_dir,
                                systemd=os.path.join(d, "systemd"), tmpfiles=os.path.join(d, "tmpfiles", "pycam.conf"),
+                               polkit=os.path.join(d, "polkit", "50-pycam.rules"),
                                api=self.github.url + REPO_PATH)  # fmt: skip
         self.updater.as_root = False  # the tests may run as root (the CI's container)
         self.updater.health_seconds = 2
@@ -167,6 +168,8 @@ class UpdaterTest(unittest.TestCase):
         with open(os.path.join(u.systemd, "pycam.service")) as f:
             self.assertEqual(f.read(), f"# pycam.service 0.1.0\nUser=camera\nExecStart={u.link('current')}/engine/build/pycam-engine\n")
         self.assertTrue(os.path.exists(u.tmpfiles))
+        with open(u.polkit) as f:
+            self.assertIn("User=camera", f.read())
         self.assertTrue(self.system.called("systemctl", "enable", "pycam-engine.service", "pycam.service", "pycam-update.path"))
         self.assertTrue(self.system.called("systemctl", "start", "pycam-engine.service", "pycam.service"))
 

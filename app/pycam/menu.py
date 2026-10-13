@@ -14,6 +14,7 @@ or only inform. MENU goes back from a menu opened in another one.
 from dataclasses import dataclass
 
 from . import __version__, drive, exposure, lenses, looks, picture, video
+from .apps.network import local_address
 from .settings import FN_ACTIONS, PEAKING_COLORS, PEAKING_SENSITIVITIES, UPDATE_MODES
 
 
@@ -224,6 +225,42 @@ QUICK_VIDEO = (
     GUIDE,
 )
 APPLICATIONS = Item("Applications", kind="open", target=lambda camera: camera.apps_menu(), text=lambda camera: "›")
+# The network (wifi.py, web_access.py): camera.wifi and camera.web_access; None in the
+# tests, as the camera may be.
+def _wifi(camera):
+    return getattr(camera, "wifi", None)
+
+
+def _site(camera):
+    wifi = _wifi(camera)
+    address = wifi.address if wifi else local_address()
+    return f"http://{address}:8080" if address else "—"
+
+
+def _browsers(camera):
+    access = getattr(camera, "web_access", None)
+    return str(len(access.browsers)) if access else "—"
+
+
+WEB_CODE = Item("Code d'accès du site", "web_code", (True, False), ("Oui", "Non · tout le réseau local"))
+NETWORK = (
+    Item("Wi-Fi", kind="info", text=lambda c: _wifi(c).summary() if _wifi(c) else "—"),
+    Item(
+        "Point d'accès",
+        kind="toggle",
+        target=lambda c: _wifi(c) and _wifi(c).toggle_hotspot(),
+        text=lambda c: _wifi(c).hotspot_text() if _wifi(c) else "—",
+    ),
+    Item("Son nom", kind="info", text=lambda c: _wifi(c).hotspot_ssid if _wifi(c) else "—"),
+    Item("Son mot de passe", kind="info", text=lambda c: _wifi(c).hotspot_password() if _wifi(c) else "—"),
+    Item("Adresse du site", kind="info", text=_site),
+    WEB,
+    WEB_CODE,
+    Item("Navigateurs autorisés", kind="info", text=_browsers),
+    Item("Oublier les navigateurs", kind="run", target=lambda c: c.forget_browsers(), text=lambda c: "›"),
+)
+
+
 # The updates (updates.py): camera.updates; None in the tests, as the camera may be.
 def _updates(camera):
     return getattr(camera, "updates", None)
@@ -231,6 +268,7 @@ def _updates(camera):
 
 UPDATE_MODE = Item("Mises à jour", "update_mode", UPDATE_MODES, ("Automatiques · au démarrage", "Proposées", "Désactivées"))
 SYSTEM = (
+    Item("Date et heure", kind="info", text=lambda c: c.clock.text() if getattr(c, "clock", None) else "—"),
     Item("Version", kind="info", text=lambda c: _updates(c).version_text() if _updates(c) else __version__),
     UPDATE_MODE,
     Item("État", kind="info", text=lambda c: _updates(c).state_text() if _updates(c) else "—"),
@@ -297,7 +335,7 @@ FULL = (
     APERTURE,
     LENS_SHADING,
     Item("Réseau"),
-    WEB,
+    *NETWORK,
     Item("Affichage"),
     GRID,
     GUIDE,

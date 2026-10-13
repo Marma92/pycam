@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import os
+import shutil
 import signal
 
 from . import __version__
@@ -35,7 +36,7 @@ def main():
 
 def check():
     """Before an update is installed (updater.py): everything the camera loads, loaded."""
-    from . import apps, hud, inputs, updates, web  # noqa: F401
+    from . import apps, hud, inputs, updates, web, wifi  # noqa: F401
 
     print(f"pycam {__version__}")
 
@@ -57,6 +58,10 @@ async def run(args):
     from .updates import Updates
 
     camera.updates = Updates(camera)
+    if shutil.which("nmcli"):  # NetworkManager: Raspberry Pi OS's
+        from .wifi import Wifi
+
+        camera.wifi = Wifi(camera)
     camera.ready_path = os.path.join(os.path.dirname(args.socket), "ready")
 
     main_task = asyncio.current_task()

@@ -15,6 +15,8 @@ SupplementaryGroups=input
 WorkingDirectory=@PYCAM@/app
 ExecStart=/usr/bin/python3 -m pycam --socket /run/pycam/engine.sock
 Environment=PYTHONUNBUFFERED=1
+# The clock, from the phone that opens the web page when no network gives it (clock.py).
+AmbientCapabilities=CAP_SYS_TIME
 Restart=on-failure
 RestartSec=2
 # SIGTERM: settings saved, default HUD back on the screen.

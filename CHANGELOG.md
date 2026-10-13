@@ -22,11 +22,11 @@ Première version publiée : l'appareil photo complet sur Raspberry Pi 3B + HQ C
 ### Lecture et interface web
 
 - Lecture des photos et des vidéos, extraction d'une image.
-- Interface web sur le réseau local : visée, déclencheur, galerie, presets, comptes, partage.
+- Interface web sur le réseau local : visée, déclencheur, galerie, presets, comptes, partage. Un navigateur y accède après avoir saisi un code affiché sur l'écran de l'appareil.
 
 ### Applications
 
-- Cloud sync : ownCloud / Nextcloud, Dropbox, Google Drive (synchroniser, déverser, à la demande).
+- Cloud sync (**expérimental** : essayé seulement contre de faux services) : ownCloud / Nextcloud, Dropbox, Google Drive (synchroniser, déverser, à la demande).
 - Partage : Instagram, Flickr, Bluesky, à la manière de SPP.
 
 ### Système
@@ -34,3 +34,5 @@ Première version publiée : l'appareil photo complet sur Raspberry Pi 3B + HQ C
 - Installation en une commande sur Raspberry Pi OS 64 bits (`tools/install.sh`), dans `/opt/pycam`.
 - Mises à jour : l'appareil cherche une nouvelle version dès qu'il trouve Internet, la télécharge, l'installe au démarrage suivant, et revient tout seul à la précédente si elle ne démarre pas.
 - Releases construites et testées par GitHub Actions, moteur compilé pour le Pi.
+- Wi-Fi sans clavier : l'appareil ouvre son propre point d'accès, et le site lui fait rejoindre un réseau.
+- Heure : sans réseau, celle du téléphone ou de l'ordinateur qui ouvre le site.

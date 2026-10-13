@@ -89,6 +89,8 @@ class Settings:
     keep_base: bool = False  # also write the JPEG without the look (PYB_0001.JPG)
     lens_shading: bool = False  # correct the lens shading (another ISP tuning)
     web: bool = True  # the web interface, on the local network (web.py)
+    web_code: bool = True  # only the browsers paired by a code shown on the screen (web_access.py)
+    hotspot_password: str = ""  # the camera's access point (wifi.py), made at its first use
     cloud_mode: str = "sync"  # CLOUD_MODES; nothing happens until an account is connected
     update_mode: str = "auto"  # UPDATE_MODES
     update_checked: float = 0.0  # when the last release was looked for (time.time())

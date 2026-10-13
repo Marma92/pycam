@@ -14,7 +14,7 @@ Il vise à offrir :
 ## Statut
 
 - **M0** (« ça prend des photos ») et **M1** (« appareil manuel ») : terminés.
-- **M3** (« avancé ») : presque terminé. Modes de déclenchement, timelapse, empilement, poses longues et pose B, ZSL, DNG compressé et vidéo sont faits. Les simulations de pellicules restent à affiner sur de vraies photos. Cloud sync et Partage sont testés contre de faux services, pas encore avec de vrais comptes.
+- **M3** (« avancé ») : presque terminé. Modes de déclenchement, timelapse, empilement, poses longues et pose B, ZSL, DNG compressé et vidéo sont faits. Les simulations de pellicules restent à affiner sur de vraies photos. Cloud sync (**expérimental**) et Partage sont testés contre de faux services, pas encore avec de vrais comptes.
 - **M2** (« autonome ») : la partie logicielle est prête (menus, lecture, interface web, veille de l'écran). Reste le matériel : boutons et molettes (choisis et câblés sur le papier, `docs/hardware.md`), batterie, horloge, niveau électronique.
 
 Le détail, fonction par fonction : `docs/features.md`. Les versions : `CHANGELOG.md`. Le Pi 3B démarre directement sur l'appareil photo ; en attendant les boutons, un clavier USB tient lieu de commandes, une touche par commande de l'appareil.
@@ -28,6 +28,8 @@ curl -fsSL https://raw.githubusercontent.com/Marma92/pycam/master/tools/install.
 ```
 
 Puis `sudo reboot` : l'appareil démarre sur la visée. Il se met ensuite à jour tout seul (voir Système, plus bas).
+
+Le Wi-Fi se règle dans Raspberry Pi Imager en préparant la carte ; ensuite, sans clavier, depuis le site de l'appareil : il ouvre son propre point d'accès (MENU › Réseau, ou de lui-même s'il ne connaît aucun réseau), on s'y connecte avec un téléphone, et on lui choisit un réseau. À la première visite du site, un code affiché sur l'écran de l'appareil autorise le navigateur.
 
 ## Ce que l'appareil fait aujourd'hui
 
@@ -57,16 +59,18 @@ Puis `sudo reboot` : l'appareil démarre sur la visée. Il se met ensuite à jou
 
 ### Applications (MENU › Applications)
 
-- **Cloud sync** : la carte envoyée vers ownCloud / Nextcloud, Dropbox ou Google Drive dès que le Wi-Fi trouve Internet, puis après chaque prise. Au choix : tout garder, libérer la carte (seulement ce qui est vérifié dans le cloud, jamais par-dessus un autre fichier), ou à la demande. Jamais tout seul sur un réseau facturé (le partage de connexion d'un téléphone), ni pendant une prise qui dure.
+- **Cloud sync** (*expérimental*, pas encore essayé avec de vrais comptes) : la carte envoyée vers ownCloud / Nextcloud, Dropbox ou Google Drive dès que le Wi-Fi trouve Internet, puis après chaque prise. Au choix : tout garder, libérer la carte (seulement ce qui est vérifié dans le cloud, jamais par-dessus un autre fichier), ou à la demande. Jamais tout seul sur un réseau facturé (le partage de connexion d'un téléphone), ni pendant une prise qui dure.
 - **Partage** : une photo publiée sur Instagram, Flickr et Bluesky, à la manière de [SPP](https://github.com/Marma92/SPP) : une légende tirée de la photo (appareil, objectif, date, et le preset en guise de pellicule), l'image que chaque réseau attend, et l'aperçu de ce qu'il publiera (où la légende est coupée). Une file d'attente publie dès que l'appareil est en ligne.
 
 ### Interface web
 
-Sur le réseau local (port 8080), d'un téléphone ou d'un ordinateur : visée, déclencheur, choix du preset et du mode photo / vidéo ; galerie (photos et vidéos : lecture, téléchargement, suppression) ; installation de presets ; connexion des comptes cloud et des réseaux (l'appareil n'a pas de clavier) ; partage d'une photo avec titre, description, texte alternatif et hashtags. Les mots de passe et jetons restent sur l'appareil, dans des fichiers que seul son utilisateur peut lire.
+Sur le réseau local (port 8080), d'un téléphone ou d'un ordinateur : visée, déclencheur, choix du preset et du mode photo / vidéo ; galerie (photos et vidéos : lecture, téléchargement, suppression) ; installation de presets ; connexion des comptes cloud et des réseaux (l'appareil n'a pas de clavier) ; partage d'une photo avec titre, description, texte alternatif et hashtags. Les mots de passe et jetons restent sur l'appareil, dans des fichiers que seul son utilisateur peut lire. Seuls les navigateurs autorisés par un **code affiché sur l'écran** de l'appareil y ont accès.
 
 ### Système
 
 - **Installation** en une commande (ci-dessus), dans `/opt/pycam`.
+- **Wi-Fi sans clavier** : le point d'accès de l'appareil, puis le choix du réseau depuis le site.
+- **Heure** : du réseau, ou à défaut du téléphone qui ouvre le site (le Pi n'a pas d'horloge à pile).
 - **Mises à jour** : dès qu'il trouve Internet (jamais sur un réseau facturé), l'appareil cherche une nouvelle version, la télécharge et vérifie son empreinte ; il l'installe au démarrage suivant, avant la première photo (ou seulement sur demande, au choix : MENU › Système, ou l'onglet Système du site). La nouvelle version est essayée avant que rien ne s'arrête, et s'il ne repart pas correctement dessus, l'appareil revient tout seul à la précédente.
 
 ## Comment c'est fait

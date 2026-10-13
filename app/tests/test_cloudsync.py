@@ -557,7 +557,7 @@ class CloudWebTest(Base):
     async def test_connect_owncloud_from_the_web_page(self):
         fake = FakeWebDav()
         url = await self.serve(fake)
-        settings = Settings(dcim=self.root)
+        settings = Settings(dcim=self.root, web_code=False)  # the pairing: test_web.py
         camera = Camera(settings, os.path.join(self.tmp.name, "settings.json"), FakeEngine())
         config_path = os.path.join(self.tmp.name, "cloud.json")
         camera.apps = [sync.CloudSync(camera, config_path=config_path, db_path=os.path.join(self.tmp.name, "db"))]

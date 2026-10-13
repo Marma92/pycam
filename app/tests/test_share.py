@@ -475,6 +475,7 @@ class ShareTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.share.hud(), "PARTAGE BLUESKY")
 
     async def test_web(self):
+        self.camera.settings.web_code = False  # the pairing: test_web.py
         client = TestClient(TestServer(WebServer(self.camera).app))
         await client.start_server()
         try:

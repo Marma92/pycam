@@ -1,0 +1,16 @@
+// pycam: the camera's user drives the Wi-Fi (app/pycam/wifi.py) from its service, without
+// a session to ask in: join a network, open the camera's own access point, look around.
+// Installed by tools/install-services.sh or app/pycam/updater.py, @USER@ filled in.
+polkit.addRule(function(action, subject) {
+    var allowed = [
+        "org.freedesktop.NetworkManager.network-control",
+        "org.freedesktop.NetworkManager.settings.modify.system",
+        "org.freedesktop.NetworkManager.settings.modify.own",
+        "org.freedesktop.NetworkManager.wifi.scan",
+        "org.freedesktop.NetworkManager.wifi.share.protected",
+        "org.freedesktop.NetworkManager.enable-disable-wifi"
+    ];
+    if (subject.user == "@USER@" && allowed.indexOf(action.id) >= 0) {
+        return polkit.Result.YES;
+    }
+});

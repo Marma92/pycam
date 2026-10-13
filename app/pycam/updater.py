@@ -117,12 +117,14 @@ def _tail(text, lines=3):
 
 class Updater:
     def __init__(self, root="/opt/pycam", state="/var/lib/pycam-update", run_dir="/run/pycam",
-                 systemd="/etc/systemd/system", tmpfiles="/etc/tmpfiles.d/pycam.conf", api=None, runner=None):  # fmt: skip
+                 systemd="/etc/systemd/system", tmpfiles="/etc/tmpfiles.d/pycam.conf",
+                 polkit="/etc/polkit-1/rules.d/50-pycam.rules", api=None, runner=None):  # fmt: skip
         self.root = root
         self.state = state
         self.run_dir = run_dir
         self.systemd = systemd
         self.tmpfiles = tmpfiles
+        self.polkit = polkit
         self.api = api or f"https://api.github.com/repos/{REPOSITORY}/releases/latest"
         self.runner = runner or subprocess.run
         self.health_seconds = HEALTH_SECONDS
@@ -509,12 +511,18 @@ class Updater:
     # --- The services
 
     def install_units(self, force=False):
-        """The systemd units of the current release, filled in."""
+        """The systemd units of the current release, and its other system files, filled in.
+        One a release does not have (an older one, gone back to) is left as it is."""
         current, user = self.link("current"), self.config()["user"]
         changed = force
-        for unit, dest in [(u, os.path.join(self.systemd, u)) for u in UNITS] + [("pycam.tmpfiles", self.tmpfiles)]:
-            with open(os.path.join(current, "system", unit + ".in"), encoding="utf-8") as f:
-                text = f.read().replace("@USER@", user).replace("@PYCAM@", current)
+        files = [(u, os.path.join(self.systemd, u)) for u in UNITS]
+        files += [("pycam.tmpfiles", self.tmpfiles), ("pycam.polkit.rules", self.polkit)]
+        for unit, dest in files:
+            try:
+                with open(os.path.join(current, "system", unit + ".in"), encoding="utf-8") as f:
+                    text = f.read().replace("@USER@", user).replace("@PYCAM@", current)
+            except FileNotFoundError:
+                continue
             try:
                 with open(dest, encoding="utf-8") as f:
                     if f.read() == text:

@@ -174,6 +174,20 @@ Le script fait l'inventaire de l'OS, de la mémoire et de la CMA, de la caméra,
 
 ## Droits sur le Pi
 
+L'application tourne sous l'utilisateur de l'appareil, sans root, avec deux droits précis, installés par `install-services.sh` (développement) ou `updater.py` (releases) :
+
+- `CAP_SYS_TIME`, par `AmbientCapabilities` dans `pycam.service` : régler l'horloge depuis le téléphone (`clock.py`). Lancée à la main, l'application ne l'a pas, et le dit dans le journal ;
+- une règle polkit, `/etc/polkit-1/rules.d/50-pycam.rules` : piloter le Wi-Fi par NetworkManager sans session (`wifi.py`). Pour vérifier ce que le service peut faire : `sudo systemd-run --wait --pipe --uid=ael nmcli general permissions`.
+
+**Essayer le point d'accès par SSH** : le Pi n'a qu'un émetteur Wi-Fi, et l'ouvrir coupe la connexion SSH s'il n'est pas sur câble. Programmer d'abord le retour, en root, détaché de la session :
+
+```bash
+printf '#!/bin/sh\nsleep 90\nnmcli connection down pycam-hotspot\nnmcli connection up <la connexion habituelle>\n' > /tmp/ap-revert.sh
+sudo systemd-run --unit=pycam-ap-revert sh /tmp/ap-revert.sh
+```
+
+puis ouvrir le point d'accès (MENU › Réseau, ou l'API du site), et regarder ensuite `journalctl -u NetworkManager -u wpa_supplicant` (`AP-ENABLED`). Même sans retour programmé, le point d'accès n'est pas rouvert au démarrage suivant : un redémarrage ramène le Pi sur son réseau.
+
 `ael` a un `sudo` sans mot de passe pendant le développement : `/etc/sudoers.d/010_ael-nopasswd`, créé par l'utilisateur le 2026-10-11. Pour le retirer :
 
 ```bash

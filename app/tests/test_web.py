@@ -1,6 +1,8 @@
+import asyncio
 import io
 import os
 import tempfile
+import time
 import unittest
 import zipfile
 
@@ -56,8 +58,18 @@ class WebTest(unittest.IsolatedAsyncioTestCase):
         self.settings = Settings(dcim=os.path.join(self.tmp.name, "DCIM"))
         self.engine = FakeEngine()
         self.camera = Camera(self.settings, os.path.join(self.tmp.name, "settings.json"), self.engine)
-        self.client = TestClient(TestServer(WebServer(self.camera).app))
+        self.web = WebServer(self.camera)
+        self.client = TestClient(TestServer(self.web.app))
         await self.client.start_server()
+        # Paired, as the page does (web_access.py): the other tests go with its cookie.
+        await self.pair(self.client)
+
+    async def pair(self, client, name="tests"):
+        r = await client.post("/api/access/code")
+        self.assertEqual(r.status, 200, await r.text())
+        r = await client.post("/api/access/pair", json={"code": self.web.access._code[0], "name": name})
+        self.assertEqual(r.status, 200, await r.text())
+        self.web.access._last_code -= 60  # the next one at once
 
     async def asyncTearDown(self):
         await self.client.close()
@@ -68,6 +80,59 @@ class WebTest(unittest.IsolatedAsyncioTestCase):
                 os.environ[key] = value
         looks.refresh()
         self.tmp.cleanup()
+
+    async def test_only_paired_browsers(self):
+        stranger = TestClient(TestServer(self.web.app))
+        await stranger.start_server()
+        self.addAsyncCleanup(stranger.close)
+        r = await stranger.get("/")
+        self.assertEqual(r.status, 200)  # the page, to type the code in
+        self.assertEqual((await (await stranger.get("/api/access")).json())["paired"], False)
+        for path in ("/api/state", "/api/photos", "/api/preview.jpg", "/api/system", "/api/cloud"):
+            self.assertEqual((await stranger.get(path)).status, 401, path)
+        self.assertEqual((await stranger.post("/api/shutter")).status, 401)
+        # The code, on the camera's screen.
+        r = await stranger.post("/api/access/code")
+        code = self.web.access._code[0]
+        self.assertEqual(self.camera.view().message, f"Code du site : {code[:3]} {code[3:]}")
+        self.assertEqual((await stranger.post("/api/access/pair", json={"code": "000000" if code != "000000" else "111111"})).status, 403)
+        self.assertEqual((await stranger.post("/api/access/pair", json={"code": code, "name": "Firefox · Linux"})).status, 200)
+        self.assertEqual((await stranger.get("/api/state")).status, 200)
+        names = [b["name"] for b in (await (await stranger.get("/api/access/browsers")).json())["browsers"]]
+        self.assertEqual(names, ["tests", "Firefox · Linux"])
+        # Forgotten: no more access.
+        mine = next(b for b in self.web.access.browsers if b["name"] == "Firefox · Linux")
+        await self.client.post("/api/access/forget", json={"id": mine["id"]})
+        self.assertEqual((await stranger.get("/api/state")).status, 401)
+        # The code off (MENU › Réseau): the whole local network again.
+        self.settings.web_code = False
+        self.assertEqual((await stranger.get("/api/state")).status, 200)
+
+    async def test_the_clock_from_the_browser(self):
+        set_to = []
+        self.camera.clock.synced_path = os.path.join(self.tmp.name, "no-ntp")
+        self.camera.clock.setter = set_to.append
+        r = await (await self.client.post("/api/clock", json={"now": (time.time() + 7200) * 1000})).json()
+        self.assertEqual((r["result"], r["synchronized"]), ("set", False))
+        self.assertEqual(len(set_to), 1)
+        self.assertEqual(self.camera.view().message, "Heure réglée sur le téléphone")
+
+    async def test_wifi(self):
+        from tests.test_wifi import FakeNetworkManager
+
+        from pycam.wifi import Wifi
+
+        self.assertEqual((await self.client.get("/api/wifi")).status, 404)  # no NetworkManager
+        self.camera.wifi = Wifi(self.camera, run=FakeNetworkManager())
+        state = await (await self.client.get("/api/wifi")).json()
+        self.assertEqual((state["ssid"], state["hotspot"]), ("Free:box", False))
+        networks = (await (await self.client.post("/api/wifi/scan")).json())["networks"]
+        self.assertEqual(networks[0]["ssid"], "Free:box")
+        self.assertEqual((await self.client.post("/api/wifi/connect", json={"ssid": "Voisins", "password": "court"})).status, 400)
+        r = await (await self.client.post("/api/wifi/connect", json={"ssid": "Voisins", "password": "le-bon-mot"})).json()
+        self.assertEqual(r["message"], "Connexion à Voisins…")
+        await asyncio.sleep(0.05)
+        self.assertEqual(self.camera.wifi.ssid, "Voisins")
 
     async def test_system_and_updates(self):
         from pycam.updates import Updates
