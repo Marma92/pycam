@@ -97,6 +97,9 @@ class Queue:
 class Share:
     id = "share"
     title = "Partage"
+    # Not yet tried against real accounts (only the tests' fake services): said in the
+    # Applications menu and on the web page.
+    experimental = True
 
     def __init__(self, camera, config_path=None, data_path=None):
         self.camera = camera
@@ -146,7 +149,7 @@ class Share:
             Item("En échec", kind="info", text=lambda c: str(len(self.queue.entries("failed")))),
             Item("Réessayer les échecs", kind="run", target=lambda c: c.show_message(self.retry())),
         ]
-        return Menu(camera.settings, items=items, title="Partage", context=camera)
+        return Menu(camera.settings, items=items, title="Partage (expérimental)", context=camera)
 
     def photo_items(self, camera, path):
         if not PHOTO.match(os.path.basename(path or "")):

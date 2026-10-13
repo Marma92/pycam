@@ -27,7 +27,7 @@ Première version publiée : l'appareil photo complet sur Raspberry Pi 3B + HQ C
 ### Applications
 
 - Cloud sync (**expérimental** : essayé seulement contre de faux services) : ownCloud / Nextcloud, Dropbox, Google Drive (synchroniser, déverser, à la demande).
-- Partage : Instagram, Flickr, Bluesky, à la manière de SPP.
+- Partage (**expérimental** : essayé seulement contre de faux services) : Instagram, Flickr, Bluesky, à la manière de SPP.
 
 ### Système
 
