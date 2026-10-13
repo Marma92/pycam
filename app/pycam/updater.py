@@ -11,12 +11,13 @@ The application decides when (it knows whether the camera is online, and idle): 
 /var/lib/pycam-update/status.json, which the application reads. It cannot give anything
 else: a release only comes from GitHub, over HTTPS, checked against its SHA256SUMS.
 
-- check: the last release on GitHub; if it is newer, downloaded and checked.
-- install: the downloaded release unpacked, its engine and its application tried before
-  anything is stopped (a library missing or changed, a syntax error), the Debian packages
-  it needs installed, then the camera started again on it. If the application does not
-  say it is ready within two minutes (/run/pycam/ready), back to the previous release, and
-  this one is never proposed again.
+- check: the last release on GitHub; if it is newer, downloaded, checked (SHA-256),
+  unpacked, the Debian packages it needs installed, and tried while the camera goes on
+  (its engine loads with all its libraries, its application loads all its modules). One
+  that cannot run here is set aside, never proposed; the others wait, ready.
+- install: the release prepared, its engine tried again, then the camera restarted on it
+  (a few seconds). If the application does not say it is ready within two minutes
+  (/run/pycam/ready), back to the previous release, and this one is never proposed again.
 
 Standard library only, run as root with `python3 -I`: nothing from the camera user's
 environment. tools/install.sh runs `updater.py install-file <tarball> --user <user>` for
@@ -35,6 +36,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -57,6 +59,13 @@ class UpdateError(Exception):
     def __init__(self, message, transient=False):
         super().__init__(message)
         self.transient = transient
+
+
+class NotPublished(UpdateError):
+    """No release on GitHub yet."""
+
+    def __init__(self, message):
+        super().__init__(message, transient=True)
 
 
 def parse_version(text):
@@ -182,7 +191,7 @@ class Updater:
         except (OSError, ValueError):
             return {}
 
-    # --- check: the last release, downloaded
+    # --- check: the last release, downloaded and prepared
 
     def _get(self, url, limit, accept="application/octet-stream"):
         check_url(url)
@@ -190,14 +199,18 @@ class Updater:
         try:
             with self._opener.open(request, timeout=30) as response:
                 data = response.read(limit + 1)
-        except (OSError, http.client.HTTPException) as e:  # no network, DNS, TLS, HTTP errors
+        except urllib.error.HTTPError as e:
+            if e.code == 404 and url == self.api:
+                raise NotPublished("aucune version publiée") from e
+            raise UpdateError(f"GitHub répond {e.code}", transient=True) from e
+        except (OSError, http.client.HTTPException) as e:  # no network, DNS, TLS
             raise UpdateError(f"GitHub injoignable ({e})", transient=True) from e
         if len(data) > limit:
             raise UpdateError(f"réponse trop grande : {url}")
         return data
 
     def latest(self):
-        """The last release published: (version, notes, published, asset name, its url, size, sha256)."""
+        """The last release published: its version, notes, date, file, url, size, sha256."""
         try:
             release = json.loads(self._get(self.api, 1 << 20, "application/vnd.github+json"))
             tag, assets = release["tag_name"], {a["name"]: a for a in release.get("assets", [])}
@@ -227,41 +240,54 @@ class Updater:
         }
 
     def check(self):
-        status = self.load()
+        """The last release; a newer one downloaded, unpacked and tried at once, in the
+        background: installing it then only restarts the camera, and one that cannot run
+        here is set aside before it is even proposed."""
+        status, current = self.load(), self.current_version()
         failed = status.get("failed", [])
+        known = status.get("available") or {}
+        ready = status.get("state") == "ready" and self.release_version(os.path.join(self.releases, known.get("version", "?"))) == known.get("version")
         self.save(state="checking", message="Recherche d'une mise à jour", progress=0)
         try:
             release = self.latest()
+        except NotPublished:
+            self._prune()
+            return self.save(state="up_to_date", available=None, checked=time.time(), message=f"À jour ({current}) : aucune version publiée")
         except UpdateError as e:
+            if ready:  # the one prepared is still there
+                return self.save(state="ready", message=f"Mise à jour {known['version']} prête")
             return self.save(state="error", message=f"Recherche impossible : {e}")
-        current = self.current_version()
-        version = release["version"]
-        if not newer(version, current):
-            self._clean_downloads(keep=None)
-            return self.save(state="up_to_date", available=None, checked=time.time(), message=f"À jour ({current})")
-        if version in failed:
-            return self.save(state="up_to_date", available=None, checked=time.time(),
-                             message=f"{version} ignorée : son installation a échoué")  # fmt: skip
+        version, url = release["version"], release.pop("url")
+        if not newer(version, current) or version in failed:
+            self._prune()
+            message = f"{version} ignorée : son installation a échoué" if version in failed else f"À jour ({current})"
+            return self.save(state="up_to_date", available=None, checked=time.time(), message=message)
+        if ready and known.get("sha256") == release["sha256"]:
+            return self.save(state="ready", available=release, checked=time.time(), message=f"Mise à jour {version} prête")
+        self._prune()  # one prepared before, never installed
         path = os.path.join(self.downloads, release["file"])
         try:
-            if not (os.path.exists(path) and sha256(path) == release["sha256"]):
-                self._download(release, path)
+            self._download(release, url, path)
+            self.save(state="preparing", message=f"Préparation de {version}", progress=1)
+            self._prepare(self._unpack(path, version), version)
         except UpdateError as e:
-            return self.save(state="error", message=f"Téléchargement de {version} impossible : {e}")
-        self._clean_downloads(keep=release["file"])
-        del release["url"]
-        return self.save(state="ready", available=release, checked=time.time(), progress=1,
-                         message=f"Mise à jour {version} prête")  # fmt: skip
+            self._prune()
+            if e.transient:
+                return self.save(state="error", available=None, message=f"{version} : {e}")
+            return self.save(state="failed", available=None, failed=failed + [version], message=f"{version} écartée : {e}")
+        finally:
+            self._clean_downloads()
+        return self.save(state="ready", available=release, checked=time.time(), progress=1, message=f"Mise à jour {version} prête")
 
-    def _download(self, release, path):
+    def _download(self, release, url, path):
         if release["size"] > MAX_BYTES:
             raise UpdateError("fichier trop grand")
         os.makedirs(self.downloads, exist_ok=True)
         free = shutil.disk_usage(self.downloads).free
-        if free < 3 * release["size"] + 64 * 1024**2:  # the tarball, its files, and room left
+        if free < 4 * release["size"] + 64 * 1024**2:  # the tarball, its files, and room left
             raise UpdateError("pas assez de place sur la carte", transient=True)
-        check_url(release["url"])
-        request = urllib.request.Request(release["url"], headers={"User-Agent": f"pycam-updater/{self.current_version()}"})
+        check_url(url)
+        request = urllib.request.Request(url, headers={"User-Agent": f"pycam-updater/{self.current_version()}"})
         h, done, part = hashlib.sha256(), 0, path + ".part"
         self.save(state="downloading", message=f"Téléchargement de {release['version']}", progress=0)
         try:
@@ -275,36 +301,40 @@ class Updater:
                     if release["size"] and time.monotonic() - self._saved > 1:
                         self.save(progress=round(min(done / release["size"], 1), 2))
         except (OSError, http.client.HTTPException) as e:
-            raise UpdateError(f"interrompu ({e})", transient=True) from e
+            raise UpdateError(f"téléchargement interrompu ({e})", transient=True) from e
         if h.hexdigest() != release["sha256"]:
-            os.remove(part)
             raise UpdateError("empreinte SHA-256 différente", transient=True)
         os.replace(part, path)
 
-    def _clean_downloads(self, keep):
+    def _clean_downloads(self):
         try:
             names = os.listdir(self.downloads)
         except OSError:
             return
         for name in names:
-            if name != keep:
-                try:
-                    os.remove(os.path.join(self.downloads, name))
-                except OSError:
-                    pass
+            try:
+                os.remove(os.path.join(self.downloads, name))
+            except OSError:
+                pass
 
-    # --- install: unpacked, tried, switched to, checked
+    # --- install: the release prepared, switched to, checked
 
     def install(self):
         status = self.load()
-        release = status.get("available")
-        if status.get("state") != "ready" or not release:
+        version = (status.get("available") or {}).get("version")
+        if status.get("state") != "ready" or not version:
             return self.save(message="Aucune mise à jour à installer")
-        path = os.path.join(self.downloads, release["file"])
-        if not os.path.exists(path) or sha256(path) != release["sha256"]:
-            self._clean_downloads(keep=None)
-            return self.save(state="error", available=None, message="Fichier de mise à jour abîmé : à télécharger de nouveau")
-        return self._install(path, release["version"], check_health=True)
+        path = os.path.join(self.releases, version)
+        if self.release_version(path) != version:
+            return self.save(state="error", available=None, message="Mise à jour introuvable : à chercher de nouveau")
+        self.save(state="installing", message=f"Installation de {version}", progress=0)
+        try:
+            self._try_engine(path, version)  # the system may have changed since (apt)
+        except UpdateError as e:
+            self._prune()
+            return self.save(state="failed", available=None, failed=status.get("failed", []) + [version],
+                             message=f"{version} écartée : {e}")  # fmt: skip
+        return self._switch(path, version, check_health=True)
 
     def install_file(self, tarball, user):
         """The first installation (tools/install.sh), from a release's tarball."""
@@ -317,26 +347,20 @@ class Updater:
             self.install_units(force=True)
             self.systemctl("restart", *SERVICES)
             return self.save(state="installed", message=f"pycam {version} déjà installé : services réinstallés")
-        status = self._install(tarball, version, check_health=False)
+        status = self._install(tarball, version)
         if status.get("state") != "installed":
             raise SystemExit(status.get("message") or "installation impossible")
         return status
 
-    def _install(self, tarball, version, check_health):
-        failed = self.load().get("failed", [])
+    def _install(self, tarball, version):
+        """A release's tarball unpacked, prepared, and run at once (the first installation)."""
         self.save(state="installing", message=f"Installation de {version}", progress=0)
         try:
-            if not self.config().get("user"):
-                raise UpdateError("utilisateur de l'appareil inconnu (config.json) : relancer tools/install.sh", transient=True)
-            path = self._unpack(tarball, version)
-            self._prepare(path, version)
+            self._prepare(self._unpack(tarball, version), version)
         except UpdateError as e:
-            if e.transient:  # to try again: still ready
-                return self.save(state="ready" if self.load().get("available") else "error",
-                                 message=f"{version} non installée pour l'instant : {e}")  # fmt: skip
-            self._clean_downloads(keep=None)
-            return self.save(state="failed", failed=failed + [version], available=None, message=f"{version} non installée : {e}")
-        return self._switch(path, version, check_health)
+            self._prune()
+            return self.save(state="failed", message=f"{version} non installée : {e}")
+        return self._switch(os.path.join(self.releases, version), version, check_health=False)
 
     @staticmethod
     def _tarball_version(tarball):
@@ -401,17 +425,20 @@ class Updater:
                 result = self._run(cmd, timeout=APT_SECONDS, env=env)
                 if result.returncode:
                     raise UpdateError(f"paquets non installés ({_tail(result.stderr)})", transient=True)
-        # Every library and symbol of the engine resolved now (LD_BIND_NOW): a library that
-        # changed shows here, not at the camera's first photo.
-        engine = os.path.join(path, "engine", "build", "pycam-engine")
-        result = self._run([engine, "--version"], timeout=30, as_user=True, env=dict(os.environ, LD_BIND_NOW="1"))
-        if result.returncode or version not in result.stdout:
-            raise UpdateError(f"le moteur ne démarre pas sur ce système ({_tail(result.stderr or result.stdout)})")
+        self._try_engine(path, version)
         app = os.path.join(path, "app")
         self._run([sys.executable, "-m", "compileall", "-q", app], timeout=300)  # root's code: compiled once
         result = self._run([sys.executable, "-m", "pycam", "--check"], timeout=120, as_user=True, cwd=app)
         if result.returncode or version not in result.stdout:
             raise UpdateError(f"l'application ne se charge pas ({_tail(result.stderr or result.stdout)})")
+
+    def _try_engine(self, path, version):
+        """Every library and symbol of the engine resolved now (LD_BIND_NOW): a library that
+        changed shows here, not at the camera's first photo."""
+        engine = os.path.join(path, "engine", "build", "pycam-engine")
+        result = self._run([engine, "--version"], timeout=30, as_user=True, env=dict(os.environ, LD_BIND_NOW="1"))
+        if result.returncode or version not in result.stdout:
+            raise UpdateError(f"le moteur ne démarre pas sur ce système ({_tail(result.stderr or result.stdout)})")
 
     def installed_version(self, package):
         result = self._run(["dpkg-query", "-W", "-f=${Status}\t${Version}", package])
@@ -441,6 +468,7 @@ class Updater:
         # Not checked if the camera was not working before either (no camera module, say).
         if not check_health or not was_ready or before is None or self.wait_ready(version):
             self._prune()
+            self._clean_downloads()
             return self.save(state="installed", available=None, previous=self.release_version(before) if before else None,
                              progress=1, message=f"pycam {version} installé")  # fmt: skip
         # Back to the release that worked.
@@ -450,7 +478,6 @@ class Updater:
         self.install_units()
         self.systemctl("start", *SERVICES)
         shutil.rmtree(path, ignore_errors=True)
-        self._clean_downloads(keep=None)
         previous = self.release_version(before)
         return self.save(state="failed", available=None, failed=self.load().get("failed", []) + [version],
                          message=f"{version} n'a pas démarré : retour à {previous}")  # fmt: skip
@@ -463,13 +490,17 @@ class Updater:
         os.replace(tmp, link)  # atomic: one release or the other, never none
 
     def _prune(self):
-        """The releases other than the current and the previous ones, removed."""
+        """The releases other than the current and the previous ones, removed (one prepared
+        and never installed, one half unpacked)."""
         keep = {self.target("current"), self.target("previous")}
-        for name in os.listdir(self.releases):
+        try:
+            names = os.listdir(self.releases)
+        except OSError:
+            return
+        for name in names:
             path = os.path.join(self.releases, name)
             if os.path.realpath(path) not in keep:
                 shutil.rmtree(path, ignore_errors=True)
-        self._clean_downloads(keep=None)
 
     # --- The services
 

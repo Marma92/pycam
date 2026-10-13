@@ -150,7 +150,7 @@ class UpdaterTest(unittest.TestCase):
         path = os.path.join(self.tmp.name, f"pycam-{version}.tar.gz")
         with open(path, "wb") as f:
             f.write(make_release(version, **kwargs))
-        return self.updater._install(path, version, check_health=False)
+        return self.updater._install(path, version)
 
     def status(self):
         return self.updater.load()
@@ -171,24 +171,33 @@ class UpdaterTest(unittest.TestCase):
         self.assertTrue(self.system.called("systemctl", "start", "pycam-engine.service", "pycam.service"))
 
     def test_up_to_date(self):
+        status = self.updater.check()  # nothing published yet: GitHub answers 404
+        self.assertEqual((status["state"], status["message"]), ("up_to_date", "À jour (0.1.0) : aucune version publiée"))
         self.github.publish("0.1.0", make_release("0.1.0"))
         self.assertEqual(self.updater.check()["state"], "up_to_date")
 
     def test_a_newer_release_is_downloaded(self):
         tarball = make_release("0.2.0")
         self.github.publish("0.2.0", tarball)
+        self.system.calls.clear()
         status = self.updater.check()
         self.assertEqual((status["state"], status["available"]["version"], status["available"]["notes"]), ("ready", "0.2.0", "Nouveau dans 0.2.0"))
-        with open(os.path.join(self.updater.downloads, "pycam-0.2.0-arm64.tar.gz"), "rb") as f:
-            self.assertEqual(f.read(), tarball)
-        self.assertEqual(self.updater.check()["state"], "ready")  # already there: not again
+        # Prepared at once: unpacked and tried, while the camera goes on.
+        self.assertEqual(self.updater.release_version(os.path.join(self.updater.releases, "0.2.0")), "0.2.0")
+        self.assertEqual((self.updater.current_version(), os.listdir(self.updater.downloads)), ("0.1.0", []))
+        self.assertEqual(self.system.called("systemctl", "stop"), [])
+        self.github.release = None  # already there: not again
+        self.github.publish("0.2.0", b"not downloaded again", sums=f"{hashlib.sha256(tarball).hexdigest()}  pycam-0.2.0-arm64.tar.gz\n")
+        self.assertEqual(self.updater.check()["state"], "ready")
+        self.updater.api = "http://127.0.0.1:9/nothing"  # offline: still ready
+        self.assertEqual(self.updater.check()["state"], "ready")
 
     def test_a_damaged_download_is_refused(self):
         self.github.publish("0.2.0", make_release("0.2.0"), sums=f"{'0' * 64}  pycam-0.2.0-arm64.tar.gz\n")
         status = self.updater.check()
         self.assertEqual(status["state"], "error")
         self.assertIn("SHA-256", status["message"])
-        self.assertEqual(os.listdir(self.updater.downloads), [])
+        self.assertEqual((os.listdir(self.updater.downloads), os.listdir(self.updater.releases)), ([], ["0.1.0"]))
 
     def test_no_network(self):
         self.updater.api = "http://127.0.0.1:9/nothing"
@@ -239,15 +248,25 @@ class UpdaterTest(unittest.TestCase):
         self.assertEqual(self.updater.install()["state"], "installed")
 
     def test_a_release_that_cannot_run_here_stops_nothing(self):
+        # Found out as soon as it is downloaded: never proposed.
         for version, broken, why in (("0.2.0", {"engine": "broken"}, "libcamera.so.0.9"), ("0.2.1", {"app": "broken"}, "SyntaxError")):
             self.github.publish(version, make_release(version, **broken))
-            self.updater.check()
             self.system.calls.clear()
-            status = self.updater.install()
-            self.assertEqual((status["state"], status["current"]), ("failed", "0.1.0"))
+            status = self.updater.check()
+            self.assertEqual((status["state"], status["current"], status["available"]), ("failed", "0.1.0", None))
             self.assertIn(version, status["failed"])
             self.assertIn(why, status["message"])
             self.assertEqual(self.system.called("systemctl", "stop"), [])  # the camera went on
+            self.assertEqual(os.listdir(self.updater.releases), ["0.1.0"])
+        # Or when the system changed between the download and the installation.
+        self.github.publish("0.2.2", make_release("0.2.2"))
+        self.updater.check()
+        engine = os.path.join(self.updater.releases, "0.2.2", "engine", "build", "pycam-engine")
+        with open(engine, "w") as f:
+            f.write("#!/bin/sh\nexit 127\n")
+        status = self.updater.install()
+        self.assertEqual((status["state"], status["current"]), ("failed", "0.1.0"))
+        self.assertEqual(self.system.called("systemctl", "stop"), [])
 
     def test_what_it_needs_from_debian(self):
         self.system.packages = {"librpicam-app1": "1.12.0-1"}  # older than the engine's, and no Pillow
@@ -258,8 +277,7 @@ class UpdaterTest(unittest.TestCase):
 
     def test_an_archive_writing_outside_is_refused(self):
         self.github.publish("0.2.0", make_release("0.2.0", extra={"../../evil": "x"}))
-        self.updater.check()
-        self.assertEqual(self.updater.install()["state"], "failed")
+        self.assertEqual(self.updater.check()["state"], "failed")
         self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "evil")))
 
     def test_requests_from_the_application(self):

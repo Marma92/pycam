@@ -454,6 +454,7 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
   - `pycam.service` : application. Elle ne dépend que *faiblement* du moteur (`Wants`) : elle se reconnecte seule, et un redémarrage du moteur ne la relance pas.
   - Tous deux réessaient indéfiniment au démarrage, au cas où la caméra apparaîtrait tard.
   - Le socket est dans `/run/pycam`, créé au démarrage par `tmpfiles.d`.
+- ✅ **Installation et mises à jour** (2026-10-13) : voir §8.1.
 - ⚠️ **Plymouth garde l'écran.** L'écran de démarrage (`splash` dans `cmdline.txt`) reste maître DRM de 12 s à 43 s après le démarrage du noyau, et le moteur, lancé à 21 s, n'avait pas l'écran. Deux parades :
   - le service moteur commence par `plymouth quit --retain-splash`, comme le font les gestionnaires de session graphique : le logo reste affiché jusqu'à ce que la visée le remplace ;
   - le moteur retente l'écran toutes les 2 s tant qu'il ne l'a pas, et l'annonce par l'évènement `display_ready`. Ça couvre aussi un écran branché après coup.
@@ -465,6 +466,44 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
   - lancer le moteur plus tôt (dépendances systemd minimales).
 - **Robustesse sur batterie.** Racine en lecture seule (`overlayroot`) plus une partition de données, pour qu'une coupure brutale ne corrompe pas le système. À activer une fois le projet stabilisé.
 - **Heure.** RTC I2C (overlay `i2c-rtc`), synchronisée par NTP quand le Wi-Fi est disponible.
+
+### 8.1 Releases et mises à jour
+
+**Une version, un numéro.** Le fichier `VERSION` à la racine : le moteur le lit à la compilation (`pycam-engine --version`), l'application à son lancement (`python3 -m pycam --version`, MENU › Système, onglet Système du site, journal).
+
+**Une release** est une archive construite par GitHub Actions (`.github/workflows/build.yml`) : le moteur compilé sur un runner ARM, dans un conteneur Debian Trixie avec l'archive de Raspberry Pi (les mêmes bibliothèques que l'appareil), les tests du moteur et de l'application, puis `tools/package.sh`. L'archive `pycam-<version>-arm64.tar.gz` (~600 Ko, 1,7 Mo décompressée) contient l'application, les services, les outils, la documentation, le tuning de l'ISP et le moteur compilé, avec `RELEASE.json` : la version, le commit, les paquets Debian nécessaires (ceux des bibliothèques que le moteur nomme, et ceux de l'application), et les versions de libcamera et rpicam contre lesquelles le moteur a été compilé. Un tag `vX.Y.Z` la publie comme release GitHub, avec ses empreintes `SHA256SUMS` et, pour notes, sa section de `CHANGELOG.md`. Sur chaque autre branche, la CI s'arrête à l'archive (un artefact du run).
+
+**Sur l'appareil**, une release s'installe dans `/opt/pycam/releases/<version>`, à root : l'utilisateur de l'appareil ne peut pas modifier ce que root exécute. `/opt/pycam/current` pointe vers celle qui tourne, `/opt/pycam/previous` vers la précédente ; les services exécutent `/opt/pycam/current`. Basculer est le remplacement atomique d'un lien symbolique : une coupure de courant laisse l'une ou l'autre version, jamais aucune. Seules ces deux versions sont gardées.
+
+**Les rôles.** L'application décide *quand*, root fait *quoi* :
+
+- l'application (`updates.py`) sait si l'appareil est en ligne (NetworkManager, comme Cloud sync) et s'il est occupé. Elle écrit sa demande, `check` ou `install`, dans `/run/pycam/update-request` ;
+- `pycam-update.path` démarre alors `pycam-update.service`, en root, qui exécute `app/pycam/updater.py` (bibliothèque standard seule, `python3 -I`). Il répond dans `/var/lib/pycam-update/status.json`, que l'application lit ;
+- l'application ne peut rien lui donner d'autre qu'un de ces deux mots : la release vient toujours de GitHub, en HTTPS (les redirections aussi), vérifiée par son SHA-256.
+
+**Quand.** Dès que l'appareil trouve Internet, sauf sur un réseau facturé (le partage de connexion d'un téléphone), au plus toutes les six heures : la dernière release est cherchée et, si elle est plus récente, téléchargée et préparée tout de suite, en arrière-plan (`Nice`, E/S en priorité basse), l'appareil photo continuant de tourner. Trois modes (MENU › Système › Mises à jour) :
+
+- **Automatiques** (par défaut) : elle s'installe au **démarrage suivant** de l'appareil, avant la première photo. Jamais au milieu d'une séance : l'installation redémarre l'appareil photo (une vingtaine de secondes) ;
+- **Proposées** : l'appareil l'annonce, on l'installe de MENU › Système › Mise à jour ou du site ;
+- **Désactivées** : rien, sauf à la demande.
+
+**La préparation**, dès le téléchargement, dans `updater.py` :
+
+1. l'archive, vérifiée par son SHA-256, est décompressée dans `/opt/pycam/releases/<version>` sans rien écrire hors de son dossier (`tarfile`, filtre `data` : pas de chemin absolu, de lien sortant, de fichier spécial ni de bit setuid), puis supprimée ;
+2. les paquets Debian qui manquent sont installés, et libcamera et rpicam mis au moins à la version du moteur ;
+3. **la nouvelle version est essayée pendant que l'appareil photo tourne** : le moteur doit donner sa version avec toutes ses bibliothèques et tous ses symboles résolus (`LD_BIND_NOW=1` : une bibliothèque changée se voit ici, pas à la première photo), l'application doit charger tous ses modules (`--check`), en tant qu'utilisateur de l'appareil. Une version qui échoue est écartée avant même d'être proposée, et ne l'est plus jamais.
+
+**L'installation**, ensuite, ne coupe l'appareil photo que quelques secondes :
+
+1. le moteur préparé est essayé de nouveau (le système a pu changer depuis) ;
+2. les services s'arrêtent, `current` bascule, les unités systemd de la nouvelle version sont installées, les services repartent ;
+3. **contrôle** : l'application écrit `/run/pycam/ready` (sa version) une fois connectée au moteur et tout lui avoir envoyé. Sans ce signal de la nouvelle version en deux minutes, retour à la précédente (lien, unités, services), et cette version n'est plus proposée. Le contrôle n'a lieu que si l'appareil fonctionnait avant (sans module caméra, rien ne prouverait la faute de la mise à jour).
+
+Après le redémarrage, l'appareil affiche une fois le résultat : « pycam 0.1.1 installé », ou « 0.1.1 n'a pas démarré : retour à 0.1.0 ».
+
+**L'installation initiale** (`tools/install.sh`) emprunte le même chemin : elle télécharge la dernière release (ou prend une archive donnée), vérifie son empreinte, et lance l'`updater.py` de la release (`install-file`), qui installe les paquets, `/opt/pycam`, les services et les mises à jour, sans contrôle de démarrage.
+
+**Développement et release sur le même Pi.** `tools/deploy.sh` et `tools/install-services.sh` font tourner l'appareil sur `~/pycam` : l'application s'y sait en développement (« 0.1.0 · développement »), ne demande aucune mise à jour, et `pycam-update.path` est désactivé. `sudo sh tools/install.sh` le remet sur les releases.
 
 ## 9. Testabilité
 
@@ -508,4 +547,5 @@ Les commandes d'affichage (`overlay` pour peaking et zébras, `zoom` pour la lou
 | D7 | Écran HDMI sans tactile ; navigation 100 % boutons et molettes | DSI tactile ; SPI | Choix de l'utilisateur (2026-10-11). Le GPIO reste libre et on garde la composition matérielle. |
 | D8 | Deux stratégies de capture, « bascule » (visée 30 i/s, ~0,4 s de latence) et « ZSL » (visée ~10 i/s, latence ~0), au choix | Une seule stratégie imposée | D'après les mesures du 2026-10-11 : aucune n'est meilleure dans tous les cas. |
 | D9 | Cloud sync parle lui-même aux trois services (aiohttp), avec l'app Dropbox et le client Google de l'utilisateur | rclone ; une app « pycam » enregistrée chez Dropbox et Google | Aucun secret dans un dépôt public, aucune validation d'app par Google, chacun garde la main sur ses accès. rclone ajouterait un binaire de ~60 Mo et sa propre configuration, sans le contrôle fin de la vérification avant effacement. |
+| D11 | Releases compilées par GitHub Actions (Trixie + archive Raspberry Pi, runner ARM), installées par un service root à la demande de l'application, avec essai avant bascule et retour arrière | Compiler sur l'appareil (`git pull`) ; paquets `.deb` et un dépôt apt ; images système A/B (RAUC, Mender) | Compiler le moteur prend des minutes sur un Pi 3B, la moitié de sa mémoire, caméra arrêtée. Un dépôt apt demande un hébergement et des clés de signature. Une image A/B repartitionne la carte et pèse des centaines de Mo. L'archive pèse moins d'1 Mo, et le retour arrière est un lien symbolique. |
 | D10 | Partage reprend SPP (légende, images, règles des plateformes) mais parle lui-même à Bluesky et Flickr ; instagrapi pour Instagram | Les bibliothèques de SPP (atproto, flickrapi) ; l'API officielle d'Instagram | atproto tire pydantic, cryptography, httpx… pour trois appels ; flickrapi ouvre un navigateur local pour OAuth, impossible sur l'appareil. L'API officielle d'Instagram exige un compte professionnel et une image à une adresse publique. |

@@ -30,7 +30,7 @@ POLL = 30  # seconds between two looks, while nothing happens
 FAST_POLL = 2  # while root works on a request
 FAST_FOR = 15 * 60
 START_GRACE = 20  # seconds, at most, waiting for the screen to say it installs
-WORKING = ("checking", "downloading", "installing")
+WORKING = ("checking", "downloading", "preparing", "installing")
 STALE = 3600  # a "working" status this old: the updater stopped on the way
 MODE_LABELS = {"auto": "Automatiques", "notify": "Proposées", "off": "Désactivées"}
 
@@ -197,6 +197,8 @@ class Updates:
             return "Recherche…"
         if state == "downloading":
             return f"Téléchargement {round(100 * st.get('progress', 0))} %"
+        if state == "preparing":
+            return "Préparation…"
         if state == "installing":
             return "Installation…"
         if state == "ready":

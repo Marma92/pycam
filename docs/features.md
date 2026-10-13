@@ -66,6 +66,8 @@ Objectif : valider l'architecture de bout en bout sur le Pi 3B.
 | Niveau électronique | Horizon et inclinaison par l'IMU ; orientation EXIF automatique. | ⬜ |
 | Démarrage rapide | Moins de 12 s de l'allumage à la visée. | 🧪 |
 | Robustesse | Racine en lecture seule et partition photos séparée. | ⬜ |
+| Installation | `tools/install.sh` : sur un Raspberry Pi OS 64 bits (Trixie) neuf, une commande installe la dernière release (paquets Debian, `/opt/pycam`, services, mises à jour) ; l'appareil démarre ensuite sur la visée. | ✅ |
+| Mises à jour | Releases construites et testées par GitHub Actions (moteur compilé pour le Pi), publiées par un tag. L'appareil cherche dès qu'il trouve Internet (pas sur un réseau facturé, au plus toutes les 6 h), télécharge, vérifie (SHA-256) et essaie la nouvelle version en arrière-plan, puis l'installe au démarrage suivant (automatiques), sur demande (proposées) ou jamais (désactivées) : MENU › Système, onglet Système du site. La nouvelle version est essayée avant que rien ne s'arrête (bibliothèques, modules), et l'appareil revient seul à la précédente si elle ne démarre pas (`architecture.md` §8.1). | ✅ |
 | Interface web | Sur le réseau local, port 8080 (`web.py`) : visée rafraîchie chaque seconde, déclencheur, choix du preset et du grain ; photos (vignettes, téléchargement JPEG et DNG, suppression) ; presets (installer un .zip ou ses fichiers depuis l'ordinateur, supprimer) ; Cloud sync (compte, mode, envoi à la main). Refuse toute adresse hors réseau local, IPv6 publique comprise, et toute commande venue d'une autre page que la sienne (une page malveillante ouverte sur le même réseau) ou d'un nom d'hôte étranger. Réglage « Interface web » dans MENU. Pas encore de mot de passe. | ✅ |
 
 ## M3 — « Avancé »

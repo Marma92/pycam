@@ -17,7 +17,17 @@ Il vise à offrir :
 - **M3** (« avancé ») : presque terminé. Modes de déclenchement, timelapse, empilement, poses longues et pose B, ZSL, DNG compressé et vidéo sont faits. Les simulations de pellicules restent à affiner sur de vraies photos. Cloud sync et Partage sont testés contre de faux services, pas encore avec de vrais comptes.
 - **M2** (« autonome ») : la partie logicielle est prête (menus, lecture, interface web, veille de l'écran). Reste le matériel : boutons et molettes (choisis et câblés sur le papier, `docs/hardware.md`), batterie, horloge, niveau électronique.
 
-Le détail, fonction par fonction : `docs/features.md`. Le Pi 3B démarre directement sur l'appareil photo ; en attendant les boutons, un clavier USB tient lieu de commandes, une touche par commande de l'appareil.
+Le détail, fonction par fonction : `docs/features.md`. Les versions : `CHANGELOG.md`. Le Pi 3B démarre directement sur l'appareil photo ; en attendant les boutons, un clavier USB tient lieu de commandes, une touche par commande de l'appareil.
+
+## Installation
+
+Sur un Raspberry Pi OS Lite 64 bits (Trixie), avec la HQ Camera et un écran HDMI, connecté à Internet :
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Marma92/pycam/master/tools/install.sh | sudo sh
+```
+
+Puis `sudo reboot` : l'appareil démarre sur la visée. Il se met ensuite à jour tout seul (voir Système, plus bas).
 
 ## Ce que l'appareil fait aujourd'hui
 
@@ -54,11 +64,17 @@ Le détail, fonction par fonction : `docs/features.md`. Le Pi 3B démarre direct
 
 Sur le réseau local (port 8080), d'un téléphone ou d'un ordinateur : visée, déclencheur, choix du preset et du mode photo / vidéo ; galerie (photos et vidéos : lecture, téléchargement, suppression) ; installation de presets ; connexion des comptes cloud et des réseaux (l'appareil n'a pas de clavier) ; partage d'une photo avec titre, description, texte alternatif et hashtags. Les mots de passe et jetons restent sur l'appareil, dans des fichiers que seul son utilisateur peut lire.
 
+### Système
+
+- **Installation** en une commande (ci-dessus), dans `/opt/pycam`.
+- **Mises à jour** : dès qu'il trouve Internet (jamais sur un réseau facturé), l'appareil cherche une nouvelle version, la télécharge et vérifie son empreinte ; il l'installe au démarrage suivant, avant la première photo (ou seulement sur demande, au choix : MENU › Système, ou l'onglet Système du site). La nouvelle version est essayée avant que rien ne s'arrête, et s'il ne repart pas correctement dessus, l'appareil revient tout seul à la précédente.
+
 ## Comment c'est fait
 
 - `engine/` : le moteur caméra en C++ (`pycam-engine`), lié à `librpicam_app`. Il fait la visée, les prises, les looks des JPEG, l'écriture DNG, l'empilement, l'enregistrement et la lecture des vidéos, les mesures, et se pilote par un socket Unix en JSON (`docs/protocol.md`).
 - `app/` : l'application Python (`asyncio`) : commandes, exposition, menus, HUD, presets, rangement DCIM, réglages persistants, interface web, et les applications embarquées (`app/pycam/apps/` : `cloudsync`, `share`).
-- `system/` et `tools/install-services.sh` : les deux services systemd qui les lancent au démarrage.
+- `system/` : les services systemd (moteur, application, mises à jour) ; `tools/install.sh` installe une release, `tools/install-services.sh` un dossier de développement.
+- `.github/workflows/build.yml` : la CI, qui compile le moteur pour le Pi, lance les tests et publie les releases (`tools/package.sh`) ; `app/pycam/updater.py` les installe sur l'appareil.
 - `tools/` : déploiement depuis un PC (`deploy.sh`), client du moteur, captures d'écran et appuis de touches à distance, outil de presets, installation d'instagrapi pour le partage sur Instagram (`install-share.sh`).
 
 Le développement se fait depuis un PC, par SSH sur le Pi : voir `docs/development.md`. Les tests (`cd app && python3 -m unittest discover -s tests -t .`) tournent en entier sur le Pi ; Cloud sync et Partage y sont testés contre de faux services, sans compte réel.
