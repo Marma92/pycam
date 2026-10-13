@@ -2,7 +2,7 @@
 
 Les versions suivent [SemVer](https://semver.org/lang/fr/) : `MAJEURE.MINEURE.CORRECTIF`. Une section par version ; la CI en fait les notes de la release GitHub (`.github/workflows/build.yml`).
 
-## [0.1.0] — à venir
+## [0.1.0] — 2026-10-13
 
 Première version publiée : l'appareil photo complet sur Raspberry Pi 3B + HQ Camera, piloté au clavier en attendant les boutons.
 
