@@ -21,6 +21,7 @@
 | Écran | **HDMI, sans tactile** | 2026-10-11 |
 | Modèle d'écran | **Waveshare 5″ HDMI LCD (H)**, IPS 800×480, sur la boutique Waveshare d'AliExpress (§1) | 2026-10-16 |
 | GPS | **Beitian BN-180**, sur AliExpress (§5) | 2026-10-16 |
+| Son des vidéos | **Deux micros MEMS INMP441 en stéréo**, en I2S (§6) | 2026-10-16 |
 | Navigation | **Entièrement aux boutons et molettes** : il faut assez de commandes physiques pour régler et naviguer dans les menus sans écran tactile | 2026-10-11 |
 
 ## 1. Écran HDMI (choisi)
@@ -142,7 +143,18 @@ Pour le géomarquage des photos, et l'heure sur le terrain.
 - **Antenne** : vers le ciel, sur le capot, loin du Pi (son Wi-Fi, le HDMI et la carte SD rayonnent) ; un module avec prise u.FL permet une antenne active déportée.
 - **Module** (souhait du 2026-10-15 : petit et pas cher) : un module de drone à puce u-blox M8 ou M10 et antenne céramique intégrée, quatre fils (5 V ou 3,3 V, masse, TX, RX), comme le **Beitian BN-220** (~22×20 mm) ou le **BN-180** (~18×18 mm), autour de 10 à 15 €. Vérifier qu'il garde ses données au chaud (pile ou condensateur de sauvegarde) : sans, chaque démarrage repart à froid, ~30 s avant la première position. Mieux documenté mais plus cher : l'Adafruit Ultimate GPS (~30 $). Éviter les cartes NEO-6M génériques : puce ancienne, souvent contrefaite, antenne encombrante.
 
-## 6. Autres (plus tard)
+## 6. Micros (retenus le 2026-10-16)
+
+Pour le son des vidéos. Le Pi 3B n'a aucune entrée son : **deux micros MEMS numériques INMP441**, en I2S, donnent une stéréo sans souffle ni préampli.
+
+- **Module** : INMP441 sur une carte ronde de Ø 14 mm, ~3 € pièce sur AliExpress, alimenté en 3,3 V.
+- **Câblage** : les deux micros partagent l'horloge (SCK → GPIO 18), la trame (WS → GPIO 19) et les données (SD → GPIO 20). Leur broche L/R choisit la voie : **à la masse pour la gauche, au 3,3 V pour la droite**.
+- **Noyau** : un overlay I2S en capture est **à valider sur le Pi 3B**. Piste : `googlevoicehat-soundcard`, qui gère des micros MEMS I2S de ce type ; sinon un petit overlay à nous. Ensuite, ALSA voit une carte son stéréo.
+- **Placement** : sur le capot ou en façade, espacés de 2 à 3 cm, chacun derrière un trou de 1 à 2 mm du boîtier. L'ouïe du micro (un petit trou dans sa carte, à repérer à réception) se plaque contre ce trou, avec un joint de mousse autour. Loin des molettes et des boutons, dont la manipulation s'entendrait. Une mousse anti-vent par-dessus en extérieur.
+- **Logiciel, à écrire** : le moteur enregistre aujourd'hui l'image seule. Il faudra capter le son (ALSA, 48 kHz stéréo), l'encoder en AAC (libavcodec) et le caler sur l'image dans le MP4, et afficher un niveau sur le HUD. Le coût en CPU sur le Pi 3B sera à mesurer.
+- **Plus tard, en option** : une carte son USB avec prise jack, pour un micro externe posé sur la griffe.
+
+## 7. Autres (plus tard)
 
 - **Carte SD** rapide (A2 / V30). Sur Pi 3B, le bus SD plafonne vers ~20 Mo/s, donc une carte haut de gamme n'apportera pas plus, mais une mauvaise carte coûte cher.
 - **Dissipateur**. Le Pi 3B réduit sa fréquence vers 80 °C, et un boîtier fermé avec la visée continue peut l'y amener : à mesurer avec `vcgencmd measure_temp`. Au repos, on mesure 38,6 °C.
@@ -163,6 +175,8 @@ Prix relevés chez les fabricants et distributeurs, à l'unité, hors port et TV
 | Boutons | Poussoirs tactiles 6×6 mm (type Omron B3F) | 8 | ~0,3 $ | Q, MENU, LECTURE, DISP, LOUPE, Fn1, Fn2, un de rechange. |
 | **Centrale inertielle** | Le gyroscope Adafruit déjà en main ; sinon Adafruit **LSM6DSOX** (STEMMA QT / Qwiic), réf. 4438 | 1 | — (11,95 $) | Vérifier l'adresse I2C du sien (0x68 : conflit avec le PiSugar). Plus un câble STEMMA QT vers broches (~1 $). |
 | **GPS** | Beitian **BN-180** (retenu le 2026-10-16), ~18×18 mm, antenne intégrée | 1 | ~10 € | AliExpress. UART, antenne vers le ciel (§5). PPS facultatif. |
+| **Micros** | **INMP441** (MEMS, I2S, omnidirectionnel), carte Ø 14 mm | 2 | ~3 € pièce | AliExpress. Stéréo : L/R à la masse pour l'un, au 3,3 V pour l'autre (§6). |
+| Voyant | LED 3 mm rouge + résistance 330 Ω | 1 | < 1 € | Retardateur et enregistrement, en façade (GPIO 12). |
 | Mesure | Pied à coulisse numérique 150 mm | 1 | ~15–20 € | Pour relever les vraies pièces avant d'imprimer le boîtier. |
 | Divers | Plaque à pastilles, fils, connecteurs JST, dissipateur pour le Pi | — | ~10 $ | Prototype avant le boîtier imprimé. |
 
@@ -178,9 +192,9 @@ Chaque bouton est déclaré dans `/boot/firmware/config.txt` avec l'overlay `gpi
 # Boutons : active_low=1 (le bouton relie à la masse), gpio_pull=2 (tirage interne vers le haut)
 dtoverlay=gpio-key,gpio=6,keycode=57,label="declencheur",active_low=1,gpio_pull=2
 dtoverlay=gpio-key,gpio=4,keycode=15,label="q",active_low=1,gpio_pull=2
-dtoverlay=gpio-key,gpio=20,keycode=1,label="menu",active_low=1,gpio_pull=2
-dtoverlay=gpio-key,gpio=21,keycode=25,label="lecture",active_low=1,gpio_pull=2
-dtoverlay=gpio-key,gpio=18,keycode=32,label="disp",active_low=1,gpio_pull=2
+dtoverlay=gpio-key,gpio=16,keycode=1,label="menu",active_low=1,gpio_pull=2
+dtoverlay=gpio-key,gpio=26,keycode=25,label="lecture",active_low=1,gpio_pull=2
+dtoverlay=gpio-key,gpio=11,keycode=32,label="disp",active_low=1,gpio_pull=2
 dtoverlay=gpio-key,gpio=7,keycode=38,label="loupe",active_low=1,gpio_pull=2
 dtoverlay=gpio-key,gpio=8,keycode=2,label="fn1",active_low=1,gpio_pull=2
 dtoverlay=gpio-key,gpio=9,keycode=3,label="fn2",active_low=1,gpio_pull=2
@@ -189,44 +203,53 @@ dtoverlay=gpio-key,gpio=25,keycode=23,label="appui-arriere",active_low=1,gpio_pu
 # Molettes : un axe relatif chacune (0 : REL_X, avant ; 1 : REL_Y, arrière)
 dtoverlay=rotary-encoder,pin_a=17,pin_b=27,relative_axis=1,linux_axis=0,steps-per-period=4
 dtoverlay=rotary-encoder,pin_a=23,pin_b=24,relative_axis=1,linux_axis=1,steps-per-period=4
+# GPS : le bon UART (PL011) rendu aux GPIO 14 / 15 (le Bluetooth ne sert pas)
+dtoverlay=disable-bt
+# Micros I2S sur les GPIO 18 / 19 / 20 : overlay à valider (§6)
 ```
 
 | Commande | GPIO | Code de touche | Action dans l'application |
 |---|---|---|---|
 | Déclencheur (fond) | 6 | 57 `KEY_SPACE` | déclencher |
-| Q / MENU / LECTURE | 4 / 20 / 21 | 15 `KEY_TAB` / 1 `KEY_ESC` / 25 `KEY_P` | menus, lecture |
-| DISP / LOUPE | 18 / 7 | 32 `KEY_D` / 38 `KEY_L` | affichage, loupe |
+| Q / MENU / LECTURE | 4 / 16 / 26 | 15 `KEY_TAB` / 1 `KEY_ESC` / 25 `KEY_P` | menus, lecture |
+| DISP / LOUPE | 11 / 7 | 32 `KEY_D` / 38 `KEY_L` | affichage, loupe |
 | Fn1 / Fn2 | 8 / 9 | 2 `KEY_1` / 3 `KEY_2` | fonctions attribuées |
 | Appui molette avant / arrière | 22 / 25 | 31 `KEY_S` / 23 `KEY_I` | vitesse / ISO auto ⇄ manuel |
 | Molette avant / arrière | 17-27 / 23-24 | axe `REL_X` / `REL_Y` | comme ← → / ↑ ↓ |
 
-- **Le joystick** et **la mi-course** du déclencheur (GPIO 12, 13, 16, 19, 26 et 5) seront branchés plus tard : l'application ne s'en sert pas encore. Le joystick produira les codes du pavé numérique (8, 2, 4, 6 et 5), pour ne pas se confondre avec les molettes.
+- **DISP, MENU et LECTURE ont changé de broches** (2026-10-16) : les GPIO 18, 19 et 20 vont aux micros (I2S).
+- **Le joystick** n'est pas câblé en direct : l'application ne s'en sert pas encore, et il ira sur l'expandeur du circuit imprimé (plus bas). Il produira les codes du pavé numérique (8, 2, 4, 6 et 5), pour ne pas se confondre avec les molettes. **La mi-course** du déclencheur (GPIO 5) peut être câblée dès le prototype, même si l'application ne l'utilise pas encore.
 - **À vérifier au montage** : le sens de chaque molette (inverser `pin_a` et `pin_b` au besoin) et `steps-per-period`, selon l'encodeur (un cran = un pas).
 - Un clavier USB branché en même temps continue de fonctionner, ce qui aide pendant le montage.
 
-## Plan de brochage GPIO (brouillon)
+## Plan de brochage GPIO
 
-L'écran HDMI ne prend aucune broche. Toutes les entrées sont actives à l'état bas, avec pull-up interne.
+L'écran HDMI ne prend aucune broche. Toutes les entrées sont actives à l'état bas, avec pull-up interne. Deux étapes : le **prototype** câblé en direct (tableau ci-dessus), puis le **circuit imprimé**, où les boutons lents passent sur un expandeur I2C et libèrent des broches.
 
-| Fonction | GPIO (BCM) | Broche physique |
-|---|---|---|
-| I2C SDA / SCL (PiSugar : RTC + batterie, IMU) | 2 / 3 | 3 / 5 |
-| Q | 4 | 7 |
-| Déclencheur mi-course / fond | 5 / 6 | 29 / 31 |
-| LOUPE | 7 | 26 |
-| Fn1 / Fn2 | 8 / 9 | 24 / 21 |
-| Joystick haut / bas | 12 / 13 | 32 / 33 |
-| Joystick gauche / droite | 16 / 19 | 36 / 35 |
-| Joystick appui (OK) | 26 | 37 |
-| GPS TX / RX | 14 / 15 | 8 / 10 |
-| GPS PPS | 10 | 19 |
-| Molette avant A / B / appui | 17 / 27 / 22 | 11 / 13 / 15 |
-| DISP | 18 | 12 |
-| MENU / LECTURE | 20 / 21 | 38 / 40 |
-| Molette arrière A / B / appui | 23 / 24 / 25 | 16 / 18 / 22 |
-| *Libre* | 11 | 23 |
+| Fonction | GPIO (BCM) | Broche physique | Prototype | Circuit imprimé |
+|---|---|---|---|---|
+| I2C SDA / SCL (PiSugar 0x57/0x68, IMU, expandeur 0x20) | 2 / 3 | 3 / 5 | ✓ | ✓ |
+| Q | 4 | 7 | ✓ | → expandeur ; interruption de l'expandeur |
+| Déclencheur mi-course / fond | 5 / 6 | 29 / 31 | ✓ | ✓ |
+| LOUPE | 7 | 26 | ✓ | → expandeur |
+| Fn1 / Fn2 | 8 / 9 | 24 / 21 | ✓ | → expandeur |
+| GPS PPS (option) | 10 | 19 | — | option |
+| DISP | 11 | 23 | ✓ | → expandeur |
+| Voyant avant (retardateur, enregistrement) | 12 | 32 | ✓ | ✓ |
+| Rétroéclairage de l'écran en PWM (option, après la modification de Waveshare) | 13 | 33 | — | option |
+| GPS TX / RX | 14 / 15 | 8 / 10 | ✓ | ✓ |
+| MENU | 16 | 36 | ✓ | → expandeur |
+| Molette avant A / B / appui | 17 / 27 / 22 | 11 / 13 / 15 | ✓ | ✓ |
+| Micros I2S : horloge / trame / données | 18 / 19 / 20 | 12 / 35 / 38 | ✓ | ✓ |
+| Haut-parleur I2S, données sortantes (option) | 21 | 40 | — | option |
+| Molette arrière A / B / appui | 23 / 24 / 25 | 16 / 18 / 22 | ✓ | ✓ |
+| LECTURE | 26 | 37 | ✓ | → expandeur |
 
-Au total : 20 entrées, le bus I2C, l'UART et le PPS du GPS. Les GPIO 7–11 sont ceux du SPI0 ; on les utilise comme entrées simples, ce qui suppose de garder le SPI désactivé (c'est le cas par défaut). Les GPIO 0–1 (EEPROM ID) sont réservés.
+Sur le circuit imprimé, l'expandeur **MCP23017** (I2C, 16 entrées, géré par le noyau) prend Q, MENU, LECTURE, DISP, LOUPE, Fn1, Fn2 et les 5 directions du joystick : 12 entrées, 4 de réserve. Le déclencheur et les molettes restent sur le GPIO natif, pour la réactivité. Les GPIO 7–11 sont ceux du SPI0 ; on les utilise comme entrées simples, ce qui suppose de garder le SPI désactivé (c'est le cas par défaut). Les GPIO 0–1 (EEPROM ID) sont réservés.
+
+## Circuit imprimé (projet, après le prototype en carton)
+
+Trois petites cartes, parce que les commandes sont sur deux faces : une **carte mère** au format HAT sur le connecteur GPIO (connecteurs vers les autres cartes, bus I2C, GPS, micros, 5 V de l'écran), une carte **dos** (joystick, Q, MENU, LECTURE, DISP, LOUPE, Fn1, Fn2, molette arrière, expandeur) et une carte **capot** (déclencheur, molette avant). Le PiSugar reste dessous. Dessinées dans KiCad, fabriquées chez PCBWay ou JLCPCB, les composants CMS (joystick, expandeur) posés par le fabricant. Côté logiciel, un seul overlay déclare l'expandeur et tous les boutons avec les mêmes codes de touche : l'application ne change pas.
 
 ## Et si le Pi 3B devient le facteur limitant ?
 
