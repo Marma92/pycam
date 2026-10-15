@@ -13,11 +13,13 @@ Il vise à offrir :
 
 ## Statut
 
+**Version 0.1.0**, publiée le 13 octobre 2026 : [la release](https://github.com/Marma92/pycam/releases/tag/v0.1.0) et ses notes, dans `CHANGELOG.md`.
+
 - **M0** (« ça prend des photos ») et **M1** (« appareil manuel ») : terminés.
 - **M3** (« avancé ») : presque terminé. Modes de déclenchement, timelapse, empilement, poses longues et pose B, ZSL, DNG compressé et vidéo sont faits. Les simulations de pellicules restent à affiner sur de vraies photos. Cloud sync et Partage, **expérimentaux**, sont testés contre de faux services, pas encore avec de vrais comptes.
-- **M2** (« autonome ») : la partie logicielle est prête (menus, lecture, interface web, veille de l'écran). Reste le matériel : boutons et molettes (choisis et câblés sur le papier, `docs/hardware.md`), batterie, horloge, niveau électronique.
+- **M2** (« autonome ») : la partie logicielle est prête (menus, lecture, interface web, veille de l'écran, Wi-Fi sans clavier, mises à jour). Reste le matériel : boutons et molettes (choisis et câblés sur le papier, `docs/hardware.md`), batterie, horloge à pile (RTC), niveau électronique.
 
-Le détail, fonction par fonction : `docs/features.md`. Les versions : `CHANGELOG.md`. Le Pi 3B démarre directement sur l'appareil photo ; en attendant les boutons, un clavier USB tient lieu de commandes, une touche par commande de l'appareil.
+Le détail, fonction par fonction : `docs/features.md`. Le Pi 3B démarre directement sur l'appareil photo ; en attendant les boutons, un clavier USB tient lieu de commandes, une touche par commande de l'appareil (voir « Au clavier »).
 
 ## Installation
 
@@ -30,6 +32,27 @@ curl -fsSL https://raw.githubusercontent.com/Marma92/pycam/master/tools/install.
 Puis `sudo reboot` : l'appareil démarre sur la visée. Il se met ensuite à jour tout seul (voir Système, plus bas).
 
 Le Wi-Fi se règle dans Raspberry Pi Imager en préparant la carte ; ensuite, sans clavier, depuis le site de l'appareil : il ouvre son propre point d'accès (MENU › Réseau, ou de lui-même s'il ne connaît aucun réseau), on s'y connecte avec un téléphone, et on lui choisit un réseau. À la première visite du site, un code affiché sur l'écran de l'appareil autorise le navigateur.
+
+## Au clavier
+
+Les mêmes touches sur un clavier AZERTY ou QWERTY ; tout le reste se règle dans les menus.
+
+| Touche | Commande de l'appareil | À la visée |
+|---|---|---|
+| Espace ou Entrée | Déclencheur | Déclencher (tenu : rafale) ; démarre ou arrête une séquence, un enregistrement vidéo |
+| → ← | Molette avant | Vitesse si elle est manuelle, sinon correction d'exposition. Dans un menu : changer la valeur |
+| ↑ ↓ | Molette arrière | ISO s'il est manuel, sinon correction d'exposition. Dans un menu : choisir la ligne ; en lecture : prise suivante, précédente |
+| S | Appui molette avant | Vitesse auto ⇄ manuelle (en vidéo : verrouiller l'exposition) |
+| I | Appui molette arrière | ISO auto ⇄ manuel |
+| Tab | Q | Menu rapide (en lecture : supprimer la prise, deux appuis) |
+| Échap | MENU | Menu complet ; revient en arrière, quitte la loupe |
+| D | DISP | Affichage détaillé, simple, nature |
+| L | LOUPE | ×5, ×10, coupée ; les flèches la déplacent (en lecture vidéo : lecture, pause) |
+| P | LECTURE | Les photos et vidéos de la carte |
+| 1, 2 | Fn1, Fn2 | Peaking et zébras, à changer dans MENU › Boutons |
+| V | PHOTO / VIDÉO | Passer de l'un à l'autre |
+
+Le mode d'exposition suit ce qui est manuel : P (rien), S (la vitesse), A (l'ISO ; l'ouverture est sur l'objectif), M (les deux). Le détail, situation par situation : `docs/architecture.md` §5.
 
 ## Ce que l'appareil fait aujourd'hui
 
@@ -64,7 +87,7 @@ Le Wi-Fi se règle dans Raspberry Pi Imager en préparant la carte ; ensuite, sa
 
 ### Interface web
 
-Sur le réseau local (port 8080), d'un téléphone ou d'un ordinateur : visée, déclencheur, choix du preset et du mode photo / vidéo ; galerie (photos et vidéos : lecture, téléchargement, suppression) ; installation de presets ; connexion des comptes cloud et des réseaux (l'appareil n'a pas de clavier) ; partage d'une photo avec titre, description, texte alternatif et hashtags. Les mots de passe et jetons restent sur l'appareil, dans des fichiers que seul son utilisateur peut lire. Seuls les navigateurs autorisés par un **code affiché sur l'écran** de l'appareil y ont accès.
+Sur le réseau local (port 8080), d'un téléphone ou d'un ordinateur : visée, déclencheur, choix du preset et du mode photo / vidéo ; galerie (photos et vidéos : lecture, téléchargement, suppression) ; installation de presets ; connexion des comptes cloud et des réseaux (l'appareil n'a pas de clavier) ; partage d'une photo avec titre, description, texte alternatif et hashtags ; et l'onglet Système : heure, Wi-Fi et point d'accès, navigateurs autorisés, version et mises à jour. Les mots de passe et jetons restent sur l'appareil, dans des fichiers que seul son utilisateur peut lire. Seuls les navigateurs autorisés par un **code affiché sur l'écran** de l'appareil y ont accès.
 
 ### Système
 
@@ -76,7 +99,7 @@ Sur le réseau local (port 8080), d'un téléphone ou d'un ordinateur : visée, 
 ## Comment c'est fait
 
 - `engine/` : le moteur caméra en C++ (`pycam-engine`), lié à `librpicam_app`. Il fait la visée, les prises, les looks des JPEG, l'écriture DNG, l'empilement, l'enregistrement et la lecture des vidéos, les mesures, et se pilote par un socket Unix en JSON (`docs/protocol.md`).
-- `app/` : l'application Python (`asyncio`) : commandes, exposition, menus, HUD, presets, rangement DCIM, réglages persistants, interface web, et les applications embarquées (`app/pycam/apps/` : `cloudsync`, `share`).
+- `app/` : l'application Python (`asyncio`) : commandes, exposition, menus, HUD, presets, rangement DCIM, réglages persistants, interface web et son code d'accès, Wi-Fi, heure, mises à jour, et les applications embarquées (`app/pycam/apps/` : `cloudsync`, `share`).
 - `system/` : les services systemd (moteur, application, mises à jour) ; `tools/install.sh` installe une release, `tools/install-services.sh` un dossier de développement.
 - `.github/workflows/build.yml` : la CI, qui compile le moteur pour le Pi, lance les tests et publie les releases (`tools/package.sh`) ; `app/pycam/updater.py` les installe sur l'appareil.
 - `tools/` : déploiement depuis un PC (`deploy.sh`), client du moteur, captures d'écran et appuis de touches à distance, outil de presets, installation d'instagrapi pour le partage sur Instagram (`install-share.sh`).
@@ -85,6 +108,7 @@ Le développement se fait depuis un PC, par SSH sur le Pi : voir `docs/developme
 
 ## Documentation
 
+- [Journal des versions](CHANGELOG.md) : ce que contient chaque version.
 - [Architecture](docs/architecture.md) : découpage moteur C++ / application Python, pipeline caméra, affichage, commandes, menus, applications, décisions.
 - [Fonctionnalités](docs/features.md) : catalogue par jalons (M0 → M3) et état.
 - [Protocole](docs/protocol.md) : commandes et évènements du moteur.
