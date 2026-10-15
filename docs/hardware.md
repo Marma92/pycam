@@ -119,10 +119,10 @@ L'écran se branche sur un port USB du Pi. Les ports USB du Pi 3B partagent une 
 Pour le géomarquage des photos, et l'heure sur le terrain.
 
 - **Liaison série** sur GPIO 14 / 15 (broches 8 / 10). Sur le Pi 3B, le bon UART (PL011) sert au Bluetooth, et celui qui reste (mini-UART) dérive avec la fréquence du processeur : `dtoverlay=disable-bt` dans `config.txt` rend le PL011 au GPIO (le Bluetooth ne sert pas à l'appareil).
-- **PPS** (une impulsion par seconde) sur un GPIO libre (10 ou 11), avec l'overlay `pps-gpio` : l'heure à la microseconde, pour `chrony`.
+- **PPS** (une impulsion par seconde), *facultatif* : sur un GPIO libre (10), avec l'overlay `pps-gpio`, il donne l'heure à la microseconde. Pour dater des photos et régler l'horloge, l'heure des trames NMEA suffit (à quelques dizaines de millisecondes) : on ne l'exige pas du module.
 - **Logiciel** : `gpsd` lit le module ; l'application inscrira la position dans l'EXIF de chaque photo (à écrire), et l'heure du GPS quand ni le réseau ni le téléphone ne la donnent.
 - **Antenne** : vers le ciel, sur le capot, loin du Pi (son Wi-Fi, le HDMI et la carte SD rayonnent) ; un module avec prise u.FL permet une antenne active déportée.
-- Module : un u-blox (M8, M9 ou M10) ou un Adafruit Ultimate GPS, **avec sortie PPS**.
+- **Module** (souhait du 2026-10-15 : petit et pas cher) : un module de drone à puce u-blox M8 ou M10 et antenne céramique intégrée, quatre fils (5 V ou 3,3 V, masse, TX, RX), comme le **Beitian BN-220** (~22×20 mm) ou le **BN-180** (~18×18 mm), autour de 10 à 15 €. Vérifier qu'il garde ses données au chaud (pile ou condensateur de sauvegarde) : sans, chaque démarrage repart à froid, ~30 s avant la première position. Mieux documenté mais plus cher : l'Adafruit Ultimate GPS (~30 $). Éviter les cartes NEO-6M génériques : puce ancienne, souvent contrefaite, antenne encombrante.
 
 ## 6. Autres (plus tard)
 
@@ -145,7 +145,7 @@ Prix relevés chez les fabricants et distributeurs, à l'unité, hors port et TV
 | **Déclencheur 2 crans** | ALPS **SPPH410200** (momentané) | 1 | non trouvé en stock | Introuvable chez les distributeurs consultés : boutique d'ALPS, ou un **poussoir simple** pour le premier prototype (la mi-course n'est pas encore utilisée). |
 | Boutons | Poussoirs tactiles 6×6 mm (type Omron B3F) | 8 | ~0,3 $ | Q, MENU, LECTURE, DISP, LOUPE, Fn1, Fn2, un de rechange. |
 | **Centrale inertielle** | Le gyroscope Adafruit déjà en main ; sinon Adafruit **LSM6DSOX** (STEMMA QT / Qwiic), réf. 4438 | 1 | — (11,95 $) | Vérifier l'adresse I2C du sien (0x68 : conflit avec le PiSugar). Plus un câble STEMMA QT vers broches (~1 $). |
-| **GPS** | Module u-blox (M8 à M10) ou Adafruit Ultimate GPS, avec sortie PPS | 1 | à chiffrer | UART + PPS, antenne vers le ciel (§5). |
+| **GPS** | Beitian **BN-220** (ou BN-180), u-blox M8, antenne intégrée | 1 | ~10–15 € | UART, antenne vers le ciel (§5). PPS facultatif. |
 | Divers | Plaque à pastilles, fils, connecteurs JST, dissipateur pour le Pi | — | ~10 $ | Prototype avant le boîtier imprimé. |
 
 **Budget** : ~225 $ avec l'écran Newhaven, ~145 $ avec un Waveshare, hors port, TVA et boîtier.
