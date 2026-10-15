@@ -10,7 +10,9 @@
 | OS | Raspberry Pi OS Trixie (Debian 13) 64 bits, noyau 6.18, `vc4-kms-v3d`, CMA 256 Mo |
 | Capteur | High Quality Camera, Sony IMX477, monture C/CS, détectée par libcamera 0.7.2 |
 | Objectif | *à préciser* |
-| Écran de développement | HDMI 1920×1080 branché (bureau graphique actif) |
+| Écran de développement | HDMI 1920×1080 branché ; démarrage en console depuis le 2026-10-11 (`multi-user.target`), l'appareil photo prend l'écran |
+| Commandes | Un clavier USB, une touche par commande de l'appareil (README, « Au clavier ») |
+| Déjà en main | Un gyroscope Adafruit (modèle à préciser, voir §4) |
 
 ## Choix retenus
 
@@ -60,11 +62,11 @@ Comme il n'y a pas de tactile, les commandes doivent couvrir trois choses : **le
 | 2 | **Molette avant** (avec appui) | Encodeur EC11 ou Bourns PEC11R | Vitesse (S/M) ou correction d'exposition (P/A). Appui : vitesse auto ⇄ manuelle. En menu : changer la valeur. |
 | 3 | **Molette arrière** (avec appui) | Encodeur EC11 ou PEC11R | ISO (A/M) ou correction d'exposition (P/S). Appui : ISO auto ⇄ manuel. En menu : faire défiler. En lecture : image suivante/précédente. |
 | 4 | **Joystick 5 directions** | Commutateur de navigation 5 voies (type ALPS SKRH) | Menus : naviguer, valider (appui central). Visée : déplacer la loupe ou le point de mesure spot. |
-| 5 | **Q** (menu rapide) | Bouton tactile | Grille des ~12 réglages les plus utilisés ; on navigue au joystick et on change la valeur à la molette. |
+| 5 | **Q** (menu rapide) | Bouton tactile | Les 12 réglages de prise de vue, en liste par-dessus la visée : la molette arrière choisit la ligne, la molette avant change la valeur (le joystick, plus tard). |
 | 6 | **MENU** | Bouton tactile | Ouvrir le menu complet / revenir en arrière. |
 | 7 | **LECTURE** | Bouton tactile | Galerie. |
-| 8 | **DISP** | Bouton tactile | Faire défiler les affichages : visée nature → détaillée → histogramme + niveau. |
-| 9 | **LOUPE** | Bouton tactile | Loupe ×1 → ×5 → ×10 pour la mise au point manuelle. |
+| 8 | **DISP** | Bouton tactile | Faire défiler les affichages : détaillé → simple → nature (le niveau électronique s'y ajoutera avec l'IMU). |
+| 9 | **LOUPE** | Bouton tactile | Loupe ×5 → ×10 → coupée pour la mise au point manuelle ; en lecture, 100 % → 200 %, et lecture / pause d'une vidéo. |
 | 10 | **Fn1, Fn2** | Boutons tactiles | Assignables : peaking, zébras, balance des blancs, mode de déclenchement, photo / vidéo… |
 
 La logique d'usage reprend celle d'un hybride expert (Fujifilm/Sony) : **deux molettes pour l'exposition, un bouton Q pour tout le reste**. Le menu complet ne sert presque qu'à la configuration.
@@ -74,6 +76,8 @@ Tout passe par des **overlays noyau** déclarés dans `config.txt` : `gpio-keys`
 Si le câblage de 20 entrées devient pénible, on peut passer les boutons « lents » (Q, MENU, LECTURE, DISP, Fn) sur un expandeur I2C **MCP23017** (16 entrées, géré par le noyau). On garde le déclencheur et les molettes sur le GPIO natif pour la réactivité.
 
 ## 3. Alimentation + horloge (priorité haute pour l'usage nomade)
+
+L'heure vient déjà du réseau (NTP), ou à défaut du téléphone qui ouvre le site de l'appareil (`clock.py`, 2026-10-13). Ce qui manque, c'est de la **garder entre deux démarrages sans réseau** : c'est le rôle de la RTC ci-dessous. Le GPS (§5) donnera aussi l'heure, sur le terrain, sans réseau ni téléphone.
 
 **Recommandé : PiSugar 3 Plus**, conçu pour les Pi 3B/3B+/4B.
 
@@ -101,18 +105,29 @@ L'écran se branche sur un port USB du Pi. Les ports USB du Pi 3B partagent une 
 
 ## 4. Centrale inertielle / IMU (priorité moyenne)
 
-**Piste : LSM6DSOX** (accéléromètre + gyroscope, I2C en 0x6A/0x6B, carte Adafruit STEMMA QT / Qwiic). Elle sert à :
+**Déjà en main : un gyroscope Adafruit** (2026-10-15), modèle à préciser. Avant de le brancher, vérifier son **adresse I2C** : 0x68 entre en conflit avec la RTC du PiSugar (MPU-6050, ICM-20948 ; leur broche AD0 passe en 0x69), alors que les LSM6DS… (0x6A/0x6B), BNO055 (0x28/0x29) ou BNO085 (0x4A/0x4B) n'en ont pas. Pour Gyroflow, il doit être **fixé rigidement**, aligné sur les axes du capteur.
+
+À défaut, la **piste : LSM6DSOX** (accéléromètre + gyroscope, I2C en 0x6A/0x6B, carte Adafruit STEMMA QT / Qwiic). L'IMU sert à :
 
 - le niveau électronique (horizon) ;
 - l'orientation automatique (EXIF) ;
 - la détection « appareil posé » pour la mise en veille de l'écran ;
 - plus tard, les données gyroscopiques pour Gyroflow.
 
-## 5. Autres (plus tard)
+## 5. GPS (priorité relevée le 2026-10-15)
+
+Pour le géomarquage des photos, et l'heure sur le terrain.
+
+- **Liaison série** sur GPIO 14 / 15 (broches 8 / 10). Sur le Pi 3B, le bon UART (PL011) sert au Bluetooth, et celui qui reste (mini-UART) dérive avec la fréquence du processeur : `dtoverlay=disable-bt` dans `config.txt` rend le PL011 au GPIO (le Bluetooth ne sert pas à l'appareil).
+- **PPS** (une impulsion par seconde) sur un GPIO libre (10 ou 11), avec l'overlay `pps-gpio` : l'heure à la microseconde, pour `chrony`.
+- **Logiciel** : `gpsd` lit le module ; l'application inscrira la position dans l'EXIF de chaque photo (à écrire), et l'heure du GPS quand ni le réseau ni le téléphone ne la donnent.
+- **Antenne** : vers le ciel, sur le capot, loin du Pi (son Wi-Fi, le HDMI et la carte SD rayonnent) ; un module avec prise u.FL permet une antenne active déportée.
+- Module : un u-blox (M8, M9 ou M10) ou un Adafruit Ultimate GPS, **avec sortie PPS**.
+
+## 6. Autres (plus tard)
 
 - **Carte SD** rapide (A2 / V30). Sur Pi 3B, le bus SD plafonne vers ~20 Mo/s, donc une carte haut de gamme n'apportera pas plus, mais une mauvaise carte coûte cher.
 - **Dissipateur**. Le Pi 3B réduit sa fréquence vers 80 °C, et un boîtier fermé avec la visée continue peut l'y amener : à mesurer avec `vcgencmd measure_temp`. Au repos, on mesure 38,6 °C.
-- **GPS** UART (u-blox) pour le géomarquage, en option.
 - **Boîtier** imprimé en 3D. Les CAO de CinePI V2 peuvent servir d'inspiration, et on prévoit des filetages 1/4″.
 
 ## Liste d'achats (chiffrée le 2026-10-12)
@@ -129,7 +144,8 @@ Prix relevés chez les fabricants et distributeurs, à l'unité, hors port et TV
 | **Joystick 5 voies** | ALPS **SKRHABE010** | 1 | ~2,6 $ (LCSC ~0,8 $) | Composant CMS 7×7 mm : le prendre **sur une petite carte de connexion**, ou prévoir un adaptateur. |
 | **Déclencheur 2 crans** | ALPS **SPPH410200** (momentané) | 1 | non trouvé en stock | Introuvable chez les distributeurs consultés : boutique d'ALPS, ou un **poussoir simple** pour le premier prototype (la mi-course n'est pas encore utilisée). |
 | Boutons | Poussoirs tactiles 6×6 mm (type Omron B3F) | 8 | ~0,3 $ | Q, MENU, LECTURE, DISP, LOUPE, Fn1, Fn2, un de rechange. |
-| **Centrale inertielle** | Adafruit **LSM6DSOX** (STEMMA QT / Qwiic), réf. 4438 | 1 | 11,95 $ | Adresse 0x6A : pas de conflit avec le PiSugar. Plus un câble STEMMA QT vers broches (~1 $). |
+| **Centrale inertielle** | Le gyroscope Adafruit déjà en main ; sinon Adafruit **LSM6DSOX** (STEMMA QT / Qwiic), réf. 4438 | 1 | — (11,95 $) | Vérifier l'adresse I2C du sien (0x68 : conflit avec le PiSugar). Plus un câble STEMMA QT vers broches (~1 $). |
+| **GPS** | Module u-blox (M8 à M10) ou Adafruit Ultimate GPS, avec sortie PPS | 1 | à chiffrer | UART + PPS, antenne vers le ciel (§5). |
 | Divers | Plaque à pastilles, fils, connecteurs JST, dissipateur pour le Pi | — | ~10 $ | Prototype avant le boîtier imprimé. |
 
 **Budget** : ~225 $ avec l'écran Newhaven, ~145 $ avec un Waveshare, hors port, TVA et boîtier.
@@ -184,14 +200,15 @@ L'écran HDMI ne prend aucune broche. Toutes les entrées sont actives à l'éta
 | Joystick haut / bas | 12 / 13 | 32 / 33 |
 | Joystick gauche / droite | 16 / 19 | 36 / 35 |
 | Joystick appui (OK) | 26 | 37 |
-| GPS TX / RX (option) | 14 / 15 | 8 / 10 |
+| GPS TX / RX | 14 / 15 | 8 / 10 |
+| GPS PPS | 10 | 19 |
 | Molette avant A / B / appui | 17 / 27 / 22 | 11 / 13 / 15 |
 | DISP | 18 | 12 |
 | MENU / LECTURE | 20 / 21 | 38 / 40 |
 | Molette arrière A / B / appui | 23 / 24 / 25 | 16 / 18 / 22 |
-| *Libres* | 10, 11 | 19, 23 |
+| *Libre* | 11 | 23 |
 
-Au total : 20 entrées, le bus I2C et l'UART optionnel. Les GPIO 7–11 sont ceux du SPI0 ; on les utilise comme entrées simples, ce qui suppose de garder le SPI désactivé (c'est le cas par défaut). Les GPIO 0–1 (EEPROM ID) sont réservés.
+Au total : 20 entrées, le bus I2C, l'UART et le PPS du GPS. Les GPIO 7–11 sont ceux du SPI0 ; on les utilise comme entrées simples, ce qui suppose de garder le SPI désactivé (c'est le cas par défaut). Les GPIO 0–1 (EEPROM ID) sont réservés.
 
 ## Et si le Pi 3B devient le facteur limitant ?
 
