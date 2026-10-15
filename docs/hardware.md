@@ -19,9 +19,27 @@
 | Sujet | Choix | Date |
 |---|---|---|
 | Écran | **HDMI, sans tactile** | 2026-10-11 |
+| Modèle d'écran | **Waveshare 5″ HDMI LCD (H)**, IPS 800×480, sur la boutique Waveshare d'AliExpress (§1) | 2026-10-16 |
+| GPS | **Beitian BN-180**, sur AliExpress (§5) | 2026-10-16 |
 | Navigation | **Entièrement aux boutons et molettes** : il faut assez de commandes physiques pour régler et naviguer dans les menus sans écran tactile | 2026-10-11 |
 
 ## 1. Écran HDMI (choisi)
+
+**Retenu (2026-10-16) : Waveshare 5″ HDMI LCD (H)**, ~45–55 € sur la boutique officielle Waveshare d'AliExpress. IPS 800×480, verre trempé, tactile capacitif en USB (ignoré), ~400 mA en 5 V par USB, luminosité réglable par son menu (et en PWM depuis le Pi, après une modification de la carte : `PWM_control_backlight_manual.pdf` de Waveshare). Il ne prend aucune broche du GPIO. Sa luminosité n'est pas publiée (sans doute 400 à 500 cd/m², comme les écrans de ce prix) : lisible à l'ombre, difficile en plein soleil, d'où un **pare-soleil** prévu dans le boîtier.
+
+**Ses cotes**, relevées sur le modèle 3D de Waveshare (`5inch_HDMI_LCD_(H)_3D_Drawing.zip`, un STEP, sur le wiki du produit) :
+
+| Cote | Valeur |
+|---|---|
+| Corps (verre et carte) | 121 × 78 mm |
+| Avec les quatre oreilles de fixation | 121 × 89,5 mm |
+| Épaisseur hors tout | 15,7 mm (9,3 mm devant la carte : la dalle et le verre ; 6,4 mm derrière : le connecteur HDMI) |
+| Fixations | 4 boutonnières M3 (Ø 3,2 mm) dans les oreilles, entraxe 115 × 84 mm |
+| Un petit côté | HDMI pleine taille, micro-USB, jack audio |
+| L'autre petit côté | 5 boutons du menu de l'écran (OSD), tournés vers l'extérieur |
+| Zone d'affichage | à mesurer sur l'écran reçu (environ 108 × 65 mm pour une dalle 5″ en 15:9) |
+
+Les cotes de détail (position exacte des connecteurs et de la zone d'affichage) seront vérifiées au pied à coulisse sur l'écran reçu, avant d'imprimer le boîtier.
 
 **Pourquoi c'est un bon choix pour l'architecture.**
 
@@ -136,8 +154,7 @@ Prix relevés chez les fabricants et distributeurs, à l'unité, hors port et TV
 
 | Poste | Référence | Qté | Prix relevé | Remarque |
 |---|---|---|---|---|
-| **Écran** (au choix) | Newhaven **NHD-5.0-HDMI-N-RSXP** (5″, 800×480, IPS, ~1100 cd/m², sans tactile) | 1 | ~128 $ | Le seul lisible en plein soleil trouvé. Vérifier le stock de la version **sans** « -CTU » (tactile). |
-| | ou Waveshare 5″ HDMI LCD (B) ou (H), 800×480 | 1 | 44 à 53 $ | Bien moins cher, mais luminosité non publiée (sans doute ~300–500 cd/m²) : juste en plein soleil. Le tactile s'ignore. |
+| **Écran** | **Waveshare 5″ HDMI LCD (H)**, 800×480, IPS (retenu le 2026-10-16) | 1 | ~45–55 € | Boutique Waveshare d'AliExpress. Luminosité non publiée : pare-soleil dans le boîtier. Plus lumineux mais plus cher : Newhaven NHD-5.0-HDMI-N-RSXP (~128 $, ~1100 cd/m²). |
 | Nappe HDMI plate | Kit « DIY HDMI » Adafruit : nappe 20 cm + 2 adaptateurs (HDMI coudé côté Pi, selon l'écran de l'autre côté) | 1 | ~4 $ la nappe, adaptateurs en plus | Pour replier l'écran dans le boîtier. |
 | **Batterie + horloge** | **PiSugar 3 Plus**, 5000 mAh, RTC, niveau en I2C | 1 | 49,99 $ | Annoncé « 3B/3B+/4B » sur Tindie, mais la page officielle cite 3B+ et 3A+ : **confirmer le Pi 3B** avant d'acheter. Adresses I2C 0x57 et 0x68. |
 | **Molettes** | Bourns **PEC11R-4220F-S0024** (24 crans, avec appui) | 2 | ~2,2 $ | Ou des EC11 génériques (~1 €). Plus deux boutons de molette. |
@@ -145,10 +162,11 @@ Prix relevés chez les fabricants et distributeurs, à l'unité, hors port et TV
 | **Déclencheur 2 crans** | ALPS **SPPH410200** (momentané) | 1 | non trouvé en stock | Introuvable chez les distributeurs consultés : boutique d'ALPS, ou un **poussoir simple** pour le premier prototype (la mi-course n'est pas encore utilisée). |
 | Boutons | Poussoirs tactiles 6×6 mm (type Omron B3F) | 8 | ~0,3 $ | Q, MENU, LECTURE, DISP, LOUPE, Fn1, Fn2, un de rechange. |
 | **Centrale inertielle** | Le gyroscope Adafruit déjà en main ; sinon Adafruit **LSM6DSOX** (STEMMA QT / Qwiic), réf. 4438 | 1 | — (11,95 $) | Vérifier l'adresse I2C du sien (0x68 : conflit avec le PiSugar). Plus un câble STEMMA QT vers broches (~1 $). |
-| **GPS** | Beitian **BN-220** (ou BN-180), u-blox M8, antenne intégrée | 1 | ~10–15 € | UART, antenne vers le ciel (§5). PPS facultatif. |
+| **GPS** | Beitian **BN-180** (retenu le 2026-10-16), ~18×18 mm, antenne intégrée | 1 | ~10 € | AliExpress. UART, antenne vers le ciel (§5). PPS facultatif. |
+| Mesure | Pied à coulisse numérique 150 mm | 1 | ~15–20 € | Pour relever les vraies pièces avant d'imprimer le boîtier. |
 | Divers | Plaque à pastilles, fils, connecteurs JST, dissipateur pour le Pi | — | ~10 $ | Prototype avant le boîtier imprimé. |
 
-**Budget** : ~225 $ avec l'écran Newhaven, ~145 $ avec un Waveshare, hors port, TVA et boîtier.
+**Budget** : ~150 € avec l'écran Waveshare retenu (~225 $ avec un Newhaven), hors port, TVA et boîtier.
 
 Sources : [Newhaven chez Mouser](https://www.mouser.com/ProductDetail/Newhaven-Display/NHD-5.0-HDMI-N-RSXP-CTU?qs=IPgv5n7u5QbxjiYXvPRX3A%3D%3D), [chez Digi-Key](https://www.digikey.com/en/products/detail/newhaven-display-intl/NHD-5-0-HDMI-N-RSXP-CTU/16704913), [Waveshare 5″ (H)](https://www.waveshare.com/5inch-hdmi-lcd-h.htm), [Waveshare 5″ (B)](https://www.waveshare.com/5inch-hdmi-lcd-b.htm), [PiSugar 3 Plus](https://www.pisugar.com/products/pisugar-3-plus-raspberry-pi-ups), [sur Tindie](https://www.tindie.com/products/pisugar/pisugar-3-plus-battery-for-raspberry-pi-3b3b4b/), [ALPS SKRHABE010 chez Mouser](https://www.mouser.com/ProductDetail/Alps-Alpine/SKRHABE010?qs=seHrhfPpLDxEOwRqoDvYHw%3D%3D), [chez LCSC](https://lcsc.com/product-detail/5-way-Tactile-Switches_ALPS-Electric_SKRHABE010_ALPS-Electric-SKRHABE010_C139794.html), [ALPS SPPH4](https://tech.alpsalpine.com/prod/e/html/switch/push/spph4/spph4_list.html), [Bourns PEC11R chez RS](https://fr.rs-online.com/web/p/encodeurs-rotatifs-mecaniques/1674660), [Adafruit LSM6DSOX](https://www.adafruit.com/products/4438), [nappe HDMI Adafruit](https://www.jameco.com/z/3561-Adafruit-Industries-Diy-USB-or-HDMI-Cable-Parts-20-cm-Ribbon-Cable_2514111.html).
 
